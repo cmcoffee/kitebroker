@@ -1,5 +1,12 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.0.5a - 07-13-2016)
+    * Appliance API configuration is now stored encrypted in database.
+    * Database is now locked to system that launced/configured it.
+    * Added ability to add users via CSV.
+    * Added task handling.
+    * Changed threading, added limits for both api calls and file transfers.
+
 ## (v0.0.2a - 06-18-2016)
 	* Initial commit to Github.
 	* Cleaned up thread handling for downloading files

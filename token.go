@@ -27,7 +27,8 @@ type KiteAuth struct {
 // Returns a valid auth token... or an error.
 func (s Session) GetToken() (auth *KiteAuth, err error) {
 
-	signature := Config.Get(s.task, "signature_secret")[0]
+	var signature string
+	if _, err = DB.Get("config", "signature_secret", &signature); err != nil { return nil, err }
 
 	auth, err = s.reqToken(signature)
 	if err == nil {
@@ -36,9 +37,8 @@ func (s Session) GetToken() (auth *KiteAuth, err error) {
 
 	// If refresh failed, try getting new token.
 	if err != nil {
-		server := Config.Get(s.task, "server")[0]
-		if found, _ := DB.Get(fmt.Sprintf("%s_tokens", server), s.account, &auth); found {
-			DB.Unset(fmt.Sprintf("%s_tokens", server), s.account)
+		if found, _ := DB.Get("tokens", s.account, &auth); found {
+			DB.Unset("tokens", s.account)
 			return s.reqToken(signature)
 		}
 	}
@@ -61,7 +61,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 
 	dec := json.NewDecoder(resp.Body)
 
-	err = dec.Decode(&kite_err)
+	dec.Decode(&kite_err)
 	defer resp.Body.Close()
 
 	if kite_err.ErrorDesc != NONE {
@@ -76,7 +76,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 // Checks to see if access_token is working.
 func (s Session) testToken(token string) (err error) {
 
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/rest/users/me", s.server), nil)
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/rest/users/me", server), nil)
 	if err != nil {
 		return err
 	}
@@ -101,9 +101,7 @@ func (s Session) testToken(token string) (err error) {
 // Call to appliance for Bearer token.
 func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 
-	client_id := Config.Get(s.task, "client_id")[0]
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", s.server), nil)
+	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", server), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -111,13 +109,17 @@ func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
 	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
 
+	var client_id, client_secret string
+	if _, err = DB.Get("config", "client_id", &client_id); err != nil { return nil, err }
+	if _, err = DB.Get("config", "client_secret", &client_secret); err != nil { return nil, err }
+
 	postform := &url.Values{
 		"client_id":     {client_id},
-		"client_secret": {Config.Get(s.task, "client_secret")[0]},
+		"client_secret": {client_secret},
 	}
 
 	// If refresh token exists, use it. Otherwise request new access token.
-	if found, _ := DB.Get(fmt.Sprintf("%s_tokens", s.server), s.account, &auth); found && auth.RefreshToken != "" {
+	if found, _ := DB.Get("tokens", s.account, &auth); found && auth.RefreshToken != "" {
 		postform.Add("grant_type", "refresh_token")
 		postform.Add("refresh_token", auth.RefreshToken)
 	} else {
@@ -137,7 +139,7 @@ func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 			timestamp, nonce, signature)
 
 		postform.Add("grant_type", "authorization_code")
-		postform.Add("redirect_uri", Config.Get(s.task, "redirect_uri")[0])
+		postform.Add("redirect_uri", Config.Get(NAME, "redirect_uri")[0])
 		postform.Add("code", auth_code)
 	}
 
@@ -172,6 +174,6 @@ func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 
 	auth.Expiry = auth.Expiry + time.Now().Unix()
 
-	DB.CryptSet(fmt.Sprintf("%s_tokens", s.server), s.account, &auth)
+	DB.CryptSet("tokens", s.account, &auth)
 	return
 }
