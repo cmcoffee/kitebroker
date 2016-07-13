@@ -85,7 +85,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	err = s.DecodeJSON(resp, output)
 	if err != nil {
-		if strings.Contains(err.Error(), "invalid_grant") {
+		if strings.Contains(strings.ToLower(err.Error()), "unauthorized")  {
 			DB.Unset("tokens", s.account)
 			s.KiteAuth = nil
 		}
