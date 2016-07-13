@@ -83,7 +83,14 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 		return err
 	}
 
-	return s.DecodeJSON(resp, output)
+	err = s.DecodeJSON(resp, output)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid_grant") {
+			DB.Unset("tokens", s.account)
+			s.KiteAuth = nil
+		}
+	}
+	return err
 }
 
 // Create new formed http request for appliance.
@@ -97,7 +104,7 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 		}
 	}
 
-	req, err = http.NewRequest(action, fmt.Sprintf("https://%s/%s", server, path), nil)
+	req, err = http.NewRequest(action, fmt.Sprintf("https://%s%s", server, path), nil)
 	if err != nil {
 		return nil, err
 	}

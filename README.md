@@ -3,7 +3,7 @@
 ### WIP
     * Uploads are not yet implemented.    
 
-## (v0.0.5a - 07-13-2016)
+## (v0.0.6a - 07-13-2016)
     * Appliance API configuration is now stored encrypted in database.
     * Database is now locked to system that launced/configured it.
     * Added ability to add users via CSV.

@@ -33,9 +33,6 @@ func (s Session) GetToken() (auth *KiteAuth, err error) {
 	}
 
 	auth, err = s.reqToken(signature)
-	if err == nil {
-		err = s.testToken(auth.AccessToken)
-	}
 
 	// If refresh failed, try getting new token.
 	if err != nil {

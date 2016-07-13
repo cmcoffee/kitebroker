@@ -182,6 +182,10 @@ func (j *Job) CacheDel(section string, key interface{}) {
 
 func (j *Job) DownloadMyFolder() (err error) {
 	delete_after_download := getBoolVal(Config.SGet(j.name, "delete_remote_files_on_download"))
+	err = MkDir(Config.SGet(j.name, "local_path"))
+	if err != nil {
+		return err
+	}
 	for _, user := range Config.Get(j.name, "users") {
 		fmt.Printf("\r(%s) Downloading \"My Folder\" as %s.\n", j.name, user)
 		s := NewSession(user)
@@ -240,6 +244,10 @@ func (j *Job) DownloadMyFolder() (err error) {
 
 func (j *Job) DownloadFolder() (err error) {
 	delete_after_download := getBoolVal(Config.SGet(j.name, "delete_remote_files_on_download"))
+	err = MkDir(Config.SGet(j.name, "local_path"))
+	if err != nil {
+		return err
+	}
 	username := Config.SGet(j.name, "user")
 	r_path := Config.SGet(j.name, "remote_folder")
 

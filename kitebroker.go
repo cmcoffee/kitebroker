@@ -18,7 +18,7 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.0.5a"
+	VERSION       = "0.0.6a"
 	KWAPI_VERSION = "4.1"
 	NONE          = ""
 )
