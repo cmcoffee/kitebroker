@@ -9,6 +9,7 @@
     * Added ability to add users via CSV.
     * Added task handling.
     * Changed threading, added limits for both api calls and file transfers.
+    * Resumeable downloads now implemented.
 
 ## (v0.0.2a - 06-18-2016)
 	* Initial commit to Github.

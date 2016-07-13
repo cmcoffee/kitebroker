@@ -28,7 +28,9 @@ type KiteAuth struct {
 func (s Session) GetToken() (auth *KiteAuth, err error) {
 
 	var signature string
-	if _, err = DB.Get("config", "signature_secret", &signature); err != nil { return nil, err }
+	if _, err = DB.Get("config", "signature_secret", &signature); err != nil {
+		return nil, err
+	}
 
 	auth, err = s.reqToken(signature)
 	if err == nil {
@@ -110,8 +112,12 @@ func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
 
 	var client_id, client_secret string
-	if _, err = DB.Get("config", "client_id", &client_id); err != nil { return nil, err }
-	if _, err = DB.Get("config", "client_secret", &client_secret); err != nil { return nil, err }
+	if _, err = DB.Get("config", "client_id", &client_id); err != nil {
+		return nil, err
+	}
+	if _, err = DB.Get("config", "client_secret", &client_secret); err != nil {
+		return nil, err
+	}
 
 	postform := &url.Values{
 		"client_id":     {client_id},
@@ -139,7 +145,7 @@ func (s Session) reqToken(signature string) (auth *KiteAuth, err error) {
 			timestamp, nonce, signature)
 
 		postform.Add("grant_type", "authorization_code")
-		postform.Add("redirect_uri", Config.Get(NAME, "redirect_uri")[0])
+		postform.Add("redirect_uri", Config.SGet(NAME, "redirect_uri"))
 		postform.Add("code", auth_code)
 	}
 

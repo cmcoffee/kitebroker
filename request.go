@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-
 // API Session
 type Session struct {
 	account string
@@ -56,7 +55,9 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 		case PostJSON:
 			req.Header.Set("Content-Type", "application/json")
 			json, err := json.Marshal(i)
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 			if call_snoop {
 				fmt.Println(string(json))
 			}
@@ -75,7 +76,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 	client := s.NewClient()
 
 	<-api_call_bank
-	defer func() { api_call_bank<-call_done }()
+	defer func() { api_call_bank <- call_done }()
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -116,7 +117,7 @@ func (s Session) NewClient() *http.Client {
 	var ignore_cert bool
 
 	// Allows invalid certs if set to "no" in config.
-	if strings.ToLower(Config.Get(NAME, "ssl_verify")[0]) == "no" {
+	if strings.ToLower(Config.SGet(NAME, "ssl_verify")) == "no" {
 		ignore_cert = true
 	}
 
@@ -190,7 +191,7 @@ type KiteData struct {
 	Expire       interface{} `json:"expire"`
 	Modified     string      `json:"modified"`
 	Name         string      `json:"name"`
-	Description  string 	 `json:"description"`
+	Description  string      `json:"description"`
 	ParentID     int         `json:"parentId"`
 	UserID       int         `json:"userId"`
 	Permalink    string      `json:"permalink"`
@@ -256,7 +257,9 @@ func (s Session) GetSelfHref(input *[]KiteLinks) string {
 
 func (s Session) GetRoles() (roles KiteArray, err error) {
 	err = s.Call("GET", "/rest/roles", &roles)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	return
 }
@@ -268,7 +271,7 @@ func (s Session) GetFolders() (output KiteArray, err error) {
 
 // Find a user_id
 func (s Session) FindUser(user_email string) (id int, err error) {
-	id = -1 
+	id = -1
 	sub_session := NewSession(user_email)
 	info, err := sub_session.MyUser()
 	if err != nil {
@@ -290,7 +293,7 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 		folder_names = strings.Split(remote_folder, "/")
 	}
 
-	shift_name := func() (bool) {
+	shift_name := func() bool {
 		if len(folder_names) > 1 {
 			folder_names = folder_names[1:]
 			return true
@@ -305,7 +308,7 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 		}
 	} else {
 		top_shared, err := s.GetFolders()
-		if err != nil { 
+		if err != nil {
 			return -1, err
 		}
 		for _, e := range top_shared.Data {
@@ -323,7 +326,9 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	for shift_name() {
 		found := false
 		nested, err := s.ListFolders(id)
-		if err != nil { return -1, err }
+		if err != nil {
+			return -1, err
+		}
 
 		for _, elem := range nested.Data {
 			if elem.Name == folder_names[0] {
@@ -332,11 +337,11 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 				break
 			}
 		}
-		
+
 		if !found {
 			return -1, fmt.Errorf("Couldn't find folder: %s", folder_names[0])
 		}
-	} 
+	}
 
 	return
 }
@@ -394,8 +399,10 @@ func (s Session) CreateFolder(name string, parent_id int) (folder_id int, err er
 // Deletes file from system permanently.
 func (s Session) EraseFile(file_id int) (err error) {
 	err = s.Call("DELETE", fmt.Sprintf("/rest/files/%d", file_id), nil)
-	if err != nil { return }
- 	return s.Call("DELETE", fmt.Sprintf("/rest/files/%d/actions/permanent", file_id), nil)
+	if err != nil {
+		return
+	}
+	return s.Call("DELETE", fmt.Sprintf("/rest/files/%d/actions/permanent", file_id), nil)
 }
 
 // Add User to system.
@@ -406,7 +413,9 @@ func (s *Session) AddUser(email string, verify, notify bool) (err error) {
 	)
 	if !verify {
 		verified = true
-	} 
-	if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil { return err }
+	}
+	if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
+		return err
+	}
 	return s.Call("PUT", fmt.Sprintf("/rest/admin/users/%d", new_user.ID), nil, PostJSON{"active": true, "verified": verified})
 }

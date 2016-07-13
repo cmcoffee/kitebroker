@@ -1,18 +1,18 @@
 package main
 
 import (
-	"fmt"
-	"github.com/cmcoffee/go-eflag"
-	"github.com/cmcoffee/go-cfg"
-	"github.com/cmcoffee/go-kvlite"
-	"os"
-	"time"
-	"net"
 	"bufio"
-	"strings"
-	"strconv"
-	"sync"
+	"fmt"
+	"github.com/cmcoffee/go-cfg"
+	"github.com/cmcoffee/go-eflag"
+	"github.com/cmcoffee/go-kvlite"
+	"net"
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -24,12 +24,12 @@ const (
 )
 
 var (
-	Config *cfg.Store
-	DB     *kvlite.Store
+	Config     *cfg.Store
+	DB         *kvlite.Store
 	resp_snoop bool
 	call_snoop bool
-	server string
-	wg sync.WaitGroup
+	server     string
+	wg         sync.WaitGroup
 )
 
 // Removes newline characters
@@ -48,7 +48,7 @@ func cleanInput(input string) (output string) {
 func open_database(db_file string) {
 
 	// Provides us the mac address of the first interface.
-	get_mac_addr := func() ([]byte) {
+	get_mac_addr := func() []byte {
 		ifaces, err := net.Interfaces()
 
 		if err != nil {
@@ -87,7 +87,7 @@ func setup(db_filename string) {
 
 	reader := bufio.NewReader(os.Stdin)
 
-	get_input := func(question string) (string) {
+	get_input := func(question string) string {
 		for {
 			fmt.Printf(question)
 			response, _ := reader.ReadString('\n')
@@ -117,14 +117,14 @@ func setup(db_filename string) {
 # 4. Copy the information provided from the appliance to the variables below.
 `)
 
-	RedoSetup:
+RedoSetup:
 	fmt.Println("[ kiteworks Secure API Configuration ]\n")
-	server := get_input("Server: ")	
+	server := get_input("Server: ")
 	client_id := get_input("Client Application ID: ")
 	client_secret := get_input("Client Secret Key: ")
 	signature_secret := get_input("Signature Secret: ")
 
-	ReConfirm:
+ReConfirm:
 	fmt.Printf("Confirm settings [y/n]?: ")
 	confirm, _ := reader.ReadString('\n')
 	confirm = cleanInput(strings.ToLower(confirm))
@@ -165,37 +165,36 @@ func main() {
 
 	// Sets configuration defaults
 	Config.SetDefaults("kitebroker", map[string][]string{
-		"ssl_verify": {"yes"},
+		"ssl_verify":      {"yes"},
 		"continuous_mode": {"yes"},
 		"continuous_rate": {"1h"},
 		"max_connections": {"6"},
-		"max_transfers": {"3"},
-		"redirect_uri": {"https://kitebroker"},
-		"temp_path": {"temp"},
-		})
+		"max_transfers":   {"3"},
+		"redirect_uri":    {"https://kitebroker"},
+		"temp_path":       {"temp"},
+	})
 
-
-	errChk(MkDir(cleanPath(Config.Get("kitebroker", "temp_path")[0])))
+	errChk(MkDir(cleanPath(Config.SGet("kitebroker", "temp_path"))))
 
 	// Spin up limiters for API calls and file transfers.
-	max_connections, err := strconv.Atoi(Config.Get("kitebroker", "max_connections")[0])
+	max_connections, err := strconv.Atoi(Config.SGet("kitebroker", "max_connections"))
 	if err != nil {
 		max_connections = 6
 	}
 
-	max_transfers, err := strconv.Atoi(Config.Get("kitebroker", "max_transfers")[0])
+	max_transfers, err := strconv.Atoi(Config.SGet("kitebroker", "max_transfers"))
 	if err != nil {
-		max_transfers = 3 
+		max_transfers = 3
 	}
 
 	transfer_call_bank = make(chan struct{}, max_transfers)
 	for i := 0; i < max_transfers; i++ {
-		transfer_call_bank<-call_done
+		transfer_call_bank <- call_done
 	}
 
 	api_call_bank = make(chan struct{}, max_connections)
 	for i := 0; i < max_connections; i++ {
-		api_call_bank<-call_done
+		api_call_bank <- call_done
 	}
 
 	fmt.Printf("[ Accellion %s(v%s) ]\n\n", NAME, VERSION)
@@ -224,13 +223,13 @@ func main() {
 	}
 
 	var (
-		ival time.Duration
+		ival       time.Duration
 		continuous bool
 	)
 
-	if strings.ToLower(Config.Get("kitebroker", "continuous_mode")[0]) == "yes" {
+	if strings.ToLower(Config.SGet("kitebroker", "continuous_mode")) == "yes" {
 		continuous = true
-		ival, err = time.ParseDuration(Config.Get("kitebroker", "continuous_rate")[0])
+		ival, err = time.ParseDuration(Config.SGet("kitebroker", "continuous_rate"))
 		errChk(err, *config_file, "continuous_rate")
 	}
 

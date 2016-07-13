@@ -1,17 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"strings"
-	"strconv"
-	"time"
 	"mime/multipart"
-	"bytes"
 	"net/textproto"
-	"encoding/json"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type ftransfer struct {
@@ -96,7 +96,7 @@ func FileExists(f string) (found bool, err error) {
 // Downloads a file to a specific path
 func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 	<-transfer_call_bank
-	defer func() { transfer_call_bank<-call_done }()
+	defer func() { transfer_call_bank <- call_done }()
 
 	nfo, err := s.FileInfo(file_id)
 	if err != nil {
@@ -105,7 +105,9 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 
 	var record FileRecord
 	_, err = DB.Get(j.name+"_files", file_id, &record)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	if record.Flag&MOVED > 0 {
 		return nil
@@ -113,11 +115,11 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 
 	var f *os.File
 
-    local_path = cleanPath(local_path)
+	local_path = cleanPath(local_path)
 
 	fname := fmt.Sprintf("%s/%s", local_path, nfo.Name)
-	temp_fname := fmt.Sprintf("%s/%s.%d.incomplete", cleanPath(Config.Get(NAME, "temp_path")[0]), nfo.Name, file_id)
-	
+	temp_fname := fmt.Sprintf("%s/%s.%d.incomplete", cleanPath(Config.SGet(NAME, "temp_path")), nfo.Name, file_id)
+
 	var offset int64
 
 	fstat, err := os.Stat(temp_fname)
@@ -150,7 +152,7 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 	if offset > 0 {
 		start := resp.Header.Get("Content-Range")
 		if start == NONE {
-			if record.Flag & DOWNLOADED > 0 {
+			if record.Flag&DOWNLOADED > 0 {
 				goto MoveFile
 			}
 			return
@@ -160,9 +162,13 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 		start = byte_range[0]
 		start = strings.TrimSpace(start)
 		offset, err = strconv.ParseInt(start, 10, 64)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 		_, err = f.Seek(offset, 0)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 	}
 
 	defer resp.Body.Close()
@@ -176,27 +182,33 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 
 	err = s.DecodeJSON(resp, nil)
 	if err != nil {
-		return 
+		return
 	}
 
 	record.Flag |= DOWNLOADED
 
 	DB.Set(j.name+"_files", file_id, record)
 
-	MoveFile:
+MoveFile:
 
 	// Close the file stream.
-	if err = f.Close(); err != nil { return }
+	if err = f.Close(); err != nil {
+		return
+	}
 
 	// Rename file.
-	if err = moveFile(temp_fname, fname); err != nil { return }
+	if err = moveFile(temp_fname, fname); err != nil {
+		return
+	}
 
 	record.Flag |= MOVED
 
 	DB.Set(j.name+"_files", file_id, record)
 
 	mtime, err := timeParse(nfo.Modified)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	// Set modified and access times on file.
 	err = os.Chtimes(fname, time.Now(), mtime)
@@ -232,7 +244,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	if err != nil && err == io.EOF {
 		s.eof = true
 	} else if err != nil {
-		return -1 , err
+		return -1, err
 	}
 
 	if n > 0 {
@@ -255,29 +267,37 @@ func NewMultipart(file *os.File, input interface{}) (io.ReadCloser, string, erro
 	w := multipart.NewWriter(w_buff)
 	mimeheader := make(textproto.MIMEHeader)
 	switch i := input.(type) {
-		case PostFORM:
-			p := make(url.Values)
-			for k, v := range i {
-				p.Add(k, v)
-			}
-			mimeheader.Set("Content-Disposition", "form-data; name=\"text\"")
-			writer, err := w.CreatePart(mimeheader)
-			if err != nil { return nil, NONE, err }
-			writer.Write([]byte(p.Encode()))
-		case PostJSON:
-			json, err := json.Marshal(i)
-			if err != nil { return nil, NONE, err }
-			if call_snoop {
-				fmt.Println(string(json))
-			}
-			mimeheader.Set("Content-Type", "application/json")
-			mimeheader.Set("Content-Disposition", "form-data; name=\"attributes\"")
-			writer, err := w.CreatePart(mimeheader)
-			if err != nil { return nil, NONE, err }
-			writer.Write(json)
+	case PostFORM:
+		p := make(url.Values)
+		for k, v := range i {
+			p.Add(k, v)
+		}
+		mimeheader.Set("Content-Disposition", "form-data; name=\"text\"")
+		writer, err := w.CreatePart(mimeheader)
+		if err != nil {
+			return nil, NONE, err
+		}
+		writer.Write([]byte(p.Encode()))
+	case PostJSON:
+		json, err := json.Marshal(i)
+		if err != nil {
+			return nil, NONE, err
+		}
+		if call_snoop {
+			fmt.Println(string(json))
+		}
+		mimeheader.Set("Content-Type", "application/json")
+		mimeheader.Set("Content-Disposition", "form-data; name=\"attributes\"")
+		writer, err := w.CreatePart(mimeheader)
+		if err != nil {
+			return nil, NONE, err
+		}
+		writer.Write(json)
 	}
 	writer, err := w.CreateFormFile("file", file.Name())
-	if err != nil { return nil, NONE, err }
+	if err != nil {
+		return nil, NONE, err
+	}
 	return &streamReadCloser{
 		r_buff,
 		w_buff,
@@ -291,9 +311,9 @@ func NewMultipart(file *os.File, input interface{}) (io.ReadCloser, string, erro
 // Uploads file from specific Path
 func (s Session) Upload(folder_id int, local_file string) (err error) {
 	<-transfer_call_bank
-	defer func() { transfer_call_bank<-call_done }()
+	defer func() { transfer_call_bank <- call_done }()
 
-//	fmt.Println(uri)
+	//	fmt.Println(uri)
 
 	req, err := s.NewRequest("POST", fmt.Sprintf("/rest/folders/%d/actions/file", folder_id))
 	if err != nil {
@@ -301,14 +321,18 @@ func (s Session) Upload(folder_id int, local_file string) (err error) {
 	}
 
 	f, err := os.Open(local_file)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	defer f.Close()
 
 	var boundary string
 
 	req.Body, boundary, err = NewMultipart(f, nil)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	req.Header.Set("Content-Type", "multipart/form-data; boundary="+boundary)
 
@@ -318,5 +342,5 @@ func (s Session) Upload(folder_id int, local_file string) (err error) {
 		return
 	}
 	err = s.DecodeJSON(resp, nil)
-	return 
-}	
+	return
+}
