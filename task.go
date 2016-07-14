@@ -188,7 +188,8 @@ func (j *Job) DownloadMyFolder() (err error) {
 	}
 	for _, user := range Config.Get(j.name, "users") {
 		fmt.Printf("\r(%s) Downloading \"My Folder\" as %s.\n", j.name, user)
-		s := NewSession(user)
+		s, err := NewSession(user)
+		if err != nil { return err }
 		folder_id, err := s.MyFolderID()
 		if err != nil {
 			fmt.Printf("\r(%s) Error: Problem obtaining \"My Folder\" data for %s: %s\n", j.name, user, err.Error())
@@ -253,7 +254,8 @@ func (j *Job) DownloadFolder() (err error) {
 
 	fmt.Printf("\r(%s) Downloading folder '%s' as %s.\n", j.name, r_path, username)
 
-	s := NewSession(username)
+	s, err := NewSession(username)
+	if err != nil { return err }
 	folder_id, err := s.FindFolder(r_path)
 	if err != nil {
 		return err
@@ -316,13 +318,15 @@ func (j *Job) Add_Accounts_CSV() (err error) {
 	}
 	r := csv.NewReader(f)
 
-	admin := NewSession(Config.SGet(j.name, "admin_bind"))
+	admin, err := NewSession(Config.SGet(j.name, "admin_bind"))
+	if err != nil { return err }
 	_, err = admin.MyUser()
 	if err != nil {
 		return fmt.Errorf("admin_bind: %s", err)
 	}
 
-	manager := NewSession(Config.SGet(j.name, "manager_bind"))
+	manager, err := NewSession(Config.SGet(j.name, "manager_bind"))
+	return err
 	_, err = manager.MyUser()
 	if err != nil {
 		return fmt.Errorf("manager_bind: %s", err)

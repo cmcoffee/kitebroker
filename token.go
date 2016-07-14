@@ -25,7 +25,7 @@ type KiteAuth struct {
 }
 
 // Returns a valid auth token... or an error.
-func (s Session) GetToken() (auth *KiteAuth, err error) {
+func (s *Session) GetToken() (auth *KiteAuth, err error) {
 
 	var signature string
 	if _, err = DB.Get("config", "signature_secret", &signature); err != nil {
@@ -73,7 +73,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 }
 
 // Checks to see if access_token is working.
-func (s Session) testToken(token string) (err error) {
+func (s Session) testToken() (err error) {
 
 	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/rest/users/me", server), nil)
 	if err != nil {
@@ -82,7 +82,7 @@ func (s Session) testToken(token string) (err error) {
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
 	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+s.KiteAuth.AccessToken)
 
 	client := s.NewClient()
 

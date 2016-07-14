@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 )
 
 // API Session
@@ -29,8 +28,21 @@ type PostFORM map[string]string
 type Query map[string]string
 
 // Create a new Kiteworks API Session
-func NewSession(account string) *Session {
-	return &Session{account, nil}
+func NewSession(account string) (*Session, error) {
+	s := &Session{account, nil}
+	auth, err := s.GetToken()
+	if err != nil {
+		return nil, err
+	}
+	
+	s.KiteAuth = auth
+
+	err = s.testToken()
+	if err != nil { 
+		return nil, err 
+	}
+
+	return s, err
 }
 
 // Wrapper around request and client to make simple requests for information to appliance.
@@ -85,7 +97,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	err = s.DecodeJSON(resp, output)
 	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unauthorized")  {
+		if strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
 			DB.Unset("tokens", s.account)
 			s.KiteAuth = nil
 		}
@@ -95,14 +107,6 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 // Create new formed http request for appliance.
 func (s Session) NewRequest(action, path string) (req *http.Request, err error) {
-
-	// Get Access Token.
-	if s.KiteAuth == nil || (s.KiteAuth.Expiry-3600) < time.Now().Unix() {
-		s.KiteAuth, err = s.GetToken()
-		if err != nil {
-			return nil, err
-		}
-	}
 
 	req, err = http.NewRequest(action, fmt.Sprintf("https://%s%s", server, path), nil)
 	if err != nil {
@@ -279,7 +283,10 @@ func (s Session) GetFolders() (output KiteArray, err error) {
 // Find a user_id
 func (s Session) FindUser(user_email string) (id int, err error) {
 	id = -1
-	sub_session := NewSession(user_email)
+	sub_session, err := NewSession(user_email)
+	if err != nil {
+		return -1, err
+	}
 	info, err := sub_session.MyUser()
 	if err != nil {
 		if strings.Contains(err.Error(), "Invalid user") {
