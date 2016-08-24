@@ -14,10 +14,7 @@ import (
 )
 
 // API Session
-type Session struct {
-	account string
-	*KiteAuth
-}
+type Session string
 
 var call_done struct{}
 var api_call_bank chan struct{}
@@ -27,22 +24,58 @@ type PostJSON map[string]interface{}
 type PostFORM map[string]string
 type Query map[string]string
 
-// Create a new Kiteworks API Session
-func NewSession(account string) (*Session, error) {
-	s := &Session{account, nil}
-	auth, err := s.GetToken()
+const (
+	ErrBadAuth = "ERR_AUTH_UNAUTHORIZED"
+)
+
+// Converts kiteworks API errors to standard golang error message.
+func (s Session) respError(resp *http.Response) (err error) {
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+
+	type KiteErr struct {
+		Error     string `json:"error"`
+		ErrorDesc string `json:"error_description"`
+		Errors []struct{
+			Code string `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+
+	var body io.Reader
+
+	if resp_snoop {
+		body = io.TeeReader(resp.Body, os.Stderr)
+	} else {
+		body = resp.Body
+	}
+
+	output, err := ioutil.ReadAll(body)
+	if err != nil { return err }
+
+	var kite_err KiteErr
+
+	err = json.Unmarshal(output, &kite_err)
+
+	defer resp.Body.Close()
+
 	if err != nil {
-		return nil, err
-	}
-	
-	s.KiteAuth = auth
-
-	err = s.testToken()
-	if err != nil { 
-		return nil, err 
+		return fmt.Errorf("%s", resp.Status)
 	}
 
-	return s, err
+	if len(kite_err.Errors) > 0 {
+		if kite_err.Errors[0].Code == ErrBadAuth {
+			DB.Unset("tokens", string(s))
+		}
+		return fmt.Errorf("%s", kite_err.Errors[0].Code)
+	} 
+
+	if kite_err.ErrorDesc != NONE {
+		return fmt.Errorf("%s: %s", kite_err.Error, kite_err.ErrorDesc)
+	}
+	return nil
 }
 
 // Wrapper around request and client to make simple requests for information to appliance.
@@ -95,14 +128,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 		return err
 	}
 
-	err = s.DecodeJSON(resp, output)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
-			DB.Unset("tokens", s.account)
-			s.KiteAuth = nil
-		}
-	}
-	return err
+	return s.DecodeJSON(resp, output)
 }
 
 // Create new formed http request for appliance.
@@ -117,7 +143,13 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 	req.URL.Scheme = "https"
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
 	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
-	req.Header.Set("Authorization", "Bearer "+s.AccessToken)
+
+	access_token, err := s.GetToken()
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer " + access_token)
 
 	return req, nil
 }
@@ -128,7 +160,7 @@ func (s Session) NewClient() *http.Client {
 	var ignore_cert bool
 
 	// Allows invalid certs if set to "no" in config.
-	if strings.ToLower(Config.SGet(NAME, "ssl_verify")) == "no" {
+	if strings.ToLower(Config.SGet("configuration", "ssl_verify")) == "no" {
 		ignore_cert = true
 	}
 
@@ -143,9 +175,8 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode > 299 || resp.StatusCode < 200 {
-		return s.respError(resp)
-	}
+	err = s.respError(resp)
+	if err != nil { return }
 
 	var body io.Reader
 
@@ -283,10 +314,8 @@ func (s Session) GetFolders() (output KiteArray, err error) {
 // Find a user_id
 func (s Session) FindUser(user_email string) (id int, err error) {
 	id = -1
-	sub_session, err := NewSession(user_email)
-	if err != nil {
-		return -1, err
-	}
+	sub_session := Session(user_email)
+
 	info, err := sub_session.MyUser()
 	if err != nil {
 		if strings.Contains(err.Error(), "Invalid user") {
@@ -374,22 +403,22 @@ func (s Session) AddUserToFolder(user_id int, folder_id int, role_id int, notify
 }
 
 // Get user information.
-func (s Session) UserInfo(user_id int) (output KiteUser, err error) {
+func (s  Session) UserInfo(user_id int) (output KiteUser, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/users/%d", user_id), &output)
 }
 
 // List Folders.
-func (s Session) ListFolders(folder_id int) (output KiteArray, err error) {
+func (s  Session) ListFolders(folder_id int) (output KiteArray, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/folders", folder_id), &output, Query{"deleted": "false"})
 }
 
 // List Files.
-func (s Session) ListFiles(folder_id int) (output KiteArray, err error) {
+func (s  Session) ListFiles(folder_id int) (output KiteArray, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/files", folder_id), &output, Query{"deleted": "false"})
 }
 
 // Get File Information
-func (s Session) FileInfo(file_id int) (output KiteData, err error) {
+func (s  Session) FileInfo(file_id int) (output KiteData, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/files/%d", file_id), &output)
 }
 
@@ -420,7 +449,7 @@ func (s Session) EraseFile(file_id int) (err error) {
 }
 
 // Add User to system.
-func (s *Session) AddUser(email string, verify, notify bool) (err error) {
+func (s Session) AddUser(email, password string, verify, notify bool) (err error) {
 	var (
 		new_user KiteData
 		verified bool
@@ -428,8 +457,14 @@ func (s *Session) AddUser(email string, verify, notify bool) (err error) {
 	if !verify {
 		verified = true
 	}
-	if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
-		return err
+	if password == NONE {
+		if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
+			return err
+		}
+	} else {
+		if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "password": password, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
+			return err
+		}
 	}
 	return s.Call("PUT", fmt.Sprintf("/rest/admin/users/%d", new_user.ID), nil, PostJSON{"active": true, "verified": verified})
 }

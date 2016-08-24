@@ -9,10 +9,22 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 )
+
+// KiteBroker Flags
+const (
+	READY = 1 << iota
+	WORKING
+	COMPLETE
+	
+)
+
+type FileRecord struct {
+	Flag 	  int 		 `json:"flag"`
+	Timestamp *time.Time `json:"timestamp"`
+	Chunks 	  []int      `json:"file_chunks"`
+}
 
 type ftransfer struct {
 	c_size int
@@ -20,33 +32,8 @@ type ftransfer struct {
 	out    io.WriteCloser
 }
 
-// Provides human readable file sizes.
-func showSize(bytes int) string {
-
-	names := []string{
-		"Bytes",
-		"KB",
-		"MB",
-		"GB",
-	}
-
-	suffix := 0
-	size := float64(bytes)
-
-	for size >= 1000 && suffix < len(names)-1 {
-		size = size / 1000
-		suffix++
-	}
-
-	return fmt.Sprintf("%.1f%s", size, names[suffix])
-}
-
 func NewReaderWriter(in io.ReadCloser, out io.WriteCloser) *ftransfer {
 	return &ftransfer{0, in, out}
-}
-
-func getPercentage(t_size, c_size int) int {
-	return int((float64(c_size) / float64(t_size)) * 100)
 }
 
 // Perform the file transfer, input stream->output stream.
@@ -93,8 +80,23 @@ func FileExists(f string) (found bool, err error) {
 	return true, err
 }
 
+
+func (s Session) DownloadFile(folder_id int, file_id int) (err error) {
+	_, err = s.FileInfo(file_id)
+	if err != nil { return err }
+
+	var record FileRecord
+	_, err = DB.Get("files", file_id, &record)
+
+	if record.Flag&COMPLETE > 0 {
+		return nil
+	}
+	return	
+}
+
+/*
 // Downloads a file to a specific path
-func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
+func (j *Job) Download(s Session, file_id int, local_path string) (err error) {
 	<-transfer_call_bank
 	defer func() { transfer_call_bank <- call_done }()
 
@@ -104,12 +106,12 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 	}
 
 	var record FileRecord
-	_, err = DB.Get(j.name+"_files", file_id, &record)
+	_, err = DB.Get(j.table("files"), file_id, &record)
 	if err != nil {
 		return err
 	}
 
-	if record.Flag&MOVED > 0 {
+	if record.Flag&COMPLETED > 0 {
 		return nil
 	}
 
@@ -185,9 +187,9 @@ func (j *Job) Download(s *Session, file_id int, local_path string) (err error) {
 		return
 	}
 
-	record.Flag |= DOWNLOADED
+	record.Flag |= COMPLETED
 
-	DB.Set(j.name+"_files", file_id, record)
+	DB.Set(j.table("files"), file_id, record)
 
 MoveFile:
 
@@ -203,7 +205,7 @@ MoveFile:
 
 	record.Flag |= MOVED
 
-	DB.Set(j.name+"_files", file_id, record)
+	DB.Set(j.table("files"), file_id, record)
 
 	mtime, err := timeParse(nfo.Modified)
 	if err != nil {
@@ -214,7 +216,7 @@ MoveFile:
 	err = os.Chtimes(fname, time.Now(), mtime)
 	return
 }
-
+*/
 // Multipart filestreamer
 type streamReadCloser struct {
 	r_buff []byte
