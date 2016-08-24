@@ -9,7 +9,7 @@ import (
 )
 
 func extendedOperations(args []string) {
-	ext = NewCache()
+
 }
 
 // Add User via CSV

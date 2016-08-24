@@ -457,14 +457,15 @@ func (s Session) AddUser(email, password string, verify, notify bool) (err error
 	if !verify {
 		verified = true
 	}
-	if password == NONE {
-		if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
-			return err
-		}
-	} else {
-		if err = s.Call("POST", "/rest/admin/users", &new_user, PostJSON{"email": email, "password": password, "sendNotification": notify}, Query{"returnEntity": "true"}); err != nil {
-			return err
-		}
+
+	json_post := PostJSON{"email": email, "sendNotification": notify}
+	if password != NONE {
+		json_post["password"] = password
 	}
+
+	if err = s.Call("POST", "/rest/admin/users", &new_user, json_post, Query{"returnEntity": "true"}); err != nil {
+		return err
+	}
+
 	return s.Call("PUT", fmt.Sprintf("/rest/admin/users/%d", new_user.ID), nil, PostJSON{"active": true, "verified": verified})
 }
