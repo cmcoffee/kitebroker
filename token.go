@@ -132,6 +132,7 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 			case PASSWORD_AUTH:
 				username, password := LoadCredentials()
 				postform.Add("grant_type", "password")
+				DB.Set("tokens", "whoami", username)
 				postform.Add("username", username)
 				postform.Add("password", password)
 		}
@@ -139,6 +140,10 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 
 	// If token has more then an hour left, just return the current token.
 	if auth != nil && auth.AccessToken != NONE && (auth.Expiry-3600) > time.Now().Unix() {
+		if len(DB.SGet("tokens", "whoami")) == 0 && auth_flow == PASSWORD_AUTH { 
+			DB.Truncate("tokens")
+			return s.getAccessToken()
+		}
 		return
 	}
 

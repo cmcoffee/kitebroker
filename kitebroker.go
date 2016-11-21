@@ -152,28 +152,7 @@ func main() {
 	flags.BoolVar(&resp_snoop, "resp_snoop", false, NONE)
 	flags.BoolVar(&call_snoop, "call_snoop", false, NONE)
 
-	//add_user =	flags.Bool("add_users", false, "Add users to system. (signature auth only)")
-	//users = flags.String("users", "<users>", "Specify users for task. (signature auth only)")
-
-	sig := flags.Bool("x", false, "Extended Operations (Requires signature authentication)")
-
-	var cmd_args []string
-	var arg_end int
-	for i, str := range os.Args[1:] {
-		if str == "-x" {
-			arg_end = i + 2
-			for _, str := range os.Args[arg_end:] {
-				cmd_args = append(cmd_args[0:], str)
-			}
-			break
-		}
-	}
-
-	if arg_end == 0 {
-		arg_end = len(os.Args)
-	}
-
-	flags.Parse(os.Args[1:arg_end])
+	flags.Parse(os.Args[1:])
 
 	// Read configuration file.
 	Config, err = cfg.ReadOnly(*config_file)
@@ -254,26 +233,22 @@ func main() {
 	switch strings.ToLower(Config.SGet("configuration", "auth_mode")) {
 		case "signature":
 			auth_flow = SIGNATURE_AUTH
+			if len(flags.Args()) == 0 {
+				errChk(fmt.Errorf("When using %s with 'auth_mode = signature', you must specify a user or list of users to run tasks as.. (ie.. %s usera@domain.com, userb@domain.com)", os.Args[0], os.Args[0]))
+			}
 		case "password":
 			auth_flow = PASSWORD_AUTH
+			if len(DB.SGet("tokens", "whoami")) == 0 {
+				DB.Truncate("tokens")
+			}
 		default:
 			errChk(fmt.Errorf("Unknown auth setting: %s", Config.SGet("configuration", "auth_mode")))
-	}
-
-	if *sig && auth_flow != SIGNATURE_AUTH {
-		errChk(fmt.Errorf("Extended Operations requires signature authentication, currently: %s.", Config.SGet("configuration", "auth_mode")))
-	} else if *sig && auth_flow == SIGNATURE_AUTH {
-		extendedOperations(cmd_args)
 	}
 
 	// Begin scan loop.
 	for {
 		start := time.Now().Round(time.Second)
-		//err := TaskHandler()
-		//if err != nil {
-		//	fmt.Println(err)
-		//}
-		//DB.CryptSet("Hello", "World", "Hi")
+		JobHandler(flags.Args())
 		if continuous {
 			for time.Now().Sub(start) < ival {
 				ctime = time.Duration(ival-time.Now().Round(time.Second).Sub(start))

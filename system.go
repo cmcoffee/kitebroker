@@ -35,7 +35,7 @@ func NewCache() (*Cache) {
 }
 
 // Add/Set a cache entry
-func (c *Cache) Set(section string, key interface{}, value interface{}) error {
+func (c *Cache) CacheSet(section string, key interface{}, value interface{}) error {
 	c.f_lock.Lock()
 	c.b_lock.Lock()
 	defer c.f_lock.Unlock()
@@ -67,7 +67,7 @@ func (c *Cache) Set(section string, key interface{}, value interface{}) error {
 }
 
 // Returns strings based on integer index.
-func (c *Cache) GetName(section string, key int) (string, bool) {
+func (c *Cache) CacheGetName(section string, key int) (string, bool) {
 	c.b_lock.RLock()
 	defer c.b_lock.RUnlock()
 	section = strings.ToLower(section)
@@ -80,7 +80,7 @@ func (c *Cache) GetName(section string, key int) (string, bool) {
 }
 
 // Returns a integer based on string index.
-func (c *Cache) GetID(section string, key string) (int, bool) {
+func (c *Cache) CacheGetID(section string, key string) (int, bool) {
 	c.f_lock.RLock()
 	defer c.f_lock.RUnlock()
 	section = strings.ToLower(section)
@@ -93,7 +93,7 @@ func (c *Cache) GetID(section string, key string) (int, bool) {
 }
 
 // Removes cahce entry.
-func (c *Cache) Unset(section string, key interface{}) {
+func (c *Cache) CacheUnset(section string, key interface{}) {
 	c.f_lock.Lock()
 	c.b_lock.Lock()
 	defer c.f_lock.Unlock()
@@ -108,33 +108,8 @@ func (c *Cache) Unset(section string, key interface{}) {
 	}
 }
 
-// Provides human readable file sizes.
-func showSize(bytes int) string {
-
-	names := []string{
-		"Bytes",
-		"KB",
-		"MB",
-		"GB",
-	}
-
-	suffix := 0
-	size := float64(bytes)
-
-	for size >= 1000 && suffix < len(names)-1 {
-		size = size / 1000
-		suffix++
-	}
-
-	return fmt.Sprintf("%.1f%s", size, names[suffix])
-}
-
-func getPercentage(t_size, c_size int) int {
-	return int((float64(c_size) / float64(t_size)) * 100)
-}
-
 // Truncates Cache
-func (c *Cache) Flush() {
+func (c *Cache) FlushCache() {
 	c.f_lock.Lock()
 	c.b_lock.Lock()
 	defer c.f_lock.Unlock()
