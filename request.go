@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
+	"github.com/cmcoffee/go-logger"
 )
 
 // API Session
@@ -21,12 +23,15 @@ var api_call_bank chan struct{}
 var transfer_call_bank chan struct{}
 
 type PostJSON map[string]interface{}
-type PostFORM map[string]string
-type Query map[string]string
+type PostFORM map[string]interface{}
+type Query map[string]interface{}
 
 const (
 	ErrBadAuth = "ERR_AUTH_UNAUTHORIZED"
 )
+
+var ErrUploaded = fmt.Errorf("File is already uploaded.")
+var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
 // Converts kiteworks API errors to standard golang error message.
 func (s Session) respError(resp *http.Response) (err error) {
@@ -38,8 +43,8 @@ func (s Session) respError(resp *http.Response) (err error) {
 	type KiteErr struct {
 		Error     string `json:"error"`
 		ErrorDesc string `json:"error_description"`
-		Errors []struct{
-			Code string `json:"code"`
+		Errors    []struct {
+			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
@@ -52,30 +57,39 @@ func (s Session) respError(resp *http.Response) (err error) {
 		body = resp.Body
 	}
 
+	if resp_snoop { logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status) }
+
 	output, err := ioutil.ReadAll(body)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
+
+	if resp_snoop { logger.Put("\n") }
 
 	var kite_err KiteErr
 
-	err = json.Unmarshal(output, &kite_err)
+	json.Unmarshal(output, &kite_err)
 
 	defer resp.Body.Close()
 
-	if err != nil {
-		return fmt.Errorf("%s", resp.Status)
-	}
-
 	if len(kite_err.Errors) > 0 {
-		if kite_err.Errors[0].Code == ErrBadAuth {
-			DB.Unset("tokens", string(s))
+		var error_text []string
+		error_text = append(error_text, "kiteworks error(s):")
+		for n, v := range kite_err.Errors {
+			if v.Code == ErrBadAuth {
+				DB.Truncate("tokens")
+			}
+			error_text = append(error_text, fmt.Sprintf("  [%d] %s => %s", n, v.Code, v.Message))
 		}
-		return fmt.Errorf("%s", kite_err.Errors[0].Code)
-	} 
+		error_text = append(error_text, "\n")
+		return fmt.Errorf("%s", strings.Join(error_text[0:], "\n"))
+	}
 
 	if kite_err.ErrorDesc != NONE {
-		return fmt.Errorf("%s: %s", kite_err.Error, kite_err.ErrorDesc)
+		return fmt.Errorf("kiteworks error:\n  %s => %s\n", kite_err.Error, kite_err.ErrorDesc)
 	}
-	return nil
+
+	return
 }
 
 // Wrapper around request and client to make simple requests for information to appliance.
@@ -88,13 +102,18 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	action = strings.ToUpper(action)
 
+	if call_snoop { logger.Put("\n--> ACTION: \"%s\" PATH \"%s\"\n", action, path) }
+
 	for _, in := range input {
 		switch i := in.(type) {
 		case PostFORM:
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			p := make(url.Values)
 			for k, v := range i {
-				p.Add(k, v)
+				p.Add(k, fmt.Sprintf("%v", v))
+				if call_snoop {
+					logger.Put("\\-> POST PARAM: \"%s\" VALUE: \"%s\"\n", k, p[k])
+				}
 			}
 			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(p.Encode())))
 		case PostJSON:
@@ -104,13 +123,16 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 				return err
 			}
 			if call_snoop {
-				fmt.Println(string(json))
+				logger.Put("\\-> POST JSON: %s\n", string(json))
 			}
 			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(json)))
 		case Query:
 			q := req.URL.Query()
 			for k, v := range i {
-				q.Set(k, v)
+				q.Set(k, fmt.Sprintf("%v", v))
+				if call_snoop {
+					logger.Put("\\-> QUERY: %s=%s\n", k, q[k])
+				}
 			}
 			req.URL.RawQuery = q.Encode()
 		case io.ReadCloser:
@@ -133,7 +155,6 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 // Create new formed http request for appliance.
 func (s Session) NewRequest(action, path string) (req *http.Request, err error) {
-
 	req, err = http.NewRequest(action, fmt.Sprintf("https://%s%s", server, path), nil)
 	if err != nil {
 		return nil, err
@@ -143,13 +164,14 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 	req.URL.Scheme = "https"
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
 	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
+	req.Header.Set("Referer", "https://"+server+"/")
 
 	access_token, err := s.GetToken()
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer " + access_token)
+	req.Header.Set("Authorization", "Bearer "+access_token)
 
 	return req, nil
 }
@@ -176,7 +198,9 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	defer resp.Body.Close()
 
 	err = s.respError(resp)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	var body io.Reader
 
@@ -187,7 +211,9 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	}
 
 	if output == nil && resp_snoop {
+		logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status)
 		ioutil.ReadAll(body)
+		if resp_snoop { logger.Put("\n") }
 		return nil
 	} else if output == nil {
 		return nil
@@ -222,7 +248,7 @@ type KiteLinks struct {
 	Relationship string `json:"rel"`
 	Entity       string `json:"entity"`
 	ID           int    `json:"id"`
-	Href         string `json:"href"`
+	URL          string `json:"href"`
 }
 
 // Kiteworks Folder/File Data
@@ -240,7 +266,7 @@ type KiteData struct {
 	Locked       int         `json:"locked"`
 	Fingerprint  string      `json:"fingerprint"`
 	Status       string      `json:"status"`
-	Size         int         `json:"size"`
+	Size         int64       `json:"size"`
 	Mime         string      `json:"mime"`
 	Quarantined  bool        `json:"quarantined"`
 	DLPLocked    bool        `json:"dlpLocked"`
@@ -257,14 +283,6 @@ type KiteArray struct {
 		Total  uint `json:"total"`
 		Offset int  `json:"offset"`
 	} `json:"metadata"`
-}
-
-func (s Session) SetProgress(url string, flag int) (err error) {
-	return
-}
-
-func (s Session) GetProgress(url string) (flag int) {
-	return 0
 }
 
 // Get My User information.
@@ -288,10 +306,10 @@ func (s Session) MyFolderID() (file_id int, err error) {
 }
 
 // Get url to self.
-func (s Session) GetSelfHref(input *[]KiteLinks) string {
+func SelfLink(input *[]KiteLinks) string {
 	for _, link := range *input {
 		if strings.ToLower(link.Relationship) == "self" {
-			return link.Href
+			return link.URL
 		}
 	}
 	return NONE
@@ -389,37 +407,41 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	return
 }
 
-func (s Session) NewFile(folder_id int, filename string) (string, error) {
+func (s Session) NewFile(folder_id int, filename string, sz int64, chunks int, modtime time.Time) (string, error) {
 	type T struct {
 		URI string `json:"uri"`
 	}
 	var o T
-	return o.URI, s.Call("POST", fmt.Sprintf("/rest/folders/%d/actions/initiateUpload", folder_id), &o, PostJSON{"filename": filename}, Query{"returnEntity": "true", "mode": "full"})
-
+	return o.URI, s.Call("POST", fmt.Sprintf("/rest/folders/%d/actions/initiateUpload", folder_id), &o, PostJSON{"filename": filename, "totalSize": sz, "totalChunks": chunks, "clientModified": write_kw_time(modtime)}, Query{"returnEntity": "true", "mode": "full"})
 }
 
 func (s Session) AddUserToFolder(user_id int, folder_id int, role_id int, notify bool) (err error) {
-	return s.Call("POST", fmt.Sprintf("/rest/folders/%d/members", folder_id), nil, PostJSON{"roleId": role_id, "userId": user_id, "notify": notify}, Query{"returnEntity": "false"})
+	return s.Call("POST", fmt.Sprintf("/rest/folders/%d/members", folder_id), nil, PostJSON{"roleId": role_id, "userId": user_id, "notify": notify}, Query{"returnEntity": false})
 }
 
 // Get user information.
-func (s  Session) UserInfo(user_id int) (output KiteUser, err error) {
+func (s Session) UserInfo(user_id int) (output KiteUser, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/users/%d", user_id), &output)
 }
 
 // List Folders.
-func (s  Session) ListFolders(folder_id int) (output KiteArray, err error) {
-	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/folders", folder_id), &output, Query{"deleted": "false"})
+func (s Session) ListFolders(folder_id int) (output KiteArray, err error) {
+	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/folders", folder_id), &output, Query{"deleted": false})
 }
 
 // List Files.
-func (s  Session) ListFiles(folder_id int) (output KiteArray, err error) {
-	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/files", folder_id), &output, Query{"deleted": "false"})
+func (s Session) ListFiles(folder_id int) (output KiteArray, err error) {
+	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/files", folder_id), &output, Query{"deleted": false})
+}
+
+// Find Files.
+func (s Session) FindFiles(folder_id int, filename string) (output KiteArray, err error) {
+	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/files", folder_id), &output, Query{"deleted": false, "name": filename, "mode": "full"})
 }
 
 // Get File Information
-func (s  Session) FileInfo(file_id int) (output KiteData, err error) {
-	return output, s.Call("GET", fmt.Sprintf("/rest/files/%d", file_id), &output)
+func (s Session) FileInfo(file_id int) (output KiteData, err error) {
+	return output, s.Call("GET", fmt.Sprintf("/rest/files/%d", file_id), &output, Query{"deleted": false})
 }
 
 // Returns Folder information.
@@ -435,7 +457,7 @@ func (s Session) DeleteFile(file_id int) (err error) {
 // Create remote folder
 func (s Session) CreateFolder(name string, parent_id int) (folder_id int, err error) {
 	var new_folder KiteData
-	err = s.Call("POST", fmt.Sprintf("/rest/folders/%d/folders", parent_id), &new_folder, PostJSON{"name": name}, Query{"returnEntity": "true"})
+	err = s.Call("POST", fmt.Sprintf("/rest/folders/%d/folders", parent_id), &new_folder, PostJSON{"name": name}, Query{"returnEntity": true})
 	return new_folder.ID, err
 }
 
@@ -463,7 +485,7 @@ func (s Session) AddUser(email, password string, verify, notify bool) (err error
 		json_post["password"] = password
 	}
 
-	if err = s.Call("POST", "/rest/admin/users", &new_user, json_post, Query{"returnEntity": "true"}); err != nil {
+	if err = s.Call("POST", "/rest/admin/users", &new_user, json_post, Query{"returnEntity": true}); err != nil {
 		return err
 	}
 
