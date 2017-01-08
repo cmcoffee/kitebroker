@@ -1,6 +1,6 @@
 # kitebroker: Automation Assistant for kiteworks.
 
-## (v0.0.7a - 01-08-2017)
+## (v0.0.8a - 01-08-2017)
     * API Configuration is now stored obfuscated within the config file for easy deployment.
     * Removed add user via csv option for now.
     * Refactored download, no longer renames folders, but lessened reliance on database.
