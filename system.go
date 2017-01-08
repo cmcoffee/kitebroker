@@ -1,132 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"github.com/cmcoffee/go-logger"
+	"github.com/howeyc/gopass"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"bufio"
-	"github.com/cmcoffee/go-logger"
-	"github.com/howeyc/gopass"
-	"sync"
 )
-
-type Cache struct {
-	f_lock *sync.RWMutex
-	b_lock *sync.RWMutex
-	f_map map[string]map[string]int
-	b_map map[string]map[int]string
-}
-
-func NewCache() (*Cache) {
-	return &Cache{
-		new(sync.RWMutex),
-		new(sync.RWMutex),
-		make(map[string]map[string]int),
-		make(map[string]map[int]string),
-	}
-}
-
-// Add/Set a cache entry
-func (c *Cache) CacheSet(section string, key interface{}, value interface{}) error {
-	c.f_lock.Lock()
-	c.b_lock.Lock()
-	defer c.f_lock.Unlock()
-	defer c.b_lock.Unlock()
-
-	section = strings.ToLower(section)
-
-	if c.f_map[section] == nil {
-		c.f_map[section] = make(map[string]int)
-		c.b_map[section] = make(map[int]string)
-	}
-
-	switch k := key.(type) {
-	case int:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("key and value cannot both be a integer.")
-		}
-		c.b_map[section][k] = v
-	case string:
-		k = strings.ToLower(k)
-		v, ok := value.(int)
-		if !ok {
-			return fmt.Errorf("key and value cannot both be a string.")
-		}
-		c.f_map[section][k] = v
-	}
-	return nil
-}
-
-// Returns strings based on integer index.
-func (c *Cache) CacheGetName(section string, key int) (string, bool) {
-	c.b_lock.RLock()
-	defer c.b_lock.RUnlock()
-	section = strings.ToLower(section)
-	nest, found := c.b_map[section]
-	if !found {
-		return NONE, false
-	}
-	v, found := nest[key]
-	return v, found
-}
-
-// Returns a integer based on string index.
-func (c *Cache) CacheGetID(section string, key string) (int, bool) {
-	c.f_lock.RLock()
-	defer c.f_lock.RUnlock()
-	section = strings.ToLower(section)
-	nest, found := c.f_map[section]
-	if !found {
-		return 0, false
-	}
-	v, found := nest[strings.ToLower(key)]
-	return v, found
-}
-
-// Removes cahce entry.
-func (c *Cache) CacheUnset(section string, key interface{}) {
-	c.f_lock.Lock()
-	c.b_lock.Lock()
-	defer c.f_lock.Unlock()
-	defer c.b_lock.Unlock()
-	section = strings.ToLower(section)
-	switch k := key.(type) {
-	case int:
-		delete(c.b_map[section], k)
-	case string:
-		k = strings.ToLower(k)
-		delete(c.f_map[section], k)
-	}
-}
-
-// Truncates Cache
-func (c *Cache) FlushCache() {
-	c.f_lock.Lock()
-	c.b_lock.Lock()
-	defer c.f_lock.Unlock()
-	defer c.b_lock.Unlock()
-	for section, _ := range c.b_map {
-		for key, _ := range c.b_map[section] {
-			delete(c.b_map[section], key)
-		}
-		delete(c.b_map, section)
-	}
-	for section, _ := range c.f_map {
-		for key, _ := range c.f_map[section] {
-			delete(c.f_map[section], key)
-		}
-		delete(c.f_map, section)
-	}
-}
 
 // Get confirmation
 func getConfirm(name string) bool {
@@ -162,7 +51,7 @@ func get_passw(question string) string {
 	for {
 		fmt.Printf(question)
 		resp, err := gopass.GetPasswd()
-		if err != nil { 
+		if err != nil {
 			if err == gopass.ErrInterrupted {
 				os.Exit(1)
 			}
@@ -176,7 +65,6 @@ func get_passw(question string) string {
 	}
 }
 
-
 // Gets user input, used during setup and configuration.
 func get_input(question string) string {
 	reader := bufio.NewReader(os.Stdin)
@@ -184,7 +72,7 @@ func get_input(question string) string {
 	for {
 		fmt.Printf(question)
 		response, err := reader.ReadString('\n')
-		if err != nil { 
+		if err != nil {
 			fmt.Printf("Err: %s\n", err.Error())
 			continue
 		}
@@ -226,8 +114,15 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 }
 
 // Perform sha256.Sum256 against input byte string.
-func hashBytes(input []byte) []byte {
-	sum := sha256.Sum256(input)
+func hashBytes(input ...interface{}) []byte {
+	var combine []string
+	for _, v := range input {
+		if x, ok := v.([]byte); ok {
+			v = string(x)
+		}
+		combine = append(combine, fmt.Sprintf("%v", v))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(combine[0:], NONE)))
 	var output []byte
 	output = append(output[0:], sum[0:]...)
 	return output
@@ -262,9 +157,14 @@ func getBoolVal(input string) bool {
 }
 
 // Parse Timestamps from kiteworks
-func timeParse(input string) (time.Time, error) {
+func read_kw_time(input string) (time.Time, error) {
 	input = strings.Replace(input, "+0000", "Z", 1)
 	return time.Parse(time.RFC3339, input)
+}
+
+func write_kw_time(input time.Time) string {
+	t := input.UTC().Format(time.RFC3339)
+	return strings.Replace(t, "Z", "+0000", 1)
 }
 
 // Create a local folder
@@ -312,14 +212,22 @@ func moveFile(src, dst string) (err error) {
 	s_file.Close()
 	d_file.Close()
 
-	return os.Remove(src)
+	for i := 0; i < 10; i++ {
+		if err := os.Remove(src); err != nil {
+			time.Sleep(time.Second)
+			continue
+		} else {
+			break
+		}
+	}
+	return
 }
 
 // Fatal error handler.
 func errChk(err error, desc ...string) {
 	if err != nil {
 		if len(desc) > 0 {
-			logger.Fatal("[%s] %s\n", strings.Join(desc, "->"), err.Error())
+			logger.Fatal("[%s] %s", strings.Join(desc, "->"), err.Error())
 		} else {
 			logger.Fatal(err)
 		}
