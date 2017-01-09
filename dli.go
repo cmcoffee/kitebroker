@@ -412,18 +412,22 @@ func (j *Task) DLIReport() (err error) {
 					if err != nil && err == ErrNotReady {
 						time.Sleep(time.Second * 10)
 						continue
-					} else {
-						tmp := lastUpdate[n]
-						tmp.Completed = true
-						tmp.Start_time = task_time
-						tmp.Export_id = NONE
-						lastUpdate[n] = tmp
-						if err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil {
-							return err
-						}
-						s.DeleteExport(x.Exports[k].ID)
-						break
 					}
+					tmp := lastUpdate[n]
+					tmp.Completed = true
+					if err == nil {
+						tmp.Start_time = task_time
+					}
+					tmp.Export_id = NONE
+					lastUpdate[n] = tmp
+					if db_err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil {
+						return db_err
+					}
+					s.DeleteExport(x.Exports[k].ID)
+					if err != nil {
+						return err
+					} 
+					break
 				}
 			}
 		}
