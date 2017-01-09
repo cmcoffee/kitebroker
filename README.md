@@ -1,5 +1,10 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.0.8b - 01-08-2017)
+    * Changed the stream buffers from 2k to 4k.
+    * Added better error handling when dli_export doesn't work.
+    * Modified first time setup when using signature based authentication.
+
 ## (v0.0.8a - 01-08-2017)
     * API Configuration is now stored obfuscated within the config file for easy deployment.
     * Removed add user via csv option for now.

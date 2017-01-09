@@ -18,7 +18,7 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.0.8a"
+	VERSION       = "0.0.8b"
 	KWAPI_VERSION = "5"
 	NONE          = ""
 )
@@ -77,7 +77,10 @@ func open_database(db_file string) {
 // Performs configuration.
 func api_setup(config_filename string) {
 
-	var server string
+	var (
+		server           string
+		signature_secret string
+	)
 
 	fmt.Println("- kiteworks Secure API Configuration -\n")
 
@@ -87,6 +90,9 @@ RedoSetup:
 	}
 	client_id := get_input("Client Application ID: ")
 	client_secret := get_input("Client Secret Key: ")
+	if auth_flow == SIGNATURE_AUTH {
+		signature_secret = get_input("Signature Secret: ")
+	}
 	fmt.Println(NONE)
 
 	for confirm := getConfirm("Confirm API settings"); confirm == false; {
@@ -108,6 +114,10 @@ RedoSetup:
 
 	errChk(cfg_writer.Set("configuration", "api_cfg_0", api_cfg_0))
 	errChk(cfg_writer.Set("configuration", "api_cfg_1", api_cfg_1))
+
+	if auth_flow == SIGNATURE_AUTH {
+		errChk(DB.CryptSet("tokens", "s", &signature_secret))
+	}
 
 }
 
@@ -234,12 +244,12 @@ func main() {
 	_, db_filename := filepath.Split(*config_file)
 	db_filename = strings.Split(db_filename, ".")[0] + ".db"
 
-	// Load API Settings
-	loadAPIConfig(*config_file)
-
 	// Open datastore
 	open_database(db_filename)
 	logger.InTheEnd(DB.Close)
+
+	// Load API Settings
+	loadAPIConfig(*config_file)
 
 	// Reset credentials, if requested.
 	if *reset {
@@ -265,7 +275,9 @@ func main() {
 	case "signature":
 		auth_flow = SIGNATURE_AUTH
 		if len(users) == 0 {
-			errChk(fmt.Errorf("When using %s with 'auth_mode = signature', you must specify a user or list of users to run tasks as.. (ie.. %s -u=usera@domain.com,userb@domain.com)", os.Args[0], os.Args[0]))
+			logger.InTheEnd(func() { fmt.Println(NONE) })
+			logger.InTheEnd(flags.Usage)
+			errChk(fmt.Errorf("When using %s with 'auth_mode = signature', you must specify a user or list of users to run tasks as.", os.Args[0]))
 		}
 		Session(users[0]).GetToken()
 	case "password":

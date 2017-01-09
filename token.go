@@ -61,36 +61,6 @@ func (s Session) GetToken() (access_token string, err error) {
 	return auth.AccessToken, nil
 }
 
-/*
-// Checks to see if access_token is working.
-func (s Session) testToken() (err error) {
-
-	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/rest/users/me", server), nil)
-	if err != nil {
-		return err
-	}
-
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
-	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
-
-	access_token := DB.SGet("tokens", s)
-
-	req.Header.Set("Authorization", "Bearer " + access_token)
-
-	client := s.NewClient()
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	if resp.StatusCode != 200 {
-		return s.respError(resp)
-	}
-	return nil
-}
-*/
-
 // Call to appliance for Bearer token.
 func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 

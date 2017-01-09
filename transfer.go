@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-logger"
 	"io"
-	"io/ioutil"
 	"mime/multipart"
 	"os"
 	"strconv"
@@ -117,7 +116,7 @@ func progressBar(c_size, t_size int64) string {
 		num = 100
 	}
 	var display [25]rune
-	for n, _ := range display {
+	for n := range display {
 		if n < num/4 {
 			display[n] = '░'
 		} else {
@@ -161,14 +160,14 @@ func (t *TMonitor) ShowTransfer() {
 }
 
 func (t *TMonitor) Offset(current_sz int64) {
-	t.transfered = int64(current_sz)
+	t.transfered = current_sz
 	t.offset = t.transfered
 }
 
 // Perform the file transfer, input stream->output stream.
-func Transfer(size *int64, reader io.Reader, writer io.Writer, tm *TMonitor) (err error) {
+func Transfer(reader io.Reader, writer io.Writer, tm *TMonitor) (err error) {
 
-	buf := make([]byte, 2048)
+	buf := make([]byte, 4096)
 	var eof bool
 
 	for {
@@ -184,9 +183,6 @@ func Transfer(size *int64, reader io.Reader, writer io.Writer, tm *TMonitor) (er
 		n := 0
 		for {
 			wb, err := writer.Write(buf[n:rb])
-			if size != nil {
-				*size = *size + int64(wb)
-			}
 			if err != nil {
 				return err
 			}
@@ -232,8 +228,8 @@ func (s *Session) Download(nfo KiteData) (err error) {
 		DB.Set("dl_files", nfo.ID, &record)
 	}
 
-	if record.Flag&DONE > 0 {
-		return nil
+	if record.Flag&DONE == DONE {
+		return ErrDownloaded
 	}
 
 	var f *os.File
@@ -317,7 +313,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 		}
 	}
 
-	err = Transfer(nil, resp.Body, f, tm)
+	err = Transfer(resp.Body, f, tm)
 	if err != nil {
 		return
 	}
@@ -523,25 +519,13 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 		post := &streamReadCloser{
 			limit,
 			0,
-			make([]byte, 2048),
+			make([]byte, 4096),
 			w_buff,
 			f,
 			false,
 			f_writer,
 			tm,
 			w,
-		}
-
-		if call_snoop {
-			for k, v := range req.Header {
-				logger.Put("%s: %s\n", k, strings.Join(v, " "))
-			}
-			x, err := ioutil.ReadAll(post)
-			if err != nil {
-				return err
-			}
-			fmt.Println(string(x))
-			os.Exit(0)
 		}
 
 		req.Body = post

@@ -229,6 +229,7 @@ func (t *Task) kw_umap(folder_id int, local_path string) (err error) {
 // DownloadFolder task.
 func (t *Task) DownloadFolder() (err error) {
 	var wg sync.WaitGroup
+	var files_found bool
 
 	DB.Truncate("dl_folders")
 
@@ -273,9 +274,12 @@ func (t *Task) DownloadFolder() (err error) {
 				}
 				for _, f := range files.Data {
 					err = t.session.Download(f)
-					if err != nil {
+					if err != nil && err == ErrDownloaded {
+						continue
+					} else if err != nil {
 						logger.Err(err)
 					} else {
+						files_found = true
 						if delete_sources {
 							logger.Log("Removing file %s from %s.", f.Name, m.Name)
 							err = t.session.DeleteFile(f.ID)
@@ -333,6 +337,10 @@ func (t *Task) DownloadFolder() (err error) {
 	}()
 
 	wg.Wait()
+
+	if !files_found {
+		logger.Log("No new files to download.")
+	}
 
 	return
 }

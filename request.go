@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"github.com/cmcoffee/go-logger"
 )
 
 // API Session
@@ -30,6 +31,7 @@ const (
 )
 
 var ErrUploaded = fmt.Errorf("File is already uploaded.")
+var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
 // Converts kiteworks API errors to standard golang error message.
 func (s Session) respError(resp *http.Response) (err error) {
@@ -55,10 +57,14 @@ func (s Session) respError(resp *http.Response) (err error) {
 		body = resp.Body
 	}
 
+	if resp_snoop { logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status) }
+
 	output, err := ioutil.ReadAll(body)
 	if err != nil {
 		return err
 	}
+
+	if resp_snoop { logger.Put("\n") }
 
 	var kite_err KiteErr
 
@@ -68,7 +74,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 
 	if len(kite_err.Errors) > 0 {
 		var error_text []string
-		error_text = append(error_text, "kiteworks server reported error(s):")
+		error_text = append(error_text, "kiteworks error(s):")
 		for n, v := range kite_err.Errors {
 			if v.Code == ErrBadAuth {
 				DB.Truncate("tokens")
@@ -80,7 +86,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 	}
 
 	if kite_err.ErrorDesc != NONE {
-		return fmt.Errorf("- kiteworks server reported an error:\n\t%s => %s\n", kite_err.Error, kite_err.ErrorDesc)
+		return fmt.Errorf("kiteworks error:\n  %s => %s\n", kite_err.Error, kite_err.ErrorDesc)
 	}
 
 	return
@@ -96,6 +102,8 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	action = strings.ToUpper(action)
 
+	if call_snoop { logger.Put("\n--> ACTION: \"%s\" PATH \"%s\"\n", action, path) }
+
 	for _, in := range input {
 		switch i := in.(type) {
 		case PostFORM:
@@ -104,7 +112,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 			for k, v := range i {
 				p.Add(k, fmt.Sprintf("%v", v))
 				if call_snoop {
-					fmt.Println(p[k])
+					logger.Put("\\-> POST PARAM: \"%s\" VALUE: \"%s\"\n", k, p[k])
 				}
 			}
 			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(p.Encode())))
@@ -115,7 +123,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 				return err
 			}
 			if call_snoop {
-				fmt.Println(string(json))
+				logger.Put("\\-> POST JSON: %s\n", string(json))
 			}
 			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(json)))
 		case Query:
@@ -123,7 +131,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 			for k, v := range i {
 				q.Set(k, fmt.Sprintf("%v", v))
 				if call_snoop {
-					fmt.Printf("%s: %s\n", k, q[k])
+					logger.Put("\\-> QUERY: %s=%s\n", k, q[k])
 				}
 			}
 			req.URL.RawQuery = q.Encode()
@@ -197,14 +205,15 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	var body io.Reader
 
 	if resp_snoop {
-		fmt.Println(resp)
 		body = io.TeeReader(resp.Body, os.Stderr)
 	} else {
 		body = resp.Body
 	}
 
 	if output == nil && resp_snoop {
+		logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status)
 		ioutil.ReadAll(body)
+		if resp_snoop { logger.Put("\n") }
 		return nil
 	} else if output == nil {
 		return nil
