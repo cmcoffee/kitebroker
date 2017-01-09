@@ -155,7 +155,11 @@ func (t *TMonitor) RecordTransfer(current_sz int) {
 }
 
 func (t *TMonitor) ShowTransfer() {
-	logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, showRate(t.transfered-t.offset, t.start_time), progressBar(t.transfered, t.total_size), showSize(int64(t.transfered)), showSize(int64(t.total_size))))
+	if t.total_size > -1 {
+		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, showRate(t.transfered-t.offset, t.start_time), progressBar(t.transfered, t.total_size), showSize(t.transfered), showSize(t.total_size)))
+	} else {
+		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, showRate(t.transfered-t.offset, t.start_time), showSize(t.transfered)))
+	}
 	t.last_shown = time.Now()
 }
 
