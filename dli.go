@@ -420,7 +420,7 @@ func (j *Task) DLIReport() (err error) {
 					}
 					tmp.Export_id = NONE
 					lastUpdate[n] = tmp
-					if db_err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil {
+					if db_err := DB.Set(j.task_id, j.session, &lastUpdate); db_err != nil {
 						return db_err
 					}
 					s.DeleteExport(x.Exports[k].ID)
