@@ -224,6 +224,10 @@ func main() {
 		max_connections = 6
 	}
 
+	if resp_snoop || call_snoop {
+		max_connections = 1
+	}
+
 	api_call_bank = make(chan struct{}, max_connections)
 	for i := 0; i < max_connections; i++ {
 		api_call_bank <- call_done

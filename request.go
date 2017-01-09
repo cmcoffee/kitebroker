@@ -57,7 +57,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 		body = resp.Body
 	}
 
-	if resp_snoop { logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status) }
+	if resp_snoop { logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status) }
 
 	output, err := ioutil.ReadAll(body)
 	if err != nil {
@@ -211,12 +211,16 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	}
 
 	if output == nil && resp_snoop {
-		logger.Put("\n<-- RESPONSE STATUS: %s\n", resp.Status)
+		logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status)
 		ioutil.ReadAll(body)
-		if resp_snoop { logger.Put("\n") }
 		return nil
 	} else if output == nil {
 		return nil
+	}
+
+	if resp_snoop {
+		logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status)
+		defer logger.Put("\n\n")
 	}
 
 	dec := json.NewDecoder(body)
@@ -224,6 +228,7 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	if err == io.EOF {
 		return nil
 	}
+
 	return
 }
 
