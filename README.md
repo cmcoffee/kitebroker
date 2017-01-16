@@ -1,5 +1,9 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.0.8c - 01-16-2017)
+    * Updated DLI to update start time to provided export time from kiteworks appliance.
+    * Added save_metadata to folder_download to store metadata of file with file.
+
 ## (v0.0.8b - 01-08-2017)
     * Changed the stream buffers from 2k to 4k.
     * Added better error handling when dli_export doesn't work.
