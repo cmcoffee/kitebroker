@@ -19,7 +19,7 @@ const (
 type dli_export struct {
 	ID        string      `json:"id"`
 	StartDate interface{} `json:"startDate"`
-	EndDate   string      `json:"endDate"`
+	EndDate   interface{} `json:"endDate"`
 	Status    string      `json:"status"`
 	Filename  string      `json:"fileName"`
 	Types     []string    `json:"types"`
@@ -417,6 +417,11 @@ func (j *Task) DLIReport() (err error) {
 					tmp.Completed = true
 					if err == nil {
 						tmp.Start_time = task_time
+						if next_time, ok := x.Exports[k].EndDate.(string); ok {
+							if tmp.Start_time, err = read_kw_time(next_time); err != nil {
+								tmp.Start_time = task_time
+							}
+						}
 					}
 					tmp.Export_id = NONE
 					lastUpdate[n] = tmp

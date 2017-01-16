@@ -7,7 +7,7 @@ import (
 )
 
 // Combile metadata information about file, append -info to the file and store it in path specified.
-func (s *Session) MetaData(file_info *KiteData, path string) (err error) {
+func (s *Session) MetaData(file_info *KiteData) (err error) {
 	const metadata = `
 Filename: {{.Name}}
 Uploader: {{.Creator}}
@@ -42,12 +42,25 @@ MimeType = {{.Mime}}
 		*KiteData
 	}
 
+	var local_path string
+
+	found, err = DB.Get("dl_folders", file_info.ParentID, &local_path)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("Cannot download file %s, local destination folder missing.", file_info.Name)
+	}
+
+	local_path = cleanPath(local_path)
+
 	file_info_extended.Creator = Uploader
 	file_info_extended.KiteData = file_info
 
 	t := template.Must(template.New("metadata").Parse(metadata))
 
-	f, err := os.Create(cleanPath(fmt.Sprintf("%s/%s", path, file_info.Name+"-info")))
+
+	f, err := os.Create(cleanPath(fmt.Sprintf("%s/%s", local_path, file_info.Name+"-info")))
 	if err != nil {
 		return err
 	}

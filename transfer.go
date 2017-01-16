@@ -432,7 +432,7 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 	_, chunk_size := t.getChunkInfo(-1)
 
 	// Create a record in the database if one does not exist yet or does not appear to be the one we've uploaded.
-	if record.Flag == 0 || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || record.ChunkSize != chunk_size {
+	if record.Flag == 0 || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || record.ChunkSize != chunk_size && record.Flag&DONE != DONE {
 		record.Flag = UPLOAD
 		record.CompletedChunks = 0
 		record.TotalSize = fstat.Size()

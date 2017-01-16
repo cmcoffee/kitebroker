@@ -258,6 +258,12 @@ func (t *Task) DownloadFolder() (err error) {
 		delete_sources = true
 	}
 
+	var save_file_info bool
+
+	if strings.Contains(strings.ToLower(Config.SGet(t.task_id, "save_metadata")), "yes") {
+		save_file_info = true
+	}
+
 	t.queue = make(chan interface{}, 128)
 
 	// File downloader thread.
@@ -280,6 +286,11 @@ func (t *Task) DownloadFolder() (err error) {
 						logger.Err(err)
 					} else {
 						files_found = true
+						if save_file_info {
+							if err := t.session.MetaData(&f); err != nil {
+								logger.Err(err)
+							}
+						}
 						if delete_sources {
 							logger.Log("Removing file %s from %s.", f.Name, m.Name)
 							err = t.session.DeleteFile(f.ID)
