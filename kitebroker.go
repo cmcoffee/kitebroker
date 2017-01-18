@@ -283,7 +283,6 @@ func main() {
 			logger.InTheEnd(flags.Usage)
 			errChk(fmt.Errorf("When using %s with 'auth_mode = signature', you must specify a user or list of users to run tasks as.", os.Args[0]))
 		}
-		Session(users[0]).GetToken()
 	case "password":
 		auth_flow = PASSWORD_AUTH
 		user := DB.SGet("tokens", "whoami")
@@ -305,6 +304,8 @@ func main() {
 	default:
 		errChk(fmt.Errorf("Unknown auth setting: %s", Config.SGet("configuration", "auth_mode")))
 	}
+
+	Session(users[0]).GetToken()
 
 	// Begin scan loop.
 	for {

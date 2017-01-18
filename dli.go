@@ -57,12 +57,11 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 
 	var f *os.File
 
-	local_path := cleanPath(fmt.Sprintf("%s/%s", Config.SGet(j.task_id, "local_path"), j.session))
-
-	err = MkDir(local_path)
-	if err != nil {
-		return
-	}
+	// Create all paths
+	local_path := cleanPath(Config.SGet(j.task_id, "local_path"))
+	if err = MkDir(local_path); err != nil { return }
+	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.SGet(j.task_id, "local_path"), j.session))
+	if err = MkDir(local_path); err != nil { return }
 
 	fname := cleanPath(fmt.Sprintf("%s/%s", local_path, target.Filename))
 	temp_fname := cleanPath(fmt.Sprintf("%s/%s.dli.incomplete", cleanPath(Config.SGet("configuration", "temp_path")), target.Filename))
