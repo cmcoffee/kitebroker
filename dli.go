@@ -314,24 +314,18 @@ func (j *Task) DLIReport() (err error) {
 		return err
 	}
 
+	start_date, err := time.Parse("2006-Jan-02", Config.SGet(j.task_id, "start_date"))
+	if err != nil { return err }
+
 	// Set initial date for export.
 	for _, n := range flag {
-		if lastUpdate[n].Export_time.IsZero() {
-			tmp := lastUpdate[n]
 
-			// Check if last_update doesn't
-			if tmp.Export_time.IsZero() {
-				tmp.Start_time, err = time.Parse("2006-Jan-02", Config.SGet(j.task_id, "start_date"))
-				if err != nil {
-					return err
-				}
-			}
+		if start_date.Unix() > lastUpdate[n].Export_time.Unix() {
+			tmp := lastUpdate[n]
+			tmp.Start_time = start_date.UTC()
 			tmp.Completed = true
 			lastUpdate[n] = tmp
-			err = DB.Set(j.task_id, j.session, &lastUpdate)
-			if err != nil {
-				return err
-			}
+			if err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil { return err }
 		}
 
 		// Attempt to resume a previous export if download got cut short, restart previous export on issue.
@@ -386,6 +380,11 @@ func (j *Task) DLIReport() (err error) {
 		// Generate a new request.
 		x, err := s.DLIGenerateReport(string(j.session), n, lastUpdate[n].Start_time, task_time)
 		if err != nil {
+			tmp := lastUpdate[n]
+			tmp.Export_time = time.Time{}
+			tmp.Completed = true
+			lastUpdate[n] = tmp
+			if err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil { logger.Err(err) }
 			return err
 		}
 
