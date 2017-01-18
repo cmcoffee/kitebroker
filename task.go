@@ -65,9 +65,7 @@ var task_time time.Time
 // main task handler.
 func TaskHandler(users []string) {
 
-	task_time = time.Now().UTC()
-
-	error_free := true
+	task_time = time.Now()
 
 	for _, user := range users {
 		for _, task := range Config.Get("configuration", "task") {
@@ -97,17 +95,8 @@ func TaskHandler(users []string) {
 			ShowLoader()
 			err := jfunc()
 			HideLoader()
-			if err != nil {
-				error_free = false
-				logger.Err(err)
-			}
+			if err != nil { logger.Err(err) }
 			logger.Log("\n")
-		}
-	}
-	if error_free {
-		err := DB.Set("kitebroker", "last_success", &task_time)
-		if err != nil {
-			logger.Err(err)
 		}
 	}
 }
@@ -203,7 +192,7 @@ func (t *Task) kw_umap(folder_id int, local_path string) (err error) {
 					}
 				}(kw_map[name], u_path)
 			} else {
-				logger.Log("Creating new kiteworks folder for %s.", u_path)
+				logger.Log("Creating new kiteworks folder for %s.", strings.Replace(u_path, Config.SGet(t.task_id, "local_path"), Config.SGet(t.task_id, "kw_folder"), 1))
 				new_folder_id, err := t.session.CreateFolder(name, folder_id)
 				if err != nil {
 					logger.Err(err)
@@ -279,7 +268,7 @@ func (t *Task) DownloadFolder() (err error) {
 					continue
 				}
 				for _, f := range files.Data {
-					err = t.session.Download(f)
+					err = t.Download(f)
 					if err != nil && err == ErrDownloaded {
 						continue
 					} else if err != nil {

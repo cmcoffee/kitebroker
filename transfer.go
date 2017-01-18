@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync/atomic"
 )
 
 // KiteBroker Flags
@@ -106,7 +107,7 @@ func showRate(size int64, start_time time.Time) string {
 	if sz != 0.0 {
 		return fmt.Sprintf("%.1f%s", sz*8, names[suffix])
 	} else {
-		return "Complete"
+		return "0.0bps"
 	}
 }
 
@@ -147,18 +148,17 @@ type TMonitor struct {
 }
 
 func (t *TMonitor) RecordTransfer(current_sz int) {
-	t.transfered = t.transfered + int64(current_sz)
-	if time.Since(t.last_shown) < time.Second {
-		return
-	}
-	t.ShowTransfer()
+	atomic.StoreInt64(&t.transfered, atomic.LoadInt64(&t.transfered) + int64(current_sz))
 }
 
 func (t *TMonitor) ShowTransfer() {
+
+	transfered := atomic.LoadInt64(&t.transfered)
+
 	if t.total_size > -1 {
-		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, showRate(t.transfered-t.offset, t.start_time), progressBar(t.transfered, t.total_size), showSize(t.transfered), showSize(t.total_size)))
+		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, showRate(transfered-t.offset, t.start_time), progressBar(transfered, t.total_size), showSize(transfered), showSize(t.total_size)))
 	} else {
-		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, showRate(t.transfered-t.offset, t.start_time), showSize(t.transfered)))
+		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, showRate(transfered-t.offset, t.start_time), showSize(transfered)))
 	}
 	t.last_shown = time.Now()
 }
@@ -213,7 +213,7 @@ func FileExists(f string) (found bool, err error) {
 }
 
 // Downloads a file to a specific path
-func (s *Session) Download(nfo KiteData) (err error) {
+func (t *Task) Download(nfo KiteData) (err error) {
 	var record DownloadRecord
 	_, err = DB.Get("dl_files", nfo.ID, &record)
 	if err != nil {
@@ -265,7 +265,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 		return
 	}
 
-	req, err := s.NewRequest("GET", fmt.Sprintf("/rest/files/%d/content", nfo.ID))
+	req, err := t.session.NewRequest("GET", fmt.Sprintf("/rest/files/%d/content", nfo.ID))
 	if err != nil {
 		return
 	}
@@ -275,7 +275,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
 	}
 
-	client := s.NewClient()
+	client := t.session.NewClient()
 	resp, err := client.Do(req)
 	if err != nil && resp.StatusCode != 200 {
 		return err
@@ -283,7 +283,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 	defer resp.Body.Close()
 
 	if resp.ContentLength == -1 {
-		err = s.respError(resp)
+		err = t.session.respError(resp)
 		if err != nil {
 			return err
 		}
@@ -294,8 +294,20 @@ func (s *Session) Download(nfo KiteData) (err error) {
 	tm.Offset(offset)
 
 	HideLoader()
-	logger.Log("Downloading %s(%s).\n", nfo.Name, showSize(nfo.Size))
-	tm.ShowTransfer()
+	if auth_flow == SIGNATURE_AUTH {
+		logger.Log("Downloading %s(%s).\n", strings.Replace(strings.Replace(fname, string(t.session), Config.SGet(t.task_id, "kw_folder"), 1), Config.SGet(t.task_id, "local_path"), NONE, 1), showSize(nfo.Size))
+	} else {
+		logger.Log("Downloading %s(%s).\n", strings.Replace(fname, Config.SGet(t.task_id, "local_path"), Config.SGet(t.task_id, "kw_folder"), 1), showSize(nfo.Size))
+	}
+	show_transfer := uint32(1)
+	defer atomic.StoreUint32(&show_transfer, 0)
+
+	go func() {
+		for atomic.LoadUint32(&show_transfer) == 1 {
+			tm.ShowTransfer()
+			time.Sleep(time.Second)
+		}
+	}()
 
 	// Resume transfer if we've already started downloading a file
 	if offset > 0 {
@@ -322,7 +334,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 		return
 	}
 
-	err = s.DecodeJSON(resp, nil)
+	err = t.session.DecodeJSON(resp, nil)
 	if err != nil {
 		return
 	}
@@ -335,6 +347,7 @@ func (s *Session) Download(nfo KiteData) (err error) {
 	DB.Set("dl_files", nfo.ID, record)
 
 MoveFile:
+	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
 	fmt.Println(NONE)
 	logger.Log("Download completed succesfully.")
@@ -469,7 +482,17 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 
 	HideLoader()
 
-	logger.Log("Uploading %s(%s).", local_file, showSize(record.TotalSize))
+	logger.Log("Uploading %s(%s).", strings.Replace(local_file, Config.SGet(t.task_id, "local_path"), Config.SGet(t.task_id, "kw_folder"), 1), showSize(record.TotalSize))
+
+	show_transfer := uint32(1)
+	defer atomic.StoreUint32(&show_transfer, 0)
+
+	go func() {
+		for atomic.LoadUint32(&show_transfer) == 1 {
+			tm.ShowTransfer()
+			time.Sleep(time.Second)
+		}
+	}()
 
 	for record.CompletedChunks < record.TotalChunks {
 		w_buff.Reset()
@@ -556,9 +579,10 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 	if err != nil {
 		return err
 	}
+	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("Upload complete.")
+	logger.Log("Upload completed succesfully.")
 	if strings.ToLower(Config.SGet(t.task_id, "delete_source_files_on_complete")) == "yes" {
 		logger.Log("Remvoing local file %s.", local_file)
 		err = os.Remove(local_file)

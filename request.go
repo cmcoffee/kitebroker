@@ -77,7 +77,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 		error_text = append(error_text, "kiteworks error(s):")
 		for n, v := range kite_err.Errors {
 			if v.Code == ErrBadAuth {
-				DB.Truncate("tokens")
+				DB.Unset("tokens", s)
 			}
 			error_text = append(error_text, fmt.Sprintf("  [%d] %s => %s", n, v.Code, v.Message))
 		}

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync/atomic"
 )
 
 const (
@@ -110,7 +111,15 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 
 	HideLoader()
 	logger.Log("[%v]: Downloading %s(%s).\n", j.session, target.Filename, showSize(total_size))
-	tm.ShowTransfer()
+	show_transfer := uint32(1)
+	defer atomic.StoreUint32(&show_transfer, 0)
+
+	go func() {
+		for atomic.LoadUint32(&show_transfer) == 1 {
+			tm.ShowTransfer()
+			time.Sleep(time.Second)
+		}
+	}()
 
 	// Resume transfer if we've already started downloading a file
 	if offset > 0 {
@@ -145,7 +154,7 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 MoveFile:
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("[%v]: Download complete.", j.session)
+	logger.Log("[%v]: Download completed succesfully.", j.session)
 	ShowLoader()
 
 	// Close the file stream.
@@ -309,17 +318,8 @@ func (j *Task) DLIReport() (err error) {
 	for _, n := range flag {
 		if lastUpdate[n].Export_time.IsZero() {
 			tmp := lastUpdate[n]
-			if strings.ToLower(Config.SGet(j.task_id, "start_from_last_export")) == "yes" {
-				var last_time time.Time
-				_, err := DB.Get("kitebroker", "last_success", &last_time)
-				if err != nil {
-					return err
-				}
-				tmp := lastUpdate[n]
-				tmp.Start_time = last_time
-			}
 
-			// Check again if last_update doesn't
+			// Check if last_update doesn't
 			if tmp.Export_time.IsZero() {
 				tmp.Start_time, err = time.Parse("2006-Jan-02", Config.SGet(j.task_id, "start_date"))
 				if err != nil {

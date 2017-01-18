@@ -18,7 +18,7 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.0.8c"
+	VERSION       = "0.0.8d"
 	KWAPI_VERSION = "5"
 	NONE          = ""
 )
@@ -325,7 +325,7 @@ func main() {
 			logger.Log("\n")
 			continue
 		} else {
-			logger.Log("Non-continuous tasks total process time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
+			logger.Log("Non-continuous total task time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
 			break
 		}
 	}

@@ -1,5 +1,11 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.0.8d - 01-17-2017)
+    * Updated DLI to no longer use last export as it may cause unexpected results, will instead use start_date always.
+    * Changed download and upload progress info to run as a go thread instead of having the process check the time and update.
+    * Updated go-logger and included it to prevent unwanted text from leaking through.
+    * Fixed issue with bad tokens not getting cleared out.
+
 ## (v0.0.8c - 01-16-2017)
     * Updated DLI to update start time to provided export time from kiteworks appliance.
     * Added save_metadata to folder_download to store metadata of file with file.
