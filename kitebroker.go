@@ -18,20 +18,20 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.0.8d"
+	VERSION       = "0.0.9"
 	KWAPI_VERSION = "5"
 	NONE          = ""
 )
 
 var (
-	Config        *cfg.Store
+	Config        cfg.Store
 	DB            *kvlite.Store
-	resp_snoop    bool
-	call_snoop    bool
+	snoop         bool
 	server        string
 	client_id     string
 	client_secret string
 	auth_flow     uint
+	retry_count   int
 )
 
 // Authentication Mechnism Constants
@@ -75,7 +75,7 @@ func open_database(db_file string) {
 }
 
 // Performs configuration.
-func api_setup(config_filename string) {
+func api_setup() {
 
 	var (
 		server           string
@@ -85,8 +85,8 @@ func api_setup(config_filename string) {
 	fmt.Println("- kiteworks Secure API Configuration -\n")
 
 RedoSetup:
-	if Config.Get("configuration", "server")[0] == NONE {
-		server = get_input("kiteworks Server: ")
+	if Config.Get("configuration", "server") == NONE {
+		server = strings.TrimPrefix(strings.ToLower(get_input("kiteworks Server: ")), "https://")
 	}
 	client_id := get_input("Client Application ID: ")
 	client_secret := get_input("Client Secret Key: ")
@@ -101,19 +101,18 @@ RedoSetup:
 
 	fmt.Println(NONE)
 
-	cfg_writer, err := cfg.Load(config_filename)
-	errChk(err)
-
 	if server != NONE {
-		cfg_writer.Set("configuration", "server", server)
+		Config.Set("configuration", "server", server)
 	}
 
 	api_cfg_0 := string(randBytes(37))
 	api_cfg_1 := string(encrypt([]byte(client_id), []byte(api_cfg_0)))
 	api_cfg_0 = api_cfg_0 + string(encrypt([]byte(client_secret), []byte(api_cfg_1+api_cfg_0)))
 
-	errChk(cfg_writer.Set("configuration", "api_cfg_0", api_cfg_0))
-	errChk(cfg_writer.Set("configuration", "api_cfg_1", api_cfg_1))
+	errChk(Config.Set("configuration", "api_cfg_0", api_cfg_0))
+	errChk(Config.Set("configuration", "api_cfg_1", api_cfg_1))
+
+	errChk(Config.Save("configuration"))
 
 	if auth_flow == SIGNATURE_AUTH {
 		errChk(DB.CryptSet("tokens", "s", &signature_secret))
@@ -124,18 +123,15 @@ RedoSetup:
 // Loads kiteworks API client id and secret from config file.
 func loadAPIConfig(config_filename string) {
 
-	var err error
+	api_cfg_0 := Config.Get("configuration", "api_cfg_0")
+	api_cfg_1 := Config.Get("configuration", "api_cfg_1")
 
-	api_cfg_0 := Config.SGet("configuration", "api_cfg_0")
-	api_cfg_1 := Config.SGet("configuration", "api_cfg_1")
-
-	if len(api_cfg_0) == 0 || len(api_cfg_1) == 0 {
-		api_setup(config_filename)
+	if len(api_cfg_0) < 37 {
+		api_setup()
 		// Read configuration file.
-		Config, err = cfg.ReadOnly(config_filename)
-		errChk(err)
-		api_cfg_0 = Config.SGet("configuration", "api_cfg_0")
-		api_cfg_1 = Config.SGet("configuration", "api_cfg_1")
+		errChk(Config.File(config_filename))
+		api_cfg_0 = Config.Get("configuration", "api_cfg_0")
+		api_cfg_1 = Config.Get("configuration", "api_cfg_1")
 	}
 
 	r_key := []byte(api_cfg_0[0:37])
@@ -144,7 +140,7 @@ func loadAPIConfig(config_filename string) {
 
 	client_id = string(decrypt([]byte(api_cfg_1), r_key))
 	client_secret = string(decrypt(cs_e, s_key))
-	server = Config.SGet("configuration", "server")
+	server = Config.Get("configuration", "server")
 }
 
 func main() {
@@ -165,9 +161,9 @@ func main() {
 	users_file := flags.String("user_file", default_users_file, "[ADMIN ONLY]: Text file containing user accounts to process kiteworks jobs.")
 
 	reset := flags.Bool("reset", false, "Reconfigure client credentials.")
+	reset_all := flags.Bool("reset_all", false, "[ADMIN ONLY]: Reset all kitebroker API settings.")
 
-	flags.BoolVar(&resp_snoop, "resp_snoop", false, NONE)
-	flags.BoolVar(&call_snoop, "call_snoop", false, NONE)
+	flags.BoolVar(&snoop, "snoop", false, "Snoop on API calls to kiteworks appliance.")
 
 	flags.Parse(os.Args[1:])
 
@@ -193,38 +189,58 @@ func main() {
 	}
 
 	// Read configuration file.
-	Config, err = cfg.ReadOnly(*config_file)
-	errChk(err)
+	errChk(Config.File(*config_file))
 
 	// Sets configuration defaults
-	Config.SetDefaults("configuration", map[string][]string{
-		"ssl_verify":        {"yes"},
-		"continuous_mode":   {"yes"},
-		"continuous_rate":   {"1h"},
-		"max_connections":   {"6"},
-		"upload_chunk_size": {"64"},
-		"redirect_uri":      {"https://kitebroker"},
-		"temp_path":         {"temp"},
-		"auth":              {"password"},
-		"api_cfg_0":         {NONE},
-		"api_cfg_1":         {NONE},
-		"log_path":          {"logs"},
-		"log_max_size":      {"10"},
-		"log_max_rotation":  {"5"},
-	})
+	Config.Defaults(`
+[configuration]
+auth_mode = signature
+ssl_verify = yes
+continuous_mode = yes
+continuous_rate = 1m
+log_path = logs
+log_max_size = 10
+log_max_rotation = 5
+max_connections = 6
+temp_path = temp
+task = folder_download
+api_cfg_0 = 
+api_cfg_1 = 
+server = 
+redirect_uri = https://kitebroker
+
+[folder_download]
+local_path = download
+kw_folder = My Folder
+save_metadata = no
+delete_source_files_on_complete = no
+
+[folder_upload]
+chunk_megabytes = 32
+local_path = upload
+kw_folder = My Folder
+delete_source_files_on_complete = no
+
+[dli_export]
+dli_admin_user = dli_admin_user@domain.com
+start_date = 2017-Jan-01
+local_path = dli_exports
+export_activities = yes
+export_emails = yes
+export_files = yes
+`)
 
 	// Make our paths if they don't exist.
-	errChk(MkDir(cleanPath(Config.SGet("configuration", "temp_path"))))
-	errChk(MkDir(cleanPath(Config.SGet("configuration", "local_path"))))
-	errChk(MkDir(cleanPath(Config.SGet("configuration", "log_path"))))
+	errChk(MkDir(cleanPath(Config.Get("configuration", "temp_path"))))
+	errChk(MkDir(cleanPath(Config.Get("configuration", "log_path"))))
 
 	// Spin up limiters for API calls and file transfers.
-	max_connections, err := strconv.Atoi(Config.SGet("configuration", "max_connections"))
+	max_connections, err := strconv.Atoi(Config.Get("configuration", "max_connections"))
 	if err != nil {
 		max_connections = 6
 	}
 
-	if resp_snoop || call_snoop {
+	if snoop {
 		max_connections = 1
 	}
 
@@ -233,11 +249,11 @@ func main() {
 		api_call_bank <- call_done
 	}
 
-	err = logger.File(logger.ALL, cleanPath(fmt.Sprintf("%s/%s.log", Config.SGet("configuration", "log_path"), os.Args[0])), 10*1024*1024, 5)
+	err = logger.File(logger.ALL, cleanPath(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), os.Args[0])), 10*1024*1024, 5)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	err = logger.File(logger.ERR|logger.FATAL, cleanPath(fmt.Sprintf("%s/%s.err", Config.SGet("configuration", "log_path"), os.Args[0])), 10*1024*1024, 5)
+	err = logger.File(logger.ERR|logger.FATAL, cleanPath(fmt.Sprintf("%s/%s.err", Config.Get("configuration", "log_path"), os.Args[0])), 10*1024*1024, 5)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -255,10 +271,34 @@ func main() {
 	// Load API Settings
 	loadAPIConfig(*config_file)
 
+	if *reset_all {
+		logger.Put("The following will be removed:\n")
+		logger.Put("* Client Application ID\n")
+		logger.Put("* Client Secret Key\n")
+		logger.Put("* Any and all existing access tokens\n")
+		logger.Put("\nnote: These settings can only be provided via a kiteworks server administrator.\n\n")
+		if confirm := getConfirm("Are you sure you want to do this"); confirm {
+			Config.Set("configuration", "api_cfg_0", "_")
+			Config.Set("configuration", "api_cfg_1", "_")
+			errChk(Config.Save("configuration"))
+			errChk(DB.Truncate("tokens"))
+			logger.Notice("All API Settings have been reset, please run kitebroker without --reset_all to reconfigure kitebroker API settings.\n")
+			logger.TheEnd(0)
+		} else {
+			logger.Put("Aborting, API settings not cleared.\n")
+			logger.TheEnd(0)
+		}
+	}
+
 	// Reset credentials, if requested.
 	if *reset {
-		logger.Notice("Reset server credentials, please re-run without --reset to configure new credentials.")
-		errChk(DB.Truncate("tokens"))
+		logger.Put("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n")
+		if confirm := getConfirm("Are you sure you want do this"); confirm {
+			errChk(DB.Truncate("tokens"))
+			logger.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
+			logger.TheEnd(0)	
+		}
+		logger.Put("Aborting, Access tokens not cleared.\n")
 		logger.TheEnd(0)
 	}
 
@@ -268,14 +308,14 @@ func main() {
 		ctime      time.Duration
 	)
 
-	if strings.ToLower(Config.SGet("configuration", "continuous_mode")) == "yes" {
+	if strings.ToLower(Config.Get("configuration", "continuous_mode")) == "yes" {
 		continuous = true
-		ival, err = time.ParseDuration(Config.SGet("configuration", "continuous_rate"))
+		ival, err = time.ParseDuration(Config.Get("configuration", "continuous_rate"))
 		errChk(err, *config_file, "continuous_rate")
 	}
 
 	// Set Global Auth Mode
-	switch strings.ToLower(Config.SGet("configuration", "auth_mode")) {
+	switch strings.ToLower(Config.Get("configuration", "auth_mode")) {
 	case "signature":
 		auth_flow = SIGNATURE_AUTH
 		if len(users) == 0 {
@@ -302,7 +342,7 @@ func main() {
 		}
 		users = append(users, user)
 	default:
-		errChk(fmt.Errorf("Unknown auth setting: %s", Config.SGet("configuration", "auth_mode")))
+		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
 	}
 
 	Session(users[0]).GetToken()

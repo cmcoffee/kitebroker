@@ -39,9 +39,9 @@ type DownloadRecord struct {
 // Returns total number of chunks and last chunk size.
 func (t Task) getChunkInfo(sz int64) (total_chunks int, last_chunk int64) {
 
-	chunk_size_megs, err := strconv.Atoi(Config.SGet(t.task_id, "chunk_megabytes"))
+	chunk_size_megs, err := strconv.Atoi(Config.Get(t.task_id, "chunk_megabytes"))
 	if err != nil {
-		chunk_size_megs = 64
+		chunk_size_megs = 32
 	}
 
 	chunk_size := int64(chunk_size_megs) * 1024 * 1024
@@ -86,7 +86,9 @@ func showSize(bytes int64) string {
 	return fmt.Sprintf("%.1f%s", size, names[suffix])
 }
 
-func showRate(size int64, start_time time.Time) string {
+func (t *TMonitor)showRate() string {
+
+	size := t.transfered-t.offset
 
 	names := []string{
 		"bps",
@@ -96,24 +98,26 @@ func showRate(size int64, start_time time.Time) string {
 	}
 
 	suffix := 0
+	if t.transfered < t.total_size {
+		sz := float64(size) / time.Since(t.start_time).Seconds()
 
-	sz := float64(size) / time.Since(start_time).Seconds()
+		for sz >= (1000) && suffix < len(names)-1 {
+			sz = sz / 1000
+			suffix++
+		}
 
-	for sz >= (1000) && suffix < len(names)-1 {
-		sz = sz / 1000
-		suffix++
+		if sz != 0.0 {
+			t.rate = fmt.Sprintf("%.1f%s", sz*8, names[suffix])
+		} else {
+			t.rate = "0.0bps"
+		}
 	}
-
-	if sz != 0.0 {
-		return fmt.Sprintf("%.1f%s", sz*8, names[suffix])
-	} else {
-		return "0.0bps"
-	}
+	return t.rate
 }
 
-func progressBar(c_size, t_size int64) string {
-	num := int((float64(c_size) / float64(t_size)) * 100)
-	if t_size == 0 {
+func (t *TMonitor)progressBar() string {
+	num := int((float64(t.transfered) / float64(t.total_size)) * 100)
+	if t.total_size == 0 {
 		num = 100
 	}
 	var display [25]rune
@@ -133,6 +137,7 @@ func NewTMonitor(title string, total_sz int64) *TMonitor {
 		total_size: total_sz,
 		transfered: 0,
 		offset:     0,
+		rate:       "0.0bps",
 		start_time: time.Now(),
 		last_shown: time.Now(),
 	}
@@ -143,6 +148,7 @@ type TMonitor struct {
 	total_size int64
 	transfered int64
 	offset     int64
+	rate       string
 	start_time time.Time
 	last_shown time.Time
 }
@@ -156,9 +162,9 @@ func (t *TMonitor) ShowTransfer() {
 	transfered := atomic.LoadInt64(&t.transfered)
 
 	if t.total_size > -1 {
-		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, showRate(transfered-t.offset, t.start_time), progressBar(transfered, t.total_size), showSize(transfered), showSize(t.total_size)))
+		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
 	} else {
-		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, showRate(transfered-t.offset, t.start_time), showSize(transfered)))
+		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, t.showRate(), showSize(transfered)))
 	}
 	t.last_shown = time.Now()
 }
@@ -251,7 +257,7 @@ func (t *Task) Download(nfo KiteData) (err error) {
 	local_path = cleanPath(local_path)
 
 	fname := cleanPath(fmt.Sprintf("%s/%s", local_path, nfo.Name))
-	temp_fname := cleanPath(fmt.Sprintf("%s/%s.%d.incomplete", cleanPath(Config.SGet("configuration", "temp_path")), nfo.Name, nfo.ID))
+	temp_fname := cleanPath(fmt.Sprintf("%s/%s.%d.incomplete", cleanPath(Config.Get("configuration", "temp_path")), nfo.Name, nfo.ID))
 
 	var offset int64
 
@@ -264,6 +270,8 @@ func (t *Task) Download(nfo KiteData) (err error) {
 	if err != nil {
 		return
 	}
+
+	logger.Log("Downloading %s(%s).\n", cleanPath(local_path + "/" + nfo.Name), showSize(nfo.Size))
 
 	req, err := t.session.NewRequest("GET", fmt.Sprintf("/rest/files/%d/content", nfo.ID))
 	if err != nil {
@@ -294,11 +302,11 @@ func (t *Task) Download(nfo KiteData) (err error) {
 	tm.Offset(offset)
 
 	HideLoader()
-	if auth_flow == SIGNATURE_AUTH {
-		logger.Log("Downloading %s(%s).\n", strings.Replace(strings.Replace(fname, string(t.session), Config.SGet(t.task_id, "kw_folder"), 1), Config.SGet(t.task_id, "local_path"), NONE, 1), showSize(nfo.Size))
-	} else {
-		logger.Log("Downloading %s(%s).\n", strings.Replace(fname, Config.SGet(t.task_id, "local_path"), Config.SGet(t.task_id, "kw_folder"), 1), showSize(nfo.Size))
+
+	if snoop {
+		logger.Put("--> ACTION: \"GET\" PATH: \"%v\"\n", req.URL.Path)
 	}
+
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
 
@@ -434,7 +442,7 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 		return err
 	}
 
-	r_path := strings.TrimLeft(local_file, Config.SGet(t.task_id, "local_path"))
+	r_path := strings.TrimLeft(local_file, Config.Get("configuration", "local_path"))
 
 	var record UploadRecord
 	_, err = DB.Get("uploads", r_path, &record)
@@ -482,7 +490,7 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 
 	HideLoader()
 
-	logger.Log("Uploading %s(%s).", strings.Replace(local_file, Config.SGet(t.task_id, "local_path"), Config.SGet(t.task_id, "kw_folder"), 1), showSize(record.TotalSize))
+	logger.Log("Uploading %s(%s).", strings.Replace(local_file, Config.Get("configuration", "local_path"), Config.Get("configuration", "kw_folder"), 1), showSize(record.TotalSize))
 
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
@@ -506,6 +514,10 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 		req, err := t.session.NewRequest("POST", fmt.Sprintf("/%s?apiVersion=5", record.URI))
 		if err != nil {
 			return err
+		}
+
+		if snoop {
+			logger.Put("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks, record.TotalChunks)
 		}
 
 		w := multipart.NewWriter(w_buff)
@@ -573,6 +585,7 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 		if err != nil {
 			return err
 		}
+
 	}
 	record.Flag = DONE
 	err = DB.Set("uploads", r_path, &record)
@@ -583,9 +596,12 @@ func (t *Task) Upload(local_file string, folder_id int) (err error) {
 	tm.ShowTransfer()
 	fmt.Println(NONE)
 	logger.Log("Upload completed succesfully.")
-	if strings.ToLower(Config.SGet(t.task_id, "delete_source_files_on_complete")) == "yes" {
+	if strings.ToLower(Config.Get(t.task_id, "delete_source_files_on_complete")) == "yes" {
 		logger.Log("Remvoing local file %s.", local_file)
 		err = os.Remove(local_file)
+		if err == nil {
+			DB.Unset("uploads", r_path)
+		}
 	}
 	ShowLoader()
 	return

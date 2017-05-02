@@ -86,7 +86,7 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 		postform.Add("grant_type", "refresh_token")
 		postform.Add("refresh_token", auth.RefreshToken)
 	} else {
-		postform.Add("redirect_uri", Config.SGet("configuration", "redirect_uri"))
+		postform.Add("redirect_uri", Config.Get("configuration", "redirect_uri"))
 		postform.Add("scope", "*/*/*")
 
 		switch auth_flow {

@@ -1,5 +1,11 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.0.9 - 05-04-2017)
+    * Updated error handling on failed transfers.
+    * Exposed and updated --snoop option for snooping on API calls to kiteworks appliance.
+    * Modified handling of bandwidth displayed when file reaches 100% yet were waiting for a response from the server.
+    * Updated underlying libraries go-cfg and go-logger.
+
 ## (v0.0.8d - 01-17-2017)
     * Updated DLI to no longer use last export as it may cause unexpected results, will instead use start_date always.
     * Changed download and upload progress info to run as a go thread instead of having the process check the time and update.

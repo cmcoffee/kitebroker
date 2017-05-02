@@ -51,20 +51,20 @@ func (s Session) respError(resp *http.Response) (err error) {
 
 	var body io.Reader
 
-	if resp_snoop {
+	if snoop {
 		body = io.TeeReader(resp.Body, os.Stderr)
 	} else {
 		body = resp.Body
 	}
 
-	if resp_snoop { logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status) }
+	if snoop { logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status) }
 
 	output, err := ioutil.ReadAll(body)
 	if err != nil {
 		return err
 	}
 
-	if resp_snoop { logger.Put("\n") }
+	if snoop { logger.Put("\n") }
 
 	var kite_err KiteErr
 
@@ -89,7 +89,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 		return fmt.Errorf("kiteworks error:\n  %s => %s\n", kite_err.Error, kite_err.ErrorDesc)
 	}
 
-	return
+	return fmt.Errorf(resp.Status)
 }
 
 // Wrapper around request and client to make simple requests for information to appliance.
@@ -102,7 +102,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	action = strings.ToUpper(action)
 
-	if call_snoop { logger.Put("\n--> ACTION: \"%s\" PATH \"%s\"\n", action, path) }
+	if snoop { logger.Put("\n--> ACTION: \"%s\" PATH: \"%s\"\n", action, path) }
 
 	for _, in := range input {
 		switch i := in.(type) {
@@ -111,7 +111,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 			p := make(url.Values)
 			for k, v := range i {
 				p.Add(k, fmt.Sprintf("%v", v))
-				if call_snoop {
+				if snoop {
 					logger.Put("\\-> POST PARAM: \"%s\" VALUE: \"%s\"\n", k, p[k])
 				}
 			}
@@ -122,7 +122,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 			if err != nil {
 				return err
 			}
-			if call_snoop {
+			if snoop {
 				logger.Put("\\-> POST JSON: %s\n", string(json))
 			}
 			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(json)))
@@ -130,7 +130,7 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 			q := req.URL.Query()
 			for k, v := range i {
 				q.Set(k, fmt.Sprintf("%v", v))
-				if call_snoop {
+				if snoop {
 					logger.Put("\\-> QUERY: %s=%s\n", k, q[k])
 				}
 			}
@@ -182,13 +182,13 @@ func (s Session) NewClient() *http.Client {
 	var ignore_cert bool
 
 	// Allows invalid certs if set to "no" in config.
-	if strings.ToLower(Config.SGet("configuration", "ssl_verify")) == "no" {
+	if strings.ToLower(Config.Get("configuration", "ssl_verify")) == "no" {
 		ignore_cert = true
 	}
 
 	return &http.Client{Transport: &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: ignore_cert},
-	},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: ignore_cert},
+		},
 	}
 }
 
@@ -204,13 +204,13 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 
 	var body io.Reader
 
-	if resp_snoop {
+	if snoop {
 		body = io.TeeReader(resp.Body, os.Stderr)
 	} else {
 		body = resp.Body
 	}
 
-	if output == nil && resp_snoop {
+	if output == nil && snoop {
 		logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status)
 		ioutil.ReadAll(body)
 		return nil
@@ -218,15 +218,16 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 		return nil
 	}
 
-	if resp_snoop {
+	if snoop {
 		logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status)
-		defer logger.Put("\n\n")
 	}
 
 	dec := json.NewDecoder(body)
 	err = dec.Decode(output)
 	if err == io.EOF {
 		return nil
+	} else if err == nil && snoop {
+		logger.Put("} \n\n")
 	}
 
 	return
@@ -302,12 +303,7 @@ func (s Session) MyFolderID() (file_id int, err error) {
 		return -1, err
 	}
 
-	for _, e := range out.Links {
-		if strings.ToLower(e.Relationship) == "syncdir" {
-			return e.ID, nil
-		}
-	}
-	return -1, nil
+	return out.SyncDirID, nil
 }
 
 // Get url to self.

@@ -41,7 +41,7 @@ var ErrExportErr = fmt.Errorf("Server error on export.")
 // Download DLI export.
 func (j *Task) DLIDownload(target dli_export) (err error) {
 
-	s := Session(Config.SGet(j.task_id, "dli_admin_user"))
+	s := Session(Config.Get(j.task_id, "dli_admin_user"))
 
 	err = s.DLICheck(&target)
 	if err != nil {
@@ -58,13 +58,13 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 	var f *os.File
 
 	// Create all paths
-	local_path := cleanPath(Config.SGet(j.task_id, "local_path"))
+	local_path := cleanPath(Config.Get(j.task_id, "local_path"))
 	if err = MkDir(local_path); err != nil { return }
-	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.SGet(j.task_id, "local_path"), j.session))
+	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.Get(j.task_id, "local_path"), j.session))
 	if err = MkDir(local_path); err != nil { return }
 
 	fname := cleanPath(fmt.Sprintf("%s/%s", local_path, target.Filename))
-	temp_fname := cleanPath(fmt.Sprintf("%s/%s.dli.incomplete", cleanPath(Config.SGet("configuration", "temp_path")), target.Filename))
+	temp_fname := cleanPath(fmt.Sprintf("%s/%s.dli.incomplete", cleanPath(Config.Get("configuration", "temp_path")), target.Filename))
 
 	var offset int64
 
@@ -285,17 +285,17 @@ func (s *Session) DLICheck(input *dli_export) (err error) {
 
 // Exports DLI Report as requested.
 func (j *Task) DLIReport() (err error) {
-	s := Session(Config.SGet(j.task_id, "dli_admin_user"))
+	s := Session(Config.Get(j.task_id, "dli_admin_user"))
 
 	var flag []int
 
-	if strings.ToLower(Config.SGet(j.task_id, "export_activities")) == "yes" {
+	if strings.ToLower(Config.Get(j.task_id, "export_activities")) == "yes" {
 		flag = append(flag, export_activities)
 	}
-	if strings.ToLower(Config.SGet(j.task_id, "export_emails")) == "yes" {
+	if strings.ToLower(Config.Get(j.task_id, "export_emails")) == "yes" {
 		flag = append(flag, export_emails)
 	}
-	if strings.ToLower(Config.SGet(j.task_id, "export_files")) == "yes" {
+	if strings.ToLower(Config.Get(j.task_id, "export_files")) == "yes" {
 		flag = append(flag, export_files)
 	}
 
@@ -313,7 +313,7 @@ func (j *Task) DLIReport() (err error) {
 		return err
 	}
 
-	start_date, err := time.Parse("2006-Jan-02", Config.SGet(j.task_id, "start_date"))
+	start_date, err := time.Parse("2006-Jan-02", Config.Get(j.task_id, "start_date"))
 	if err != nil { return err }
 
 	// Set initial date for export.
