@@ -17,7 +17,6 @@ import (
 
 // API Session
 type Session string
-
 var call_done struct{}
 var api_call_bank chan struct{}
 var transfer_call_bank chan struct{}
@@ -86,7 +85,10 @@ func (s Session) respError(resp *http.Response) (err error) {
 	}
 
 	if kite_err.ErrorDesc != NONE {
-		return fmt.Errorf("kiteworks error:\n  %s => %s\n", kite_err.Error, kite_err.ErrorDesc)
+		if kite_err.Error == "invalid_grant" { 
+			DB.Unset("tokens", s) 
+		}
+		return fmt.Errorf("%s => %s\n", kite_err.Error, kite_err.ErrorDesc)
 	}
 
 	return fmt.Errorf(resp.Status)
@@ -302,8 +304,25 @@ func (s Session) MyFolderID() (file_id int, err error) {
 	if err != nil {
 		return -1, err
 	}
-
 	return out.SyncDirID, nil
+}
+
+// Returns Folder ID of the Account's My Folder.
+func (s Session) MyBaseDirID() (file_id int, err error) {
+	out, err := s.MyUser()
+	if err != nil {
+		return -1, err
+	}
+	return out.BaseDirID, nil
+}
+
+// Returns Folder ID for sending files.
+func (s Session) MyMailFolderID() (fild_id int, err error) {
+	out, err := s.MyUser()
+	if err != nil {
+		return -1, err
+	}
+	return out.MyDirID, nil
 }
 
 // Get url to self.
@@ -327,7 +346,7 @@ func (s Session) GetRoles() (roles KiteArray, err error) {
 
 // Pulls up all top level folders.
 func (s Session) GetFolders() (output KiteArray, err error) {
-	return output, s.Call("GET", "/rest/folders/top", &output)
+	return output, s.Call("GET", "/rest/folders/top", &output, Query{"deleted": false})
 }
 
 // Find a user_id
@@ -343,6 +362,17 @@ func (s Session) FindUser(user_email string) (id int, err error) {
 		return -1, err
 	}
 	return info.ID, nil
+}
+
+func (s Session) FindChildFolder(child_folder string, parent_folder int) (id int, err error) {
+	sub_folders, err := s.ListFolders(parent_folder)
+	if err != nil { return -1, err }
+	for _, folder := range sub_folders.Data {
+		if folder.Name == child_folder {
+			return folder.ID, nil
+		}
+	}
+	return -1, fmt.Errorf("%s: Child folder not found.", child_folder)
 }
 
 // Returns the folder id of folder, can be specified as TopFolder/Nested or TopFolder\Nested.
@@ -436,7 +466,7 @@ func (s Session) ListFiles(folder_id int) (output KiteArray, err error) {
 }
 
 // Find Files.
-func (s Session) FindFiles(folder_id int, filename string) (output KiteArray, err error) {
+func (s Session) FindFile(folder_id int, filename string) (output KiteArray, err error) {
 	return output, s.Call("GET", fmt.Sprintf("/rest/folders/%d/files", folder_id), &output, Query{"deleted": false, "name": filename, "mode": "full"})
 }
 

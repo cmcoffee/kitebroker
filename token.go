@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math/rand"
@@ -25,18 +24,33 @@ type KiteAuth struct {
 }
 
 func LoadCredentials() (password string) {
-	password = DB.SGet("tokens", "s")
-	if password != NONE {
+
+	username := Config.Get("configuration", "account")
+	password = DB.SGet("kitebroker", "s")
+
+	if password != NONE && username != NONE {
 		return
 	}
+
 	HideLoader()
+
+	fmt.Printf("*** %s Authentication ***\n", Config.Get("configuration", "server"))
+	username = get_input("kiteworks Login: ")
+	Config.Set("configuration", "account", username)
+
 	switch auth_flow {
-	case SIGNATURE_AUTH:
-		password = get_input("kiteworks Signature Secret: ")
-	case PASSWORD_AUTH:
-		password = get_passw("kiteworks Password: ")
+		case SIGNATURE_AUTH:
+			DB.Truncate("tokens")
+			password = get_passw("kiteworks Signature Secret: ")
+			fmt.Println(NONE)
+			DB.CryptSet("kitebroker", "s", &password)
+
+		case PASSWORD_AUTH:
+			password = get_passw("Password: ")
+			fmt.Println(NONE)
 	}
-	DB.CryptSet("tokens", "s", &password)
+
+	Config.Save("configuration")
 	return
 }
 
@@ -45,18 +59,9 @@ func (s Session) GetToken() (access_token string, err error) {
 
 	auth, err := s.getAccessToken()
 
-	// If refresh failed, try getting new token.
 	if err != nil {
-		if found, _ := DB.Get("tokens", s, &auth); found {
-			DB.Unset("tokens", s)
-			auth, err = s.getAccessToken()
-			if err != nil {
-				return NONE, err
-			}
-			return auth.AccessToken, nil
-		} else {
-			return NONE, err
-		}
+		DB.Unset("tokens", s)
+		return NONE, err
 	}
 	return auth.AccessToken, nil
 }
@@ -64,33 +69,42 @@ func (s Session) GetToken() (access_token string, err error) {
 // Call to appliance for Bearer token.
 func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 
+	found, err := DB.Get("tokens", s, &auth)
+	if err != nil { return nil, err }
+
+	// If token is still valid, just return current token.
+	if auth != nil && auth.AccessToken != NONE && auth.Expiry > time.Now().Unix() { return }
+
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", server), nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
-	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
+
+	header := make(http.Header)
+
+	header.Set("Content-Type", "application/x-www-form-urlencoded")
+	header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
+	header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
+
+	req.Header = header
 
 	postform := &url.Values{
 		"client_id":     {client_id},
 		"client_secret": {client_secret},
 	}
 
-	if found, _ := DB.Get("tokens", "bad_signature", nil); found {
-		DB.Truncate("tokens")
-	}
+	var is_refresh bool
 
 	// If refresh token exists, use it. Otherwise request new access token.
-	if found, _ := DB.Get("tokens", s, &auth); found && auth.RefreshToken != "" {
+	if found && auth.RefreshToken != NONE {
 		postform.Add("grant_type", "refresh_token")
 		postform.Add("refresh_token", auth.RefreshToken)
+		is_refresh = true
 	} else {
 		postform.Add("redirect_uri", Config.Get("configuration", "redirect_uri"))
 		postform.Add("scope", "*/*/*")
 
 		switch auth_flow {
-
 		case SIGNATURE_AUTH:
 			signature := LoadCredentials()
 			randomizer := rand.New(rand.NewSource(int64(time.Now().Unix())))
@@ -114,18 +128,11 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 		case PASSWORD_AUTH:
 			password := LoadCredentials()
 			postform.Add("grant_type", "password")
-			postform.Add("username", string(s))
+			username := Config.Get("configuration", "account")
+			postform.Add("username", username)
 			postform.Add("password", password)
+			s = Session(username)
 		}
-	}
-
-	// If token has more then an hour left, just return the current token.
-	if auth != nil && auth.AccessToken != NONE && (auth.Expiry-3600) > time.Now().Unix() {
-		if len(DB.SGet("tokens", "whoami")) == 0 && auth_flow == PASSWORD_AUTH {
-			DB.Truncate("tokens")
-			return s.getAccessToken()
-		}
-		return
 	}
 
 	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
@@ -137,23 +144,21 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 		return nil, err
 	}
 
-	// Handle errors during request.
-	if resp.StatusCode != 200 {
-		return nil, s.respError(resp)
+	if err := s.respError(resp); err != nil {
+		return nil, err
 	}
 
-	dec := json.NewDecoder(resp.Body)
-
-	auth = new(KiteAuth)
-	err = dec.Decode(auth)
-	resp.Body.Close()
+	if err := s.DecodeJSON(resp, &auth); err != nil { return nil, err }
 
 	if err != nil {
+		if is_refresh {
+			if err := DB.Unset("tokens", s); err != nil { return nil, err }
+			return s.getAccessToken()
+		}
 		return nil, err
 	}
 
 	auth.Expiry = auth.Expiry + time.Now().Unix()
 
-	DB.CryptSet("tokens", s, &auth)
-	return
+	return auth, DB.CryptSet("tokens", s, auth)
 }

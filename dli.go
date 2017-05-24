@@ -39,9 +39,9 @@ var ErrNotReady = fmt.Errorf("Export not ready.")
 var ErrExportErr = fmt.Errorf("Server error on export.")
 
 // Download DLI export.
-func (j *Task) DLIDownload(target dli_export) (err error) {
+func (j Session) DLIDownload(target dli_export) (err error) {
 
-	s := Session(Config.Get(j.task_id, "dli_admin_user"))
+	s := Session(Config.Get("configuration", "account"))
 
 	err = s.DLICheck(&target)
 	if err != nil {
@@ -58,9 +58,9 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 	var f *os.File
 
 	// Create all paths
-	local_path := cleanPath(Config.Get(j.task_id, "local_path"))
+	local_path := cleanPath(Config.Get("configuration", "local_path"))
 	if err = MkDir(local_path); err != nil { return }
-	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.Get(j.task_id, "local_path"), j.session))
+	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.Get("configuration", "local_path"), j))
 	if err = MkDir(local_path); err != nil { return }
 
 	fname := cleanPath(fmt.Sprintf("%s/%s", local_path, target.Filename))
@@ -100,7 +100,6 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 		if err != nil {
 			return
 		}
-		logger.Warn("Content-Length header was less than zero.")
 	}
 
 	total_size := offset + resp.ContentLength
@@ -109,7 +108,7 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 	tm.Offset(offset)
 
 	HideLoader()
-	logger.Log("[%v]: Downloading %s(%s).\n", j.session, target.Filename, showSize(total_size))
+	logger.Log("[%v]: Downloading %s(%s).\n", j, target.Filename, showSize(total_size))
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
 
@@ -153,7 +152,7 @@ func (j *Task) DLIDownload(target dli_export) (err error) {
 MoveFile:
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("[%v]: Download completed succesfully.", j.session)
+	logger.Log("[%v]: Download completed succesfully.", j)
 	ShowLoader()
 
 	// Close the file stream.
@@ -284,18 +283,18 @@ func (s *Session) DLICheck(input *dli_export) (err error) {
 }
 
 // Exports DLI Report as requested.
-func (j *Task) DLIReport() (err error) {
-	s := Session(Config.Get(j.task_id, "dli_admin_user"))
+func (j Session) DLIReport() (err error) {
+	s := Session(Config.Get("configuration", "account"))
 
 	var flag []int
 
-	if strings.ToLower(Config.Get(j.task_id, "export_activities")) == "yes" {
+	if strings.ToLower(Config.Get("dli_export:opts", "export_activities")) == "yes" {
 		flag = append(flag, export_activities)
 	}
-	if strings.ToLower(Config.Get(j.task_id, "export_emails")) == "yes" {
+	if strings.ToLower(Config.Get("dli_export:opts", "export_emails")) == "yes" {
 		flag = append(flag, export_emails)
 	}
-	if strings.ToLower(Config.Get(j.task_id, "export_files")) == "yes" {
+	if strings.ToLower(Config.Get("dli_export:opts", "export_files")) == "yes" {
 		flag = append(flag, export_files)
 	}
 
@@ -308,12 +307,12 @@ func (j *Task) DLIReport() (err error) {
 
 	lastUpdate := make(map[int]Dli_export_record)
 
-	_, err = DB.Get(j.task_id, j.session, &lastUpdate)
+	_, err = DB.Get("dli_export", j, &lastUpdate)
 	if err != nil {
 		return err
 	}
 
-	start_date, err := time.Parse("2006-Jan-02", Config.Get(j.task_id, "start_date"))
+	start_date, err := time.Parse("2006-Jan-02", Config.Get("dli_export:opts", "start_date"))
 	if err != nil { return err }
 
 	// Set initial date for export.
@@ -324,7 +323,7 @@ func (j *Task) DLIReport() (err error) {
 			tmp.Start_time = start_date.UTC()
 			tmp.Completed = true
 			lastUpdate[n] = tmp
-			if err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil { return err }
+			if err := DB.Set("dli_export", j, &lastUpdate); err != nil { return err }
 		}
 
 		// Attempt to resume a previous export if download got cut short, restart previous export on issue.
@@ -341,12 +340,12 @@ func (j *Task) DLIReport() (err error) {
 			case export_emails:
 				t_name = "emails"
 			}
-			logger.Log("[%v]: Resuming previous %s export.", j.session, t_name)
+			logger.Log("[%v]: Resuming previous %s export.", j, t_name)
 			err := s.Call("GET", fmt.Sprintf("/rest/dli/exports/%s", lastUpdate[n].Export_id), &dli_resume, Query{"id": lastUpdate[n].Export_id})
 			errors_found := false
 			for {
 				if err != nil {
-					logger.Err("[%v]: Unable to resume previous %s export. %s", j.session, t_name, err.Error())
+					logger.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
 					errors_found = true
 					break
 				}
@@ -356,7 +355,7 @@ func (j *Task) DLIReport() (err error) {
 					err = nil
 					continue
 				} else if err != nil {
-					logger.Err("[%v]: Unable to resume previous %s export. %s", j.session, t_name, err.Error())
+					logger.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
 					errors_found = true
 					break
 				} else {
@@ -369,7 +368,7 @@ func (j *Task) DLIReport() (err error) {
 				tmp.Start_time = tmp.Export_time
 			}
 			lastUpdate[n] = tmp
-			err = DB.Set(j.task_id, j.session, &lastUpdate)
+			err = DB.Set("dli_export", j, &lastUpdate)
 			if err != nil {
 				return err
 			}
@@ -377,30 +376,30 @@ func (j *Task) DLIReport() (err error) {
 		}
 
 		// Generate a new request.
-		x, err := s.DLIGenerateReport(string(j.session), n, lastUpdate[n].Start_time, task_time)
+		x, err := s.DLIGenerateReport(string(j), n, lastUpdate[n].Start_time, task_time)
 		if err != nil {
 			tmp := lastUpdate[n]
 			tmp.Export_time = time.Time{}
 			tmp.Completed = true
 			lastUpdate[n] = tmp
-			if err := DB.Set(j.task_id, j.session, &lastUpdate); err != nil { logger.Err(err) }
+			if err := DB.Set("dli_export", j, &lastUpdate); err != nil { logger.Err(err) }
 			return err
 		}
 
 		// From report, process all exports.
 		for k, v := range x.Exports {
 			if strings.Contains(v.Status, "nodata") {
-				logger.Log("[%v]: No new %s to export.", j.session, k)
+				logger.Log("[%v]: No new %s to export.", j, k)
 				s.DeleteExport(x.Exports[k].ID)
 				continue
 			} else {
-				logger.Log("[%v]: Processing new %s export.", j.session, k)
+				logger.Log("[%v]: Processing new %s export.", j, k)
 				tmp := lastUpdate[n]
 				tmp.Completed = false
 				tmp.Export_id = x.Exports[k].ID
 				tmp.Export_time = task_time
 				lastUpdate[n] = tmp
-				err = DB.Set(j.task_id, j.session, &lastUpdate)
+				err = DB.Set("dli_export", j, &lastUpdate)
 				if err != nil {
 					return err
 				}
@@ -424,7 +423,7 @@ func (j *Task) DLIReport() (err error) {
 					tmp.Export_id = NONE
 					lastUpdate[n] = tmp
 					s.DeleteExport(x.Exports[k].ID)
-					if db_err := DB.Set(j.task_id, j.session, &lastUpdate); db_err != nil {
+					if db_err := DB.Set("dli_export", j, &lastUpdate); db_err != nil {
 						if err == nil {
 							return db_err
 						} else {

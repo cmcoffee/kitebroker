@@ -3,78 +3,56 @@ package main
 import (
 	"fmt"
 	"github.com/cmcoffee/go-logger"
-	"io/ioutil"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
+	"os"
+	"strconv"
+	"sync"
+	"io/ioutil"
 )
 
-type Task struct {
-	task_id string
-	session Session
-	queue   chan interface{}
-}
-
-var loader = []string{
-	"[>  ]",
-	"[>> ]",
-	"[>>>]",
-	"[ >>]",
-	"[  >]",
-	"[   ]",
-	"[  <]",
-	"[ <<]",
-	"[<<<]",
-	"[<< ]",
-	"[<  ]",
-	"[   ]",
-}
-
-var show_loader = int32(0)
-
-func init() {
-	go func() {
-		for {
-			for _, str := range loader {
-				if atomic.LoadInt32(&show_loader) == 1 {
-					if snoop {
-						goto Exit
-					}
-					logger.Put("\r%s Working, Please wait...", str)
-				}
-				time.Sleep(100 * time.Millisecond)
-			}
-		}
-	Exit:
-	}()
-}
-
-// Displays loader. "[>>>] Working, Please wait."
-func ShowLoader() {
-	atomic.CompareAndSwapInt32(&show_loader, 0, 1)
-}
-
-// Hides display loader.
-func HideLoader() {
-	atomic.CompareAndSwapInt32(&show_loader, 1, 0)
-}
-
 var task_time time.Time
+var users []string
 
 // main task handler.
-func TaskHandler(users []string) {
+func TaskHandler() {
 	task_time = time.Now()
 
 	task := Config.Get("configuration", "task")
 
+	load_users := func(task string) (users []string) {
+		data, err := ioutil.ReadDir(Config.Get("configuration", "local_path"))
+		errChk(err)
+
+		my_user := Config.Get("configuration", "account")
+
+		users = make([]string, 0)
+
+		for _, elem := range data {
+			if !elem.IsDir() { continue }
+			if strings.ContainsRune(elem.Name(), '@') {
+				users = append(users, elem.Name())
+			}
+		}
+
+		switch task {
+			case "folder_download":
+				fallthrough
+			case "folder_upload":
+				if len(users) == 1 || auth_flow != SIGNATURE_AUTH { users = []string{my_user} }
+		}
+
+		if len(users) == 0 { users = []string{my_user}}
+
+		return
+	}
+
+	users = load_users(task)
+
 	for _, user := range users {
 			var jfunc func() error
 
-			t := &Task{
-				task_id: task,
-				session: Session(user),
-			}
+			s := Session(user)
 
 			if local_path := Config.Get(task, "local_path"); local_path != NONE {
 				errChk(MkDir(cleanPath(Config.Get(task, "local_path"))))
@@ -82,20 +60,17 @@ func TaskHandler(users []string) {
 
 			switch task {
 				case "folder_download":
-					jfunc = t.DownloadFolder
+					jfunc = s.DownloadFolder
 				case "folder_upload":
-					jfunc = t.UploadFolder
+					jfunc = s.UploadFolder
 				case "dli_export":
-					if auth_flow != SIGNATURE_AUTH {
-						errChk(fmt.Errorf("task = dli_report requires 'auth_mode = signature', currently set as 'auth_mode' = %s'.", Config.Get("configuration", "auth_mode")))
-					}
-					jfunc = t.DLIReport
+					jfunc = s.DLIReport
 				default:
 					logger.Err("- Error: Unrecognized or missing task of %s.\n", task)
 					return
 			}
 
-			logger.Log("----------> Starting task %s of %s.", t.task_id, t.session)
+			logger.Log("----------> Starting task %s for %s.", Config.Get("configuration", "task"), s)
 			ShowLoader()
 			err := jfunc()
 			HideLoader()
@@ -106,6 +81,82 @@ func TaskHandler(users []string) {
 	}
 }
 
+// Background clean up task for maintaining DB.
+func backgroundCleanup() {
+	if snoop { return }
+	ival, err := time.ParseDuration(Config.Get("configuration", "cleanup_interval"))
+	errChk(err)
+
+	var last_cleanup time.Time
+	found, err := DB.Get("kitebroker", "last_cleanup", &last_cleanup)
+	if err != nil {
+		errChk(err)
+	}
+
+	if !found {
+		if err := DB.Set("kitebroker", "last_cleanup", time.Now()); err != nil {
+			errChk(err)
+		}
+	}
+
+	go func() {
+		for {
+			if time.Since(last_cleanup) >= ival {
+				if err := cleanupLocal("local_files"); err != nil {
+					logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+				}
+				if err := cleanupDownloads(); err != nil {
+					logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+				}
+				last_cleanup = time.Now()
+				if err := DB.Set("kitebroker", "last_cleanup", last_cleanup); err != nil {
+					errChk(fmt.Errorf("cleanup: %s", err.Error()))
+				}
+			}
+			// Put thread to sleep until it's time to perform cleanup.
+			time.Sleep(last_cleanup.Add(ival).Sub(time.Now()))
+		}
+	}()
+}
+
+// Cleans up upload records, make sure files are there, if not delete record.
+func cleanupLocal(table string) (error) {
+	records, err := DB.ListKeys(table)
+	if err != nil {
+		return err
+	}
+	for _, key := range records {
+		if _, err := os.Stat(key); os.IsNotExist(err) {
+			if err := DB.Unset(table, key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cleanupDownloads() (error) {
+	records, err := DB.ListKeys("kw_files")
+	if err != nil {
+		return err
+	}
+	var dl_record FileRecord
+
+	for _, key := range records {
+		found, err := DB.Get("kw_files", key, &dl_record)
+		if err != nil { return err }
+		if !found { continue }
+		file_id, err := strconv.Atoi(key)
+		if err != nil { return err }
+		data, err := dl_record.User.FileInfo(file_id)
+		if data.Deleted {
+			if err := DB.Unset("kw_files", key); err != nil { return err }
+		}
+	}
+	return nil
+}
+
+
 type file_upload struct {
 	LFile    string `json:"file"`
 	FolderID int    `json:"folder_id"`
@@ -113,250 +164,309 @@ type file_upload struct {
 
 type exit struct{}
 
-func (t *Task) UploadFolder() (err error) {
-	t.queue = make(chan interface{}, 128)
-	var wg sync.WaitGroup
-	var files_found bool
+func (s Session) UploadFolder() (err error) {
 
-	kw_folder_id, err := t.session.FindFolder(Config.Get(t.task_id, "kw_folder"))
-	if err != nil {
-		return err
+	show_no_files_found := true
+	sync_map := make(map[string]int)
+
+	top_folders, err := s.GetFolders()
+	if err != nil { return err }
+
+	for _, f := range top_folders.Data {
+		sync_map[f.Name] = f.ID
 	}
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for data := range t.queue {
-			switch m := data.(type) {
-			case file_upload:
-				err := t.Upload(m.LFile, m.FolderID)
-				if err != nil && err == ErrUploaded {
-					continue
-				} else if err != nil {
+	sync_folders := Config.MGet("configuration", "kw_folder")
+	if len(sync_folders) == 1 && sync_folders[0] == NONE {
+		switch auth_flow {
+			case SIGNATURE_AUTH:
+				for _, f := range top_folders.Data {
+					if strings.ContainsRune(f.Name, '@') { continue }
+					sync_folders = append(sync_folders, f.Name)
+				}
+			default:
+				rdir, err := ioutil.ReadDir(Config.Get("configuration", "local_path"))
+				if err != nil { return err }
+				for _, finfo := range rdir {
+					fname := finfo.Name()
+					if finfo.IsDir() && !strings.ContainsRune(fname, '@') { sync_folders = append(sync_folders, fname) }
+				}
+		}
+
+	} 
+
+	sync_folders = cleanSlice(sync_folders)
+
+ 
+	for _, parent_folder := range sync_folders {
+
+		var folder_id int
+
+		if fid, found := sync_map[parent_folder]; found {
+			folder_id = fid
+		} else {
+			folder_id, err = s.FindFolder(parent_folder)
+			if err != nil {
+				if auth_flow == SIGNATURE_AUTH && len(users) == 1 {
+					show_no_files_found = false
 					logger.Err(err)
 					continue
 				}
-				files_found = true
-			case exit:
-				return
+			} 
+		}
+
+		if folder_id == -1 {
+			base_id, err := s.MyBaseDirID()
+			if err != nil {
+				logger.Err(err)
+				continue
+			}
+			logger.Log("Creating new kiteworks folder: [%s]", parent_folder)
+			if folder_id, err = s.CreateFolder(parent_folder, base_id); err != nil {
+				logger.Err(err)
+				continue
+			}
+			DB.Set("folders", parent_folder, &folder_id)
+		}
+
+		var root_folder string
+
+		if strings.Contains(parent_folder, "My Folder") && auth_flow == SIGNATURE_AUTH {
+			root_folder = Config.Get("configuration", "local_path") + SLASH + string(s) + strings.TrimPrefix(parent_folder, "My Folder")
+		} else {
+			root_folder = Config.Get("configuration", "local_path")	+ SLASH + parent_folder
+		}
+
+		folders, files := scanPath(root_folder)
+
+		for _, folder := range folders {
+			_, err = s.getKWDestination(StripLocalPath(folder), false)
+			if err != nil {
+				logger.Err(err)
+				continue
 			}
 		}
-	}()
 
-	err = t.kw_umap(kw_folder_id, cleanPath(Config.Get(t.task_id, "local_path")))
+		if found, err := s.pushFiles(folder_id, files); err != nil { 
+			show_no_files_found = false
+			logger.Err(err)
+			continue
+		} else if found {
+			show_no_files_found = false
+		}
 
-	t.queue <- exit{}
-	wg.Wait()
-
-	if !files_found {
-		logger.Log("No new files to upload.")
 	}
 
+	if show_no_files_found {
+		logger.Log("No new files to uplaod.")
+	}
+
+	return nil
+}
+
+func (s Session) pushFiles(parent_id int, files []string) (files_uploaded bool, err error) {
+	var record UploadRecord
+	for _, file := range files {
+		file = StripLocalPath(file)
+		found, err := DB.Get("uploads", file, &record)
+		if err != nil { return true, err }
+		if !found {
+			f_path := splitLast(file, SLASH)
+			path := f_path[0]
+
+			var fid int
+
+			if len(path) == 0 {
+				fid = parent_id
+			} else {
+				fid, err = s.getKWDestination(StripLocalPath(path), true)
+				if err != nil { return true, err }
+			}
+			file = AppendLocalPath(file)
+			if _, err := s.Upload(file, fid); err != nil {
+				if err != ErrUploaded {
+					files_uploaded = true
+					return files_uploaded, err
+				}
+			} else {
+				files_uploaded = true
+			}
+		}
+	}
 	return
 }
 
-// Walks through local folders, creates folders that don't exist on kiteworks and uploads files to them.
-func (t *Task) kw_umap(folder_id int, local_path string) (err error) {
-	var wg sync.WaitGroup
+type set struct{}
 
-	// First find all folders in folder_id.
-	kw_folders, err := t.session.ListFolders(folder_id)
-	if err != nil {
-		return err
-	}
+func (s Session) getKWDestination(search_path string, verify bool) (fid int, err error) {
+	split_path := strings.Split(search_path, SLASH)
+	split_len := len(split_path)
 
-	// Second generate a map of folders.
-	kw_map := make(map[string]int)
-	for _, f := range kw_folders.Data {
-		kw_map[f.Name] = f.ID
-	}
+	var missing int
 
-	// Third list everything in folder.
-	f_read, err := ioutil.ReadDir(local_path)
-	if err != nil {
-		return err
-	}
+	fid = -1
+	folder_id := -1
 
-	// Range through all elements in folder.
-	for _, finfo := range f_read {
-
-		name := finfo.Name()
-		u_path := cleanPath(local_path + "/" + name)
-
-		if !finfo.IsDir() {
-			t.queue <- file_upload{u_path, folder_id}
-		} else {
-			if _, found := kw_map[name]; found {
-				wg.Add(1)
-				go func(folder_id int, u_path string) {
-					defer wg.Done()
-					err := t.kw_umap(folder_id, u_path)
-					if err != nil {
-						logger.Err(err)
-						return
-					}
-				}(kw_map[name], u_path)
+	for i := split_len; i >= 1; i-- {
+		found, err := DB.Get("folders", strings.Join(split_path[0:i], SLASH), &folder_id)
+		if err != nil { return -1, err }
+		if found {
+			fid = folder_id
+			if !verify && missing == 0 { break }
+			finfo, err := s.FolderInfo(fid)
+			if err != nil || finfo.Deleted {
+				missing++
 			} else {
-				logger.Log("Creating new kiteworks folder for %s.", strings.Replace(u_path, Config.Get(t.task_id, "local_path"), Config.Get(t.task_id, "kw_folder"), 1))
-				new_folder_id, err := t.session.CreateFolder(name, folder_id)
-				if err != nil {
-					logger.Err(err)
-					continue
-				}
-				wg.Add(1)
-				go func(folder_id int, u_path string) {
-					defer wg.Done()
-					err = t.kw_umap(new_folder_id, u_path)
-					if err != nil {
-						logger.Err(err)
-						return
-					}
-				}(new_folder_id, u_path)
+				break
 			}
+		} else {
+			missing++
 		}
 	}
 
-	wg.Wait()
+	if fid == -1 {
+		var first_folder string
+		if split_path[0] == string(s) {
+			first_folder = "My Folder"
+		} else {
+			first_folder = split_path[0]
+		}
+		fid, err = s.FindFolder(first_folder)
+		if err != nil { return -1, err }
+	}
+
+	for i := missing; i > 0; i-- {
+		missing_folder := split_path[split_len-i]
+		if missing_folder == string(s) {
+			missing_folder = "My Folder"
+		}
+		new_path := strings.Join(split_path[0:split_len+1-i], SLASH)
+		cid, _ := s.FindChildFolder(missing_folder, fid)
+		if cid == -1 {
+			logger.Log("Creating new kiteworks folder: [%s]", strings.Replace(new_path, string(s), "My Folder", 1))
+			fid, err = s.CreateFolder(missing_folder, fid)
+			if err != nil { return -1, err }
+		} else {
+			fid = cid
+		}
+		err = DB.Set("folders", new_path, fid)
+	}
 	return
+}
+
+type download_task struct {
+	kw_file KiteData
+	local_path string
 }
 
 // DownloadFolder task.
-func (t *Task) DownloadFolder() (err error) {
-	var wg sync.WaitGroup
+func (s Session) DownloadFolder() (err error) {
 	var files_found bool
 
-	DB.Truncate("dl_folders")
+	queue := make(chan(interface{}), 0)
 
-	local_path := cleanPath(Config.Get(t.task_id, "local_path"))
+	local_path := LocalPath()
 
 	err = MkDir(local_path)
 	if err != nil {
 		return err
 	}
 
-	for _, kw_folder := range Config.MGet(t.task_id, "kw_folder") {
-
-		folder_id, err := t.session.FindFolder(kw_folder)
-		if err != nil {
-			logger.Err(err)
-			continue
-		}
-
-		start_folder, err := t.session.FolderInfo(folder_id)
-		if err != nil { 
-			logger.Err(err)
-			continue
-		}
-
-		var delete_sources bool
-
-		if strings.ToLower(Config.Get(t.task_id, "delete_source_files_on_complete")) == "yes" {
-			delete_sources = true
-		}
-
-		var save_file_info bool
-
-		if strings.Contains(strings.ToLower(Config.Get(t.task_id, "save_metadata")), "yes") {
-			save_file_info = true
-		}
-
-		t.queue = make(chan interface{}, 128)
-
-		// File downloader thread.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for data := range t.queue {
-				switch m := data.(type) {
-					case KiteData:
-						files, err := t.session.ListFiles(m.ID)
-						if err != nil {
-							logger.Err(err)
-							continue
-						}
-						for _, f := range files.Data {
-							err = t.Download(f)
-							if err != nil && err == ErrDownloaded {
-								continue
-							} else if err != nil {
-								logger.Err(err)
-							} else {
-								files_found = true
-								if save_file_info {
-									if err := t.session.MetaData(&f); err != nil { logger.Err(err) }
-								}	
-								if delete_sources {
-									logger.Log("Removing file %s from %s.", f.Name, m.Name)
-									if err := t.session.DeleteFile(f.ID); err != nil { logger.Err(err) }
-								}
-							}
-						}
-					case exit:
-						return
-				}
+	go func() {
+		var halt bool
+		for e := range queue {
+			switch msg := e.(type) {
+				case download_task:
+					if err := s.Download(msg.kw_file, msg.local_path); err != nil && err != ErrDownloaded {
+						logger.Err(err) 
+						files_found = true
+					} else if err == nil {
+						files_found = true
+					}
+				case exit:
+					halt = true
 			}
-		}()
+			if halt { break }
+		}
+	}()
 
-		// Change how we handle "My Folder" when using signature auth.
-		if auth_flow == SIGNATURE_AUTH && strings.Contains(kw_folder, "My Folder") {
-			local_path = cleanPath(local_path + "/" + string(t.session) + "/")
-			if err := MkDir(local_path); err != nil { return err }
-			if err := DB.Set("dl_folders", folder_id, local_path); err != nil { return err }
+	sync_map := make(map[string]int)
 
-			t.queue <- start_folder
+	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder"))
+	if len(sync_folders) == 0 {
+		kw_folders, err := s.GetFolders()
+		if err != nil { return err }
+		for _, f := range kw_folders.Data {
+			sync_folders = append(sync_folders, f.Name)
+			sync_map[f.Name] = f.ID
+		}
+	}
 
-			folders, err := t.session.ListFolders(folder_id)
-			if err != nil { logger.Err(err) }
+	var folder_id int
 
-			for _, kwf := range folders.Data {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					if err = t.kw_dmap(local_path, kwf); err != nil { logger.Err(err) } 
-				}()
-			}
+	for _, kw_folder := range sync_folders {
+
+		if fid, found := sync_map[kw_folder]; found {
+			folder_id = fid
 		} else {
-			if err = t.kw_dmap(local_path, start_folder); err != nil { logger.Err(err) }
+			folder_id, err = s.FindFolder(kw_folder)
+			if err != nil {
+				if len(users) == 1 { 
+					logger.Err(err)
+					files_found = true
+				}
+				continue
+			}
 		}
-		t.queue <- exit{}
-		wg.Wait()
+
+		if kw_folder == "My Folder" && auth_flow == SIGNATURE_AUTH { kw_folder = string(s) }
+
+		root_folder := cleanPath(local_path + SLASH + kw_folder)
+		if err := s.mapFolders(root_folder, folder_id, queue); err != nil { return err }
 	}
+
+	queue<-exit{}
+
 	if !files_found {
-		logger.Log("No new files to download.")
+		logger.Log("No new files found.")
 	}
-	return err
+
+	return
 }
 
-// Folder crawler, maps all remote folders to destinations on local disk.
-func (t *Task) kw_dmap(start_path string, folder_data KiteData) (err error) {
-	var wg sync.WaitGroup
-
-	t.queue <- folder_data
-
-	local_path := cleanPath(start_path + "/" + folder_data.Name)
+// Creates folders locally, add to to kw_folders.
+func (s Session) mapFolders(local_path string, folder_id int, queue chan interface{}) (err error) {
+	var vg sync.WaitGroup
 
 	err = MkDir(local_path)
 	if err != nil {
 		return err
-	} else {
-		err := DB.Set("dl_folders", folder_data.ID, local_path)
-		if err != nil {
-			return err
-		}
 	}
 
-	folders, err := t.session.ListFolders(folder_data.ID)
+	files, err := s.ListFiles(folder_id)
 	if err != nil {
-		return err
+		logger.Err(err)
+	}
+
+	for _, file := range files.Data {
+		queue<-download_task{file, local_path}
+	}
+
+ 	folders, err := s.ListFolders(folder_id)
+	if err != nil { 
+		logger.Err(err)
 	}
 
 	for _, folder := range folders.Data {
-		wg.Add(1)
-		go func(local_path string, folder KiteData) {
-			defer wg.Done()
-			if err := t.kw_dmap(local_path, folder); err != nil { logger.Err(err) }
-		}(local_path, folder)
+		vg.Add(1)
+		go func(folder_name string, folder_id int, queue chan interface{}) {
+			err := s.mapFolders(folder_name, folder_id, queue)
+			if err != nil {
+				logger.Err(err)
+			}
+			vg.Done()
+		}(local_path, folder.ID, queue)
 	}
-	wg.Wait()
+	vg.Wait()
 	return
 }

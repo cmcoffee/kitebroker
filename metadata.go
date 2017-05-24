@@ -9,9 +9,10 @@ import (
 // Combile metadata information about file, append -info to the file and store it in path specified.
 func (s *Session) MetaData(file_info *KiteData) (err error) {
 	const metadata = `
-Filename: {{.Name}}
-Uploader: {{.Creator}}
-UploadedDate: {{.Created}}
+[file_metadata]
+Filename = {{.Name}}
+Uploader = {{.Creator}}
+UploadedDate = {{.Created}}
 Fingerprint = {{.Fingerprint}}
 FileSize = {{.Size}}
 MimeType = {{.Mime}}

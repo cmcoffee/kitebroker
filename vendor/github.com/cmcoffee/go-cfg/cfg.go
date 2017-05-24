@@ -173,13 +173,9 @@ func (s *Store) Unset(input ...string) {
 		for _, key := range keys {
 			delete(s.cfgStore[input[0]], key)
 		}
-		delete(s.cfgStore, input[0])
 	default:
 		s.mutex.Lock()
 		delete(s.cfgStore[input[0]], input[1])
-		if len(s.cfgStore[input[0]]) == 0 {
-			delete(s.cfgStore, input[0])
-		}
 	}
 	s.mutex.Unlock()
 }
@@ -449,6 +445,10 @@ func (s *Store) Save(sections ...string) error {
 			}
 			vlen := len(v)
 			var str string
+			if vlen == 0 {
+				_, err = dst.WriteString(str + "\n")
+				return
+			}
 			for n, txt := range v {
 				if n > 0 {
 					str = fmt.Sprintf("%s%s", spacer, txt)

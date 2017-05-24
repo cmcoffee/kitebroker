@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"crypto/md5"
 	"fmt"
 	"github.com/cmcoffee/go-logger"
 	"github.com/howeyc/gopass"
@@ -15,7 +17,114 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"io/ioutil"
+	"sync/atomic"
 )
+
+const (
+	NONE          = ""
+	SLASH         = string(os.PathSeparator)
+)
+
+var loader = []string{
+	"[>  ]",
+	"[>> ]",
+	"[>>>]",
+	"[ >>]",
+	"[  >]",
+	"[   ]",
+	"[  <]",
+	"[ <<]",
+	"[<<<]",
+	"[<< ]",
+	"[<  ]",
+	"[   ]",
+}
+
+var show_loader = int32(0)
+
+func init() {
+	go func() {
+		for {
+			for _, str := range loader {
+				if atomic.LoadInt32(&show_loader) == 1 {
+					if snoop {
+						goto Exit
+					}
+					logger.Put("\r%s Working, Please wait...", str)
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	Exit:
+	}()
+}
+
+// Displays loader. "[>>>] Working, Please wait."
+func ShowLoader() {
+	atomic.CompareAndSwapInt32(&show_loader, 0, 1)
+}
+
+// Hides display loader.
+func HideLoader() {
+	atomic.CompareAndSwapInt32(&show_loader, 1, 0)
+}
+
+// Scans local path for all folders and files.
+func scanPath(root_folder string) (folders []string, files []string) {
+	folders = []string{root_folder}
+
+	var n int
+
+	nextFolder := func() (output string) {
+		if n < len(folders) {
+			output = folders[n]
+			n++
+			return
+		}
+		return NONE
+	}
+
+	files = make([]string, 0)
+
+	for {
+		folder := nextFolder()
+		if folder == NONE { break }
+		data, err := ioutil.ReadDir(folder)
+		if err != nil && !os.IsNotExist(err) { 
+			logger.Err(err)
+			continue 
+		}
+		for _, finfo := range data {
+			if finfo.IsDir() {
+				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
+			} else {
+				files = append(files, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
+			}
+		} 
+	}
+
+	for n, folder := range folders {
+		folders[n] = strings.TrimPrefix(folder, LocalPath())
+	}
+	for n, file := range files {
+		files[n] = strings.TrimPrefix(file, LocalPath())
+	}
+
+	return folders, files
+}
+
+func LocalPath() string {
+	return Config.Get("configuration", "local_path") + SLASH
+}
+
+func StripLocalPath(input string) string {
+	return strings.TrimPrefix(input, Config.Get("configuration", "local_path") + SLASH)	
+}
+
+func AppendLocalPath(input string) string {
+	return Config.Get("configuration", "local_path") + SLASH + input 
+}
 
 // Get confirmation
 func getConfirm(name string) bool {
@@ -128,6 +237,30 @@ func hashBytes(input ...interface{}) []byte {
 	return output
 }
 
+// Removes empty slices
+func cleanSlice(input []string) (output []string) {
+
+	output = input
+
+	var n int
+
+	for i := 0; i < len(input); i++ {
+		if strings.TrimSpace(input[i]) != NONE {
+			output[n] = input[i]
+			n++
+		}
+	}
+	
+	output = output[:n]
+	return
+}
+
+// Splits on the last seperator, for seperating paths and files.
+func splitLast(input string, sep string) []string {
+	split_str := strings.Split(input, sep)
+	return append([]string{strings.Join(split_str[0:len(split_str)-1], sep)}, split_str[len(split_str)-1:]...)
+}
+
 // Generates a random byte slice of length specified.
 func randBytes(sz int) []byte {
 	if sz <= 0 {
@@ -237,4 +370,44 @@ func errChk(err error, desc ...string) {
 // Provides a clean path, for Windows ... and everyone else.
 func cleanPath(input string) string {
 	return filepath.Clean(input)
+}
+
+
+// md5Sum function for checking files against appliance.
+func md5Sum(filename string) (sum []byte, err error) {
+	checkSum := md5.New()
+	file, err := os.Open(filename)
+	if err != nil { return }
+
+	var (
+		o int64
+	    n int
+	    r int
+	)
+	
+	for tmp := make([]byte, 16384); ; {
+		r, err = file.ReadAt(tmp, o)
+		
+		if err != nil && err != io.EOF { 
+			return nil, err 
+		} 
+		
+		if r == 0 { break }
+		
+		tmp = tmp[0:r]
+		n, err = checkSum.Write(tmp)
+		if err != nil { return nil, err }
+		o = o + int64(n)
+	}
+	
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	md5sum := checkSum.Sum(nil)
+	
+	sum = make([]byte, hex.EncodedLen(len(md5sum)))
+	hex.Encode(sum, md5sum)
+	
+	return sum, nil
 }
