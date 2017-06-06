@@ -1,5 +1,45 @@
 package main
 
+import (
+	"time"
+)
+
+const (
+	PREPARING = 1 << iota
+	UPLOADING
+)
+
+type sendmail struct {
+	Time int64      	 	  `json:"date"`
+	To []string 		  `json:"to"`
+	Cc []string 		  `json:"cc"`
+	Bcc []string 		  `json:"bcc"`
+	Subj string 		  `json:"subj"`
+	Body string 		  `json:"body"`
+	Files []int			  `json:"files"`
+}
+
+func (s Session) SendFile() (err error) {
+	rcpt := string(s)
+	s = Session(Config.Get("configuration", "account"))
+
+	mail := &sendmail {
+		Time: time.Now().Unix(),
+		To: Config.MGet("send_mail:opts", "to"),
+		Cc: Config.MGet("send_mail:opts", "cc"),
+		Bcc: Config.MGet("send_mail:opts", "bcc"),
+		Subj: NONE,
+		Body: NONE,
+	}
+
+	mail.To = append(mail.To, rcpt)
+
+	DB.Set("sendmail", rcpt, &mail)
+
+	return
+
+}
+
 // Find Messages Sent to User.
 func (s Session) FindMail(filter *Query) (mail_id []int, err error) {
 	if filter == nil { filter = &Query{} }
@@ -63,30 +103,30 @@ func (s Session) GetMail(mail_id int) (output []MailData, err error) {
 
 return nil, nil
 }
-
-func (s Session) SendFile(to, cc, bcc []string, subj, body string, filename...string) (err error) {
+/*
+func (s Session) SendFile() (err error) {
 	myDir, err := s.MyMailFolderID()
 	if err != nil { return err }
 
-	var files []int
+	var file_ids []int
 
-	for _, f := range filename {
+	for _, f := range o.Files {
 		fid, err := s.Upload(f, myDir)
 		if err != nil { return err }
-		files = append(files, fid)
+		files = append(file_ids, fid)
 	}
 
 	return s.Call("POST", "/rest/mail/actions/sendFile", nil, PostJSON{
-		"to": to,
-		"cc": cc,
-		"bcc": bcc,
-		"subject": subj,
-		"body": body,
-		"files": files,
+		"to": o.To,
+		"cc": o.Cc,
+		"bcc": o.Bcc,
+		"subject": o.Subj,
+		"body": o.Body,
+		"files": file_ids,
 		}, Query{"returnEntity":false})
 }
 
-/*
+
 func (t *Task) DownloadInbox() (err error) {
 	
 }

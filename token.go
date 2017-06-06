@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+	"github.com/cmcoffee/go-logger"
 )
 
 // Authorization Information
@@ -23,34 +24,35 @@ type KiteAuth struct {
 	Type         string `json:"token_type"`
 }
 
-func LoadCredentials() (password string) {
+func LoadCredentials() (password string, reset bool) {
 
 	username := Config.Get("configuration", "account")
 	password = DB.SGet("kitebroker", "s")
 
 	if password != NONE && username != NONE {
-		return
+		return password, false
 	}
 
 	HideLoader()
+	defer ShowLoader()
 
-	fmt.Printf("*** %s Authentication ***\n", Config.Get("configuration", "server"))
-	username = get_input("kiteworks Login: ")
-	Config.Set("configuration", "account", username)
+	logger.Put("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
+
+	Config.Set("configuration", "account", get_input("Account: "))
 
 	switch auth_flow {
 		case SIGNATURE_AUTH:
 			DB.Truncate("tokens")
-			password = get_passw("kiteworks Signature Secret: ")
-			fmt.Println(NONE)
+			password = get_passw("Signature Secret: ")
 			DB.CryptSet("kitebroker", "s", &password)
-
+			fmt.Println(NONE)
 		case PASSWORD_AUTH:
 			password = get_passw("Password: ")
 			fmt.Println(NONE)
 	}
 
 	Config.Save("configuration")
+	reset = true
 	return
 }
 
@@ -106,7 +108,7 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 
 		switch auth_flow {
 		case SIGNATURE_AUTH:
-			signature := LoadCredentials()
+			signature, reset_auth := LoadCredentials()
 			randomizer := rand.New(rand.NewSource(int64(time.Now().Unix())))
 			nonce := randomizer.Int() % 999999
 			timestamp := int64(time.Now().Unix())
@@ -117,6 +119,10 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 			mac.Write([]byte(base_string))
 			signature = hex.EncodeToString(mac.Sum(nil))
 
+			if reset_auth {
+				s = Session(Config.Get("configuration", "account"))
+			}
+
 			auth_code := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d|@@|%s",
 				base64.StdEncoding.EncodeToString([]byte(client_id)),
 				base64.StdEncoding.EncodeToString([]byte(s)),
@@ -126,7 +132,7 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 			postform.Add("code", auth_code)
 
 		case PASSWORD_AUTH:
-			password := LoadCredentials()
+			password, _ := LoadCredentials()
 			postform.Add("grant_type", "password")
 			username := Config.Get("configuration", "account")
 			postform.Add("username", username)

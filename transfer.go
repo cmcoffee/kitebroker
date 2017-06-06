@@ -22,10 +22,9 @@ const (
 type UploadRecord struct {
 	Flag            int       `json:"flag"`
 	CompletedChunks int       `json:"chunks_completed"`
-	TotalChunks     int       `json:"total_chunks"`
 	ChunkSize       int64     `json:"chunk_size"`
-	LastChunk       int64     `json:"last_chunk"`
 	TotalSize       int64     `json:"total_size"`
+	Transfered      int64     `json:"transfered"`
 	ModTime         time.Time `json:"modified"`
 	URI             string    `json:"upload_uri"`
 	Filename        string    `json:"filename"`
@@ -43,27 +42,23 @@ type FileRecord struct {
 
 
 // Returns total number of chunks and last chunk size.
-func (s Session) getChunkInfo(sz int64) (total_chunks int, last_chunk int64) {
+func (s Session) getChunkInfo(sz int64) (chunk_size int64, total_chunks int, last_chunk int64) {
 
-	chunk_size, err := strconv.Atoi(Config.Get("configuration", "upload_chunk_size"))
+	chunk_sz, err := strconv.Atoi(Config.Get("configuration", "upload_chunk_size"))
 	if err != nil {
 		logger.Warn("Could not parse upload_chunk_size, defaulting to 32768.")
-		chunk_size = 32768
+		chunk_sz = 32768
 	}
-	chunk_size = chunk_size * 1024
+	chunk_size = int64(chunk_sz * 1000)
 
-	if sz < 0 {
-		return 0, int64(chunk_size)
-	}
-
-	if sz <= int64(chunk_size) {
-		return 1, sz
+	if sz <= chunk_size {
+		return chunk_size, 1, sz
 	}
 
 	for {
 		total_chunks++
-		if sz > int64(chunk_size) {
-			sz = sz - int64(chunk_size)
+		if sz > chunk_size {
+			sz = sz - chunk_size
 			continue
 		} else {
 			last_chunk = sz
@@ -365,6 +360,10 @@ MoveFile:
 
 	DB.Set("downloads", nfo.ID, record)
 
+	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
+		if err := s.EraseFile(nfo.ID); err != nil { logger.Err(err) }
+	}
+
 	// Set modified and access times on file.
 	err = os.Chtimes(fname, time.Now(), record.ModTime)
 	return
@@ -425,6 +424,17 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	return s.w_buff.Read(p)
 }
 
+func checkFile(local_file string, record *UploadRecord) (same bool) {
+		fstat, err := os.Stat(local_file)
+		if err != nil {
+			return false
+		}
+		if fstat.Size() != record.TotalSize || fstat.ModTime().UTC() != record.ModTime.UTC() {
+			return false
+		}
+		return true
+}
+
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s Session) Upload(local_file string, folder_id int) (file_id int, err error) {
 	local_file = cleanPath(local_file)
@@ -434,31 +444,38 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		return -1, err
 	}
 
-	var record UploadRecord
+	// Skip 0 byte files.
+	if fstat.Size() == 0 {
+		return -1, ErrUploaded
+	}
+
+	var record *UploadRecord
 	_, err = DB.Get("uploads", StripLocalPath(local_file), &record)
 	if err != nil {
 		return -1, err
 	}
 
-	_, chunk_size := s.getChunkInfo(-1)
+	ChunkSize, TotalChunks, LastChunk := s.getChunkInfo(fstat.Size())
+
 
 	// Create a record in the database if one does not exist yet or does not appear to be the one we've uploaded.
-	if record.Flag == 0 || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || record.ChunkSize != chunk_size && record.Flag&DONE != DONE {
-		record.Flag = UPLOAD
-		record.CompletedChunks = 0
-		record.TotalSize = fstat.Size()
-		record.ModTime = fstat.ModTime()
-		record.TotalChunks, record.LastChunk = s.getChunkInfo(fstat.Size())
-		record.ChunkSize = chunk_size
-		record.Filename = fstat.Name()
-		record.URI, err = s.NewFile(folder_id, fstat.Name(), record.TotalSize, record.TotalChunks, record.ModTime)
-		if err != nil {
-			return -1, err
+	if record == nil || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || record.ChunkSize != ChunkSize && record.Flag&DONE != DONE {
+		if record != nil && record.Flag&UPLOAD == UPLOAD { s.DeleteUpload(record.ID) }
+
+		record = &UploadRecord {
+			Flag: UPLOAD,
+			CompletedChunks: 0,
+			ChunkSize: ChunkSize,
+			TotalSize: fstat.Size(),
+			ModTime: fstat.ModTime(),
+			Filename: fstat.Name(),
 		}
+
+		if record.ID, record.URI, err = s.NewUpload(folder_id, fstat.Name(), record.ModTime); err != nil { return -1, err }
 		DB.Set("uploads", StripLocalPath(local_file), &record)
 	}
 
-	if record.Flag == DONE && fstat.Size() == record.TotalSize {
+	if record.Flag == DONE {
 		return record.ID, ErrUploaded
 	}
 
@@ -492,9 +509,14 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	w_buff := new(bytes.Buffer)
 
 	tm := NewTMonitor("upload", record.TotalSize)
-	tm.Offset(record.ChunkSize * int64(record.CompletedChunks))
+	tm.Offset(record.Transfered)
 
 	var resp_data *KiteData
+
+	if !checkFile(local_file, record) {
+		s.DeleteUpload(record.ID)
+		return -1, ErrNotReady
+	}
 
 	HideLoader()
 
@@ -510,10 +532,15 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		}
 	}()
 
-	for record.CompletedChunks < record.TotalChunks {
+	for record.Transfered < record.TotalSize {
+		if !checkFile(local_file, record) {
+			s.DeleteUpload(record.ID)
+			logger.Err("%s: Detected change in file while uploading.")
+			return -1, ErrNotReady
+		}
 		w_buff.Reset()
 
-		offset = record.ChunkSize * int64(record.CompletedChunks)
+		offset = record.Transfered
 		_, err = f.Seek(offset, 0)
 		if err != nil {
 			return -1, err
@@ -524,26 +551,27 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			return -1, err
 		}
 
-		// For last chunk we need to get the file id for this file in the system.
-		if record.TotalChunks - record.CompletedChunks == 1 {
-			q := req.URL.Query()
-			q.Set("returnEntity", "true")
-			q.Set("mode", "full")
-			req.URL.RawQuery = q.Encode()
-		}
-
 		if snoop {
-			logger.Put("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks, record.TotalChunks)
+			logger.Put("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks + 1, TotalChunks)
 		}
 
 		w := multipart.NewWriter(w_buff)
 
 		req.Header.Set("Content-Type", "multipart/form-data; boundary="+w.Boundary())
 
-		if record.CompletedChunks < (record.TotalChunks - 1) {
-			limit = record.ChunkSize
+		if record.TotalSize - record.Transfered <= ChunkSize {
+			q := req.URL.Query()
+			q.Set("returnEntity", "true")
+			q.Set("mode", "full")
+			req.URL.RawQuery = q.Encode()
+			limit = LastChunk
+			err = w.WriteField("lastChunk", "1")
+			if err != nil { 
+				return -1, err 
+			}
 		} else {
-			limit = record.LastChunk
+			limit = ChunkSize
+
 		}
 
 		err = w.WriteField("compressionMode", "NORMAL")
@@ -596,9 +624,18 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		}
 
 		record.CompletedChunks++
+		record.Transfered = record.Transfered + ChunkSize
 		if err := DB.Set("uploads", StripLocalPath(local_file), &record); err != nil {
 			return -1, err
 		}
+	}
+
+
+	if resp_data == nil {
+		s.DeleteUpload(record.ID)
+		DB.Unset("uploads", StripLocalPath(local_file))
+		logger.Err("Unexpected result from server, rolling back upload.")
+		return -1, ErrNotReady
 	}
 
 	if err := DB.Set("uploads", StripLocalPath(local_file), &FileRecord{

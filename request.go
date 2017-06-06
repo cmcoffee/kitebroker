@@ -29,6 +29,7 @@ const (
 	ErrBadAuth = "ERR_AUTH_UNAUTHORIZED"
 )
 
+var ErrFileChanged = fmt.Errorf("File has been changed.")
 var ErrUploaded = fmt.Errorf("File is already uploaded.")
 var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
@@ -181,17 +182,21 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 // Create new client session to appliance.
 func (s Session) NewClient() *http.Client {
 
-	var ignore_cert bool
+	var transport http.Transport
 
 	// Allows invalid certs if set to "no" in config.
 	if strings.ToLower(Config.Get("configuration", "ssl_verify")) == "no" {
-		ignore_cert = true
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
-	return &http.Client{Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: ignore_cert},
-		},
+	// Setup proxy setting.
+	if proxy_host := Config.Get("configuration", "proxy"); proxy_host != NONE {
+		proxyURL, err := url.Parse(proxy_host)
+		errChk(err)
+		transport.Proxy = http.ProxyURL(proxyURL)
 	}
+
+	return &http.Client{Transport: &transport, }
 }
 
 // Decodes JSON response body to provided interface.
@@ -299,15 +304,6 @@ func (s Session) MyUser() (output KiteUser, err error) {
 }
 
 // Returns Folder ID of the Account's My Folder.
-func (s Session) MyFolderID() (file_id int, err error) {
-	out, err := s.MyUser()
-	if err != nil {
-		return -1, err
-	}
-	return out.SyncDirID, nil
-}
-
-// Returns Folder ID of the Account's My Folder.
 func (s Session) MyBaseDirID() (file_id int, err error) {
 	out, err := s.MyUser()
 	if err != nil {
@@ -364,7 +360,7 @@ func (s Session) FindUser(user_email string) (id int, err error) {
 	return info.ID, nil
 }
 
-func (s Session) FindChildFolder(child_folder string, parent_folder int) (id int, err error) {
+func (s Session) FindChildFolder(parent_folder int, child_folder string) (id int, err error) {
 	sub_folders, err := s.ListFolders(parent_folder)
 	if err != nil { return -1, err }
 	for _, folder := range sub_folders.Data {
@@ -393,21 +389,15 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 		return false
 	}
 
-	if folder_names[0] == "My Folder" {
-		id, err = s.MyFolderID()
-		if err != nil {
-			return
-		}
-	} else {
-		top_shared, err := s.GetFolders()
-		if err != nil {
-			return -1, err
-		}
-		for _, e := range top_shared.Data {
-			if e.Name == folder_names[0] {
-				id = e.ID
-				break
-			}
+	top_shared, err := s.GetFolders()
+	if err != nil {
+		return -1, err
+	}
+
+	for _, e := range top_shared.Data {
+		if e.Name == folder_names[0] {
+			id = e.ID
+			break
 		}
 	}
 
@@ -438,12 +428,17 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	return
 }
 
-func (s Session) NewFile(folder_id int, filename string, sz int64, chunks int, modtime time.Time) (string, error) {
+func (s Session) NewUpload(folder_id int, filename string, modtime time.Time) (int, string, error) {
 	type T struct {
 		URI string `json:"uri"`
+		ID int `json:"id"`
 	}
 	var o T
-	return o.URI, s.Call("POST", fmt.Sprintf("/rest/folders/%d/actions/initiateUpload", folder_id), &o, PostJSON{"filename": filename, "totalSize": sz, "totalChunks": chunks, "clientModified": write_kw_time(modtime)}, Query{"returnEntity": "true", "mode": "full"})
+	return o.ID, o.URI, s.Call("POST", fmt.Sprintf("/rest/folders/%d/actions/initiateUpload", folder_id), &o, PostJSON{"filename": filename, "clientModified": write_kw_time(modtime)}, Query{"returnEntity": "true", "mode": "full"})
+}
+
+func (s Session) DeleteUpload(upload_id int) (error) {
+	return s.Call("DELETE", fmt.Sprintf("/rest/uploads/%d", upload_id), nil)
 }
 
 func (s Session) AddUserToFolder(user_id int, folder_id int, role_id int, notify bool) (err error) {
@@ -486,7 +481,7 @@ func (s Session) DeleteFile(file_id int) (err error) {
 }
 
 // Create remote folder
-func (s Session) CreateFolder(name string, parent_id int) (folder_id int, err error) {
+func (s Session) CreateFolder(parent_id int, name string) (folder_id int, err error) {
 	var new_folder KiteData
 	err = s.Call("POST", fmt.Sprintf("/rest/folders/%d/folders", parent_id), &new_folder, PostJSON{"name": name}, Query{"returnEntity": true})
 	return new_folder.ID, err

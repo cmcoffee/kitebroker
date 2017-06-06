@@ -164,6 +164,7 @@ type file_upload struct {
 
 type exit struct{}
 
+// Performs upload folder task.
 func (s Session) UploadFolder() (err error) {
 
 	show_no_files_found := true
@@ -178,65 +179,30 @@ func (s Session) UploadFolder() (err error) {
 
 	sync_folders := Config.MGet("configuration", "kw_folder")
 	if len(sync_folders) == 1 && sync_folders[0] == NONE {
-		switch auth_flow {
-			case SIGNATURE_AUTH:
-				for _, f := range top_folders.Data {
-					if strings.ContainsRune(f.Name, '@') { continue }
-					sync_folders = append(sync_folders, f.Name)
-				}
-			default:
-				rdir, err := ioutil.ReadDir(Config.Get("configuration", "local_path"))
-				if err != nil { return err }
-				for _, finfo := range rdir {
-					fname := finfo.Name()
-					if finfo.IsDir() && !strings.ContainsRune(fname, '@') { sync_folders = append(sync_folders, fname) }
-				}
+		start_path := Config.Get("configuration", "local_path")
+
+		if auth_flow == SIGNATURE_AUTH {
+			start_path = start_path + SLASH + string(s)
 		}
 
+		rdir, err := ioutil.ReadDir(start_path)
+		if err != nil { return err }
+		for _, finfo := range rdir {
+			fname := finfo.Name()
+ 			if finfo.IsDir() { sync_folders = append(sync_folders, fname) }
+		}
 	} 
 
 	sync_folders = cleanSlice(sync_folders)
 
- 
 	for _, parent_folder := range sync_folders {
 
-		var folder_id int
-
-		if fid, found := sync_map[parent_folder]; found {
-			folder_id = fid
-		} else {
-			folder_id, err = s.FindFolder(parent_folder)
-			if err != nil {
-				if auth_flow == SIGNATURE_AUTH && len(users) == 1 {
-					show_no_files_found = false
-					logger.Err(err)
-					continue
-				}
-			} 
-		}
-
-		if folder_id == -1 {
-			base_id, err := s.MyBaseDirID()
-			if err != nil {
-				logger.Err(err)
-				continue
-			}
-			logger.Log("Creating new kiteworks folder: [%s]", parent_folder)
-			if folder_id, err = s.CreateFolder(parent_folder, base_id); err != nil {
-				logger.Err(err)
-				continue
-			}
-			DB.Set("folders", parent_folder, &folder_id)
-		}
-
 		var root_folder string
-
-		if strings.Contains(parent_folder, "My Folder") && auth_flow == SIGNATURE_AUTH {
-			root_folder = Config.Get("configuration", "local_path") + SLASH + string(s) + strings.TrimPrefix(parent_folder, "My Folder")
+		if auth_flow == SIGNATURE_AUTH {
+			root_folder = Config.Get("configuration", "local_path")	+ SLASH + string(s) + SLASH + parent_folder
 		} else {
 			root_folder = Config.Get("configuration", "local_path")	+ SLASH + parent_folder
 		}
-
 		folders, files := scanPath(root_folder)
 
 		for _, folder := range folders {
@@ -247,7 +213,7 @@ func (s Session) UploadFolder() (err error) {
 			}
 		}
 
-		if found, err := s.pushFiles(folder_id, files); err != nil { 
+		if found, err := s.pushFiles(files); err != nil { 
 			show_no_files_found = false
 			logger.Err(err)
 			continue
@@ -258,39 +224,46 @@ func (s Session) UploadFolder() (err error) {
 	}
 
 	if show_no_files_found {
-		logger.Log("No new files to uplaod.")
+		logger.Log("No new files to upload.")
 	}
 
 	return nil
 }
 
-func (s Session) pushFiles(parent_id int, files []string) (files_uploaded bool, err error) {
-	var record UploadRecord
+// Processes files for uploading.
+func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
+	var record *UploadRecord
 	for _, file := range files {
 		file = StripLocalPath(file)
 		found, err := DB.Get("uploads", file, &record)
 		if err != nil { return true, err }
-		if !found {
-			f_path := splitLast(file, SLASH)
-			path := f_path[0]
-
-			var fid int
-
-			if len(path) == 0 {
-				fid = parent_id
-			} else {
-				fid, err = s.getKWDestination(StripLocalPath(path), true)
-				if err != nil { return true, err }
-			}
-			file = AppendLocalPath(file)
-			if _, err := s.Upload(file, fid); err != nil {
-				if err != ErrUploaded {
-					files_uploaded = true
-					return files_uploaded, err
+		if found && checkFile(AppendLocalPath(file), record) { 
+			continue 
+		} else { 
+			if fstat, err := os.Stat(AppendLocalPath(file)); err == nil {
+				if fstat.Size() == 0 {
+					continue
 				}
 			} else {
-				files_uploaded = true
+				return true, err
 			}
+
+		}
+
+		f_path := splitLast(file, SLASH)
+		path := f_path[0]
+
+		fid, err := s.getKWDestination(StripLocalPath(path), true)
+		if err != nil { return true, err }
+
+		file = AppendLocalPath(file)
+		if _, err := s.Upload(file, fid); err != nil {
+			if err != ErrUploaded && err != ErrNotReady {
+				files_uploaded = true
+				return files_uploaded, err
+			}
+		} else {
+			files_uploaded = true
 		}
 	}
 	return
@@ -298,6 +271,7 @@ func (s Session) pushFiles(parent_id int, files []string) (files_uploaded bool, 
 
 type set struct{}
 
+// Verifies kiteworks folder exists for file upload, creates folder if one does not exist.
 func (s Session) getKWDestination(search_path string, verify bool) (fid int, err error) {
 	split_path := strings.Split(search_path, SLASH)
 	split_len := len(split_path)
@@ -311,8 +285,8 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		found, err := DB.Get("folders", strings.Join(split_path[0:i], SLASH), &folder_id)
 		if err != nil { return -1, err }
 		if found {
+			if missing == 0 && verify == false { return folder_id, nil}
 			fid = folder_id
-			if !verify && missing == 0 { break }
 			finfo, err := s.FolderInfo(fid)
 			if err != nil || finfo.Deleted {
 				missing++
@@ -325,26 +299,21 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 	}
 
 	if fid == -1 {
-		var first_folder string
-		if split_path[0] == string(s) {
-			first_folder = "My Folder"
-		} else {
-			first_folder = split_path[0]
-		}
-		fid, err = s.FindFolder(first_folder)
+		fid, err = s.MyBaseDirID()
 		if err != nil { return -1, err }
 	}
 
-	for i := missing; i > 0; i-- {
-		missing_folder := split_path[split_len-i]
-		if missing_folder == string(s) {
-			missing_folder = "My Folder"
+	for i := split_len - missing; i < split_len; i++ {
+		if i == 0 && split_path[i] == string(s) {
+			continue
 		}
-		new_path := strings.Join(split_path[0:split_len+1-i], SLASH)
-		cid, _ := s.FindChildFolder(missing_folder, fid)
+		missing_folder := split_path[i]
+		new_path := strings.Join(split_path[0:i+1], SLASH)
+		fmt.Println(missing_folder)
+		cid, err := s.FindChildFolder(fid, missing_folder)
 		if cid == -1 {
-			logger.Log("Creating new kiteworks folder: [%s]", strings.Replace(new_path, string(s), "My Folder", 1))
-			fid, err = s.CreateFolder(missing_folder, fid)
+			logger.Log("Creating new kiteworks folder: [%s]", new_path)
+			fid, err = s.CreateFolder(fid, missing_folder)
 			if err != nil { return -1, err }
 		} else {
 			fid = cid
@@ -366,6 +335,10 @@ func (s Session) DownloadFolder() (err error) {
 	queue := make(chan(interface{}), 0)
 
 	local_path := LocalPath()
+
+	if auth_flow == SIGNATURE_AUTH {
+		local_path = local_path + SLASH + string(s)
+	}
 
 	err = MkDir(local_path)
 	if err != nil {
@@ -419,8 +392,6 @@ func (s Session) DownloadFolder() (err error) {
 			}
 		}
 
-		if kw_folder == "My Folder" && auth_flow == SIGNATURE_AUTH { kw_folder = string(s) }
-
 		root_folder := cleanPath(local_path + SLASH + kw_folder)
 		if err := s.mapFolders(root_folder, folder_id, queue); err != nil { return err }
 	}
@@ -465,7 +436,7 @@ func (s Session) mapFolders(local_path string, folder_id int, queue chan interfa
 				logger.Err(err)
 			}
 			vg.Done()
-		}(local_path, folder.ID, queue)
+		}(local_path + SLASH + folder.Name, folder.ID, queue)
 	}
 	vg.Wait()
 	return

@@ -19,6 +19,8 @@ import (
 	"time"
 	"io/ioutil"
 	"sync/atomic"
+	"archive/zip"
+	"compress/flate"
 )
 
 const (
@@ -410,4 +412,47 @@ func md5Sum(filename string) (sum []byte, err error) {
 	hex.Encode(sum, md5sum)
 	
 	return sum, nil
+}
+
+func compressFolder(input_folder, dest_file string) (err error) {
+	_, files := scanPath(input_folder)
+
+	f, err := os.OpenFile(dest_file, os.O_CREATE|os.O_RDWR, 0755)
+	if err != nil { return err }
+
+	w := zip.NewWriter(f)
+	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
+		return flate.NewWriter(out, flate.NoCompression)
+	})
+
+	for _, file := range files {
+		logger.Log("Flattening %s ...", file)
+		f, err := w.Create(file)
+		if err != nil { return err }
+		r, err := os.Open(AppendLocalPath(file))
+		if err != nil { return err }
+
+		finfo, err := os.Stat(AppendLocalPath(file))
+		if err != nil { 
+			logger.Err(err)
+			continue 
+		}
+		tm := NewTMonitor("processing", finfo.Size())
+		show_transfer := uint32(1)
+
+		go func() {
+			for atomic.LoadUint32(&show_transfer) == 1 {
+				tm.ShowTransfer()
+				time.Sleep(time.Second)
+			}
+		}()
+		err = Transfer(r, f, tm)
+		atomic.StoreUint32(&show_transfer, 0)
+		if err != nil { 
+			logger.Err(err)
+			continue 
+		}
+	}
+	w.Close()
+	return
 }

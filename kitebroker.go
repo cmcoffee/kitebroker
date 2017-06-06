@@ -311,15 +311,23 @@ export_files = yes
 	}
 
 	ShowLoader()
+
+	var fail_count int
+
 	for {
 		if _, err := Session(Config.Get("configuration", "account")).GetToken(); err != nil {
-			if _, err := Session(Config.Get("configuration", "account")).GetToken(); err != nil {
-				logger.Err(err)
-				fmt.Printf("\n")
+
+			if auth_flow == SIGNATURE_AUTH && fail_count > 1 {
 				DB.Unset("kitebroker", "s")
+			} else {
+				fail_count++
 				continue
-			}	
-		}
+			}
+
+			logger.Err(err)
+			fmt.Printf("\n")
+			continue
+		}	
 		break
 	}
 	HideLoader()
