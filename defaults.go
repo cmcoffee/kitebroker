@@ -7,7 +7,7 @@ func init() {
 # kiteworks API Configuration ##############################
 server = 
 account = 
-auth_mode = signature
+auth_mode = password
 redirect_uri = https://kitebroker
 proxy =
 

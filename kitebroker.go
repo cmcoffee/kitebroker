@@ -77,10 +77,7 @@ func open_database(db_file string) {
 // Performs configuration.
 func api_setup() {
 
-	var (
-		server           string
-		signature_secret string
-	)
+	var server string
 
 	fmt.Println("- kiteworks Secure API Configuration -\n")
 
@@ -90,9 +87,6 @@ RedoSetup:
 	}
 	client_id := get_input("Client Application ID: ")
 	client_secret := get_input("Client Secret Key: ")
-	if auth_flow == SIGNATURE_AUTH {
-		signature_secret = get_input("Signature Secret: ")
-	}
 	fmt.Println(NONE)
 
 	for confirm := getConfirm("Confirm API settings"); confirm == false; {
@@ -113,11 +107,6 @@ RedoSetup:
 	errChk(Config.Set("configuration", "api_cfg_1", api_cfg_1))
 
 	errChk(Config.Save("configuration"))
-
-	if auth_flow == SIGNATURE_AUTH {
-		errChk(DB.CryptSet("kitebroker", "s", &signature_secret))
-	}
-
 }
 
 // Loads kiteworks API client id and secret from config file.
@@ -163,6 +152,15 @@ func main() {
 	// Read configuration file.
 	errChk(Config.File(*config_file))
 
+	switch strings.ToLower(Config.Get("configuration", "auth_mode")) {
+	case "signature":
+		auth_flow = SIGNATURE_AUTH
+	case "password":
+		auth_flow = PASSWORD_AUTH
+	default:
+		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
+	}
+
 	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
 
 	// Make our paths if they don't exist.
@@ -205,15 +203,6 @@ func main() {
 	// Open datastore
 	open_database(db_filename)
 	logger.InTheEnd(DB.Close)
-
-	switch strings.ToLower(Config.Get("configuration", "auth_mode")) {
-	case "signature":
-		auth_flow = SIGNATURE_AUTH
-	case "password":
-		auth_flow = PASSWORD_AUTH
-	default:
-		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
-	}
 
 	// Load API Settings
 	loadAPIConfig(*config_file)
