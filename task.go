@@ -366,7 +366,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		new_path := strings.Join(split_path[0:i+1], SLASH)
 		cid, _ := s.FindChildFolder(fid, missing_folder)
 		if cid == -1 {
-			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s) + "/"))
+			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s) + SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
 			if err != nil {
 				return -1, err

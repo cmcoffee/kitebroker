@@ -112,10 +112,10 @@ func scanPath(root_folder string) (folders []string, files []string) {
 	}
 
 	for n, folder := range folders {
-		folders[n] = strings.TrimPrefix(folder, local_path + "/")
+		folders[n] = strings.TrimPrefix(folder, local_path + SLASH)
 	}
 	for n, file := range files {
-		files[n] = strings.TrimPrefix(file, local_path + "/")
+		files[n] = strings.TrimPrefix(file, local_path + SLASH)
 	}
 
 	return folders, files
