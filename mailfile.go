@@ -462,7 +462,7 @@ func (s Session) RecvFile() (err error) {
 		// Save Email body.
 		if strings.ToLower(Config.Get("recv_file:opts", "download_email_body")) == "yes" {
 			MkPath(folder)
-			f, err := Create(fmt.Sprintf("%s/kw_mailbody.txt"))
+			f, err := Create(fmt.Sprintf("%s/kw_mailbody.txt", folder))
 			if err != nil {
 				logger.Err("[%d] %s", id, err.Error())
 			} else {
@@ -476,7 +476,7 @@ func (s Session) RecvFile() (err error) {
 		// Generate file manifest.
 		if strings.ToLower(Config.Get("recv_file:opts", "download_file_manifest")) == "yes" {
 			MkPath(folder)
-			f, err := Create(fmt.Sprintf("%s/kw_manifest.csv"))
+			f, err := Create(fmt.Sprintf("%s/kw_manifest.csv", folder))
 			if err != nil {
 				logger.Err("[%d] %s", id, err.Error())
 			} else {
