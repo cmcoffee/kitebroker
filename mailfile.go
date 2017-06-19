@@ -92,13 +92,13 @@ func (s Session) SendFile() (err error) {
 		r_path = splitLast(r_path, SLASH)[0]
 
 		meta := KBMeta{
-			Path: SLASH + r_path,
+			Path: filepath.ToSlash(SLASH + r_path),
 		}
 
 		metadata, err := json.Marshal(meta)
 		if err != nil { return err }
 
-		err = s.Call("POST", fmt.Sprintf("/rest/files/%d/comments", id), nil, PostJSON{"contents":"kitebroker_metadata" + string(metadata)})
+		err = s.Call("POST", fmt.Sprintf("/rest/files/%d/comments", id), nil, PostJSON{"contents":"kitebroker_meta:" + string(metadata)})
 		if err != nil {
 			logger.Err(err)
 		}
@@ -410,20 +410,19 @@ func (s Session) RecvFile() (err error) {
 				} `json:"data"`
 			}
 
-			err = s.Call("GET", fmt.Sprintf("/rest/files/%d/comments", f.OriginalFileID), &Comment, Query{"contents:contains": "kitebroker_metadata", "orderBy": "created:asc", "limit": 1, "mode": "compact"})
+			err = s.Call("GET", fmt.Sprintf("/rest/files/%d/comments", f.OriginalFileID), &Comment, Query{"contents:contains": "kitebroker_meta:", "orderBy": "created:asc", "limit": 1, "mode": "compact"})
 			if err != nil { return err }
 
 			var metadata KBMeta
 
 			if len(Comment.Data) > 0 {
 				if len(Comment.Data[0].Content) > 0 {
-					j := strings.TrimPrefix(Comment.Data[0].Content, "kitebroker_metadata")
+					j := strings.TrimPrefix(Comment.Data[0].Content, "kitebroker_meta:")
 					err = json.Unmarshal([]byte(j), &metadata)
 					if err != nil { return err }
+					metadata.Path = filepath.Clean(metadata.Path)
 				}
 			}
-
-			metadata.Path = filepath.Clean(metadata.Path)
 
 			err = s.Download(finfo, folder + metadata.Path)
 			if err != nil {
