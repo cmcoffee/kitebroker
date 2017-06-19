@@ -6,8 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -58,22 +58,20 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 	var f *os.File
 
 	// Create all paths
-	local_path := cleanPath(Config.Get("configuration", "local_path"))
-	if err = MkDir(local_path); err != nil { return }
-	local_path = cleanPath(fmt.Sprintf("%s/%v", Config.Get("configuration", "local_path"), j))
-	if err = MkDir(local_path); err != nil { return }
+	if err = MkPath(string(j)); err != nil {
+		return
+	}
 
-	fname := cleanPath(fmt.Sprintf("%s/%s", local_path, target.Filename))
-	temp_fname := cleanPath(fmt.Sprintf("%s/%s.dli.incomplete", cleanPath(Config.Get("configuration", "temp_path")), target.Filename))
+	fname := string(j) + target.Filename
 
 	var offset int64
 
-	fstat, err := os.Stat(temp_fname)
+	fstat, err := os.Stat(fname + ".incomplete")
 	if err == nil || !os.IsNotExist(err) {
 		offset = fstat.Size()
 	}
 
-	f, err = os.OpenFile(temp_fname, os.O_CREATE|os.O_RDWR, 0755)
+	f, err = OpenFile(fname + ".incomplete", os.O_CREATE|os.O_RDWR, 0755)
 	if err != nil {
 		return
 	}
@@ -123,7 +121,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 	if offset > 0 {
 		start := resp.Header.Get("Content-Range")
 		if start == NONE {
-			goto MoveFile
+			goto renameFile
 		}
 		start = strings.TrimPrefix(start, "bytes")
 		byte_range := strings.Split(start, "-")
@@ -149,7 +147,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 		return
 	}
 
-MoveFile:
+	renameFile:
 	tm.ShowTransfer()
 	fmt.Println(NONE)
 	logger.Log("[%v]: Download completed succesfully.", j)
@@ -161,7 +159,7 @@ MoveFile:
 	}
 
 	// Rename file.
-	if err = moveFile(temp_fname, fname); err != nil {
+	if err = Rename(fname + ".incomplete", fname); err != nil {
 		return
 	}
 
@@ -313,7 +311,9 @@ func (j Session) DLIReport() (err error) {
 	}
 
 	start_date, err := time.Parse("2006-Jan-02", Config.Get("dli_export:opts", "start_date"))
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	// Set initial date for export.
 	for _, n := range flag {
@@ -323,7 +323,9 @@ func (j Session) DLIReport() (err error) {
 			tmp.Start_time = start_date.UTC()
 			tmp.Completed = true
 			lastUpdate[n] = tmp
-			if err := DB.Set("dli_export", j, &lastUpdate); err != nil { return err }
+			if err := DB.Set("dli_export", j, &lastUpdate); err != nil {
+				return err
+			}
 		}
 
 		// Attempt to resume a previous export if download got cut short, restart previous export on issue.
@@ -382,7 +384,9 @@ func (j Session) DLIReport() (err error) {
 			tmp.Export_time = time.Time{}
 			tmp.Completed = true
 			lastUpdate[n] = tmp
-			if err := DB.Set("dli_export", j, &lastUpdate); err != nil { logger.Err(err) }
+			if err := DB.Set("dli_export", j, &lastUpdate); err != nil {
+				logger.Err(err)
+			}
 			return err
 		}
 
@@ -433,7 +437,7 @@ func (j Session) DLIReport() (err error) {
 					}
 					if err != nil {
 						return err
-					} 
+					}
 					break
 				}
 			}

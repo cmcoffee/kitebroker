@@ -1,31 +1,33 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
+	"compress/flate"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"crypto/md5"
 	"fmt"
 	"github.com/cmcoffee/go-logger"
 	"github.com/howeyc/gopass"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
-	"time"
-	"io/ioutil"
 	"sync/atomic"
-	"archive/zip"
-	"compress/flate"
+	"time"
+	"strconv"
 )
 
 const (
-	NONE          = ""
-	SLASH         = string(os.PathSeparator)
+	NONE  = ""
+	SLASH = string(os.PathSeparator)
 )
 
 var loader = []string{
@@ -74,7 +76,7 @@ func HideLoader() {
 
 // Scans local path for all folders and files.
 func scanPath(root_folder string) (folders []string, files []string) {
-	folders = []string{root_folder}
+	folders = []string{FullPath(root_folder)}
 
 	var n int
 
@@ -86,46 +88,41 @@ func scanPath(root_folder string) (folders []string, files []string) {
 		}
 		return NONE
 	}
-
+	
 	files = make([]string, 0)
 
 	for {
 		folder := nextFolder()
-		if folder == NONE { break }
+		if folder == NONE {
+			break
+		}
 		data, err := ioutil.ReadDir(folder)
-		if err != nil && !os.IsNotExist(err) { 
+		if err != nil && !os.IsNotExist(err) {
 			logger.Err(err)
-			continue 
+			continue
 		}
 		for _, finfo := range data {
 			if finfo.IsDir() {
+				if folder == local_path && finfo.Name() == "sent" { continue }
 				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
 			} else {
 				files = append(files, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
 			}
-		} 
+		}
 	}
 
 	for n, folder := range folders {
-		folders[n] = strings.TrimPrefix(folder, LocalPath())
+		folders[n] = strings.TrimPrefix(folder, local_path + "/")
 	}
 	for n, file := range files {
-		files[n] = strings.TrimPrefix(file, LocalPath())
+		files[n] = strings.TrimPrefix(file, local_path + "/")
 	}
 
 	return folders, files
 }
 
-func LocalPath() string {
-	return Config.Get("configuration", "local_path") + SLASH
-}
-
-func StripLocalPath(input string) string {
-	return strings.TrimPrefix(input, Config.Get("configuration", "local_path") + SLASH)	
-}
-
-func AppendLocalPath(input string) string {
-	return Config.Get("configuration", "local_path") + SLASH + input 
+func FullPath(path string) string {
+	return filepath.Clean(Config.Get("configuration", "local_path") + SLASH + path)
 }
 
 // Get confirmation
@@ -142,6 +139,11 @@ func getConfirm(name string) bool {
 		fmt.Printf("Err: Unrecognized response: %s\n", resp)
 		continue
 	}
+}
+
+func isEmail(input string) (matched bool) {
+	matched, _ = regexp.MatchString("^[a-z0-9.]+@[a-z0-9.-]+\\.[a-z.]+$", input)
+	return
 }
 
 // Removes newline characters
@@ -252,9 +254,28 @@ func cleanSlice(input []string) (output []string) {
 			n++
 		}
 	}
-	
+
 	output = output[:n]
 	return
+}
+
+func folderDate(input time.Time) (output string) {
+	year := input.Year()
+	mon := int(input.Month())
+	day := input.Day()
+	hou := input.Hour()
+	min := input.Minute()
+	sec := input.Second()
+
+	str_time := func(in_time int) string {
+		if in_time > 9 {
+			return strconv.Itoa(in_time)
+		} else {
+			return fmt.Sprintf("0%d", in_time)
+		}
+	}
+
+	return fmt.Sprintf("%d%s%s_%s%s%s", year, str_time(mon), str_time(day), str_time(hou), str_time(min), str_time(sec))
 }
 
 // Splits on the last seperator, for seperating paths and files.
@@ -302,30 +323,15 @@ func write_kw_time(input time.Time) string {
 	return strings.Replace(t, "Z", "+0000", 1)
 }
 
-// Create a local folder
-func MkDir(path string) (err error) {
-	finfo, err := os.Stat(path)
-	if err != nil && os.IsNotExist(err) {
-		err = os.Mkdir(path, 0755)
-		if err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-
-	if finfo != nil && !finfo.IsDir() {
-		os.Remove(path)
-		err = os.Mkdir(path, 0755)
-		if err != nil {
-			return err
-		}
-	}
-	return
-}
-
 // Move file from one directory to another.
 func moveFile(src, dst string) (err error) {
+	src = FullPath(src)
+	dst = FullPath(dst)
+
+	if err = MkDir(splitLast(dst, SLASH)[0]); err != nil { 
+		return err 
+	}
+
 	s_file, err := os.Open(src)
 	if err != nil {
 		return err
@@ -369,48 +375,51 @@ func errChk(err error, desc ...string) {
 	}
 }
 
-// Provides a clean path, for Windows ... and everyone else.
-func cleanPath(input string) string {
-	return filepath.Clean(input)
-}
-
-
 // md5Sum function for checking files against appliance.
 func md5Sum(filename string) (sum []byte, err error) {
+
+	filename = FullPath(filename)
+
 	checkSum := md5.New()
 	file, err := os.Open(filename)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 
 	var (
 		o int64
-	    n int
-	    r int
+		n int
+		r int
 	)
-	
+
 	for tmp := make([]byte, 16384); ; {
 		r, err = file.ReadAt(tmp, o)
-		
-		if err != nil && err != io.EOF { 
-			return nil, err 
-		} 
-		
-		if r == 0 { break }
-		
+
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if r == 0 {
+			break
+		}
+
 		tmp = tmp[0:r]
 		n, err = checkSum.Write(tmp)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		o = o + int64(n)
 	}
-	
+
 	if err != nil && err != io.EOF {
 		return nil, err
 	}
 
 	md5sum := checkSum.Sum(nil)
-	
+
 	sum = make([]byte, hex.EncodedLen(len(md5sum)))
 	hex.Encode(sum, md5sum)
-	
+
 	return sum, nil
 }
 
@@ -418,7 +427,9 @@ func compressFolder(input_folder, dest_file string) (err error) {
 	_, files := scanPath(input_folder)
 
 	f, err := os.OpenFile(dest_file, os.O_CREATE|os.O_RDWR, 0755)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
 	w := zip.NewWriter(f)
 	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
@@ -428,14 +439,18 @@ func compressFolder(input_folder, dest_file string) (err error) {
 	for _, file := range files {
 		logger.Log("Flattening %s ...", file)
 		f, err := w.Create(file)
-		if err != nil { return err }
-		r, err := os.Open(AppendLocalPath(file))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
+		r, err := Open(file)
+		if err != nil {
+			return err
+		}
 
-		finfo, err := os.Stat(AppendLocalPath(file))
-		if err != nil { 
+		finfo, err := Stat(file)
+		if err != nil {
 			logger.Err(err)
-			continue 
+			continue
 		}
 		tm := NewTMonitor("processing", finfo.Size())
 		show_transfer := uint32(1)
@@ -448,11 +463,70 @@ func compressFolder(input_folder, dest_file string) (err error) {
 		}()
 		err = Transfer(r, f, tm)
 		atomic.StoreUint32(&show_transfer, 0)
-		if err != nil { 
+		if err != nil {
 			logger.Err(err)
-			continue 
+			continue
 		}
 	}
 	w.Close()
 	return
+}
+
+// Create a local folder
+func MkDir(path string) (err error) {
+
+	create := func(path string) (err error) {
+		_, err = os.Stat(path)
+		if err != nil && os.IsNotExist(err) {
+			err = os.Mkdir(path, 0755)
+			if err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		}
+		return nil
+	}
+
+	path = filepath.Clean(path)
+
+	split_path := strings.Split(path, SLASH)
+	for i, _ := range split_path {
+		err = create(strings.Join(split_path[0:i+1], SLASH))
+		if err != nil { return err }
+	}
+
+	return
+}
+
+func MkPath(path string) (err error) {
+	return MkDir(FullPath(path))
+}
+ 
+func Chtimes(name string, atime time.Time, mtime time.Time) error {
+	return os.Chtimes(FullPath(name), atime, mtime)
+}
+
+func Remove(name string) error {
+	return os.Remove(FullPath(name))
+}
+
+func Create(name string) (*os.File, error) {
+	return os.Create(FullPath(name))
+}
+
+func Rename(oldpath, newpath string) error {
+	return os.Rename(FullPath(oldpath), FullPath(newpath))
+}
+
+func OpenFile(name string, flag int, perm os.FileMode) (*os.File, error) {
+	return os.OpenFile(FullPath(name), flag, perm)
+}
+
+func Open(name string) (*os.File, error) {
+	return os.Open(FullPath(name))
+}
+
+func Stat(name string) (os.FileInfo, error) {
+	return os.Stat(FullPath(name))
 }

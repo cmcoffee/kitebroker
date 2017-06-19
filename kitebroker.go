@@ -18,7 +18,7 @@ const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
 	VERSION       = "0.1.0"
-	KWAPI_VERSION = "5"
+	KWAPI_VERSION = "7"
 )
 
 var (
@@ -31,6 +31,7 @@ var (
 	client_secret string
 	auth_flow     uint
 	retry_count   int
+	local_path    string
 )
 
 // Authentication Mechnism Constants
@@ -159,93 +160,15 @@ func main() {
 
 	flags.Parse(os.Args[1:])
 
-	ShowLoader()
-
 	// Read configuration file.
 	errChk(Config.File(*config_file))
 
-	// Sets configuration defaults
-	Config.Defaults(`
-[configuration]
-# kiteworks API Configuration ##############################
-server = 
-account =
-auth_mode = signature
-redirect_uri = https://kitebroker
-
-# Auto-Generated Config ####################################
-api_cfg_0 =
-api_cfg_1 =
-############################################################
-
-# Verify SSL Certificate on Appliance. (improves security)
-ssl_verify = yes
-
-# Continuous Mode, run indefinetly.
-continuous_mode = yes
-continuous_rate_secs = 1800
-
-# Logging settings
-log_path = log  	# Logging path
-log_size = 10240 	# Logging max size in bytes before rotation.
-log_rotate = 5		# Logging max rotations to save, -1 = rotate indefinetly.
-
-# DB Cleanup interval.
-cleanup_time_secs = 86400
-
-# Temp folder for incomplete file downloads.
-temp_path = temp
-
-# Local path for file upload and download.
-local_path = kiteworks
-
-# Upload chunk size in bytes.
-upload_chunk_size = 32768
-
-# Removed source copy of file from either local machine(when uploading) or kiteworks appliance(when downloading).
-delete_source_files_on_complete = no
-
-# Task Types:
-# send_file      :Emails files to user or users.
-# recv_file      :Downloads files sent to user.
-# folder_download :Download a specific remote folder.
-# folder_upload   :Upload files to a specific folder.
-# dli_export      :Creates accounts based on CSV input. (Requires Signature Auth)
-task = folder_upload
-
-[send_file:opts]
-mailto =
-mailcc =
-mailbcc =
-get_recipient_from_path = no
-include_subdirs = yes
-exclude_filter =
-email_subject = default
-
-[recv_file:opts]
-email_age_days = 0
-download_mailbody = no
-
-[folder_download:opts]
-kw_folder = My Folder 	# Folder(s) to download, leave blank for all folders.
-save_metadata = no		# Saves metadata for downloaded files as <file>-info.
-
-[folder_upload:opts]
-kw_folder = My Folder  	# Parent folder to upload files to, leave blank to upload all folders.
-
-[dli_export:opts]
-dli_admin_user = dli_admin@domain.com  # DLI Admin account, required for DLI exports.
-start_date = 2017-Jan-01   			   # Start date for beginign of DLI export.
-
-# Specify which type of exports to process.
-export_activities = yes
-export_emails = yes
-export_files = yes
-`)
+	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
 
 	// Make our paths if they don't exist.
-	errChk(MkDir(cleanPath(Config.Get("configuration", "temp_path"))))
-	errChk(MkDir(cleanPath(Config.Get("configuration", "log_path"))))
+	errChk(MkDir(Config.Get("configuration", "local_path")))
+	errChk(MkDir(Config.Get("configuration", "temp_path")))
+	errChk(MkDir(Config.Get("configuration", "log_path")))
 
 	max_connections := 3
 
@@ -270,7 +193,7 @@ export_files = yes
 		log_size = 10240
 	}
 
-	err = logger.File(logger.ALL, cleanPath(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), os.Args[0])), int64(log_size)*1024, log_rotate)
+	err = logger.File(logger.ALL, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), os.Args[0])), int64(log_size)*1024, log_rotate)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -284,12 +207,12 @@ export_files = yes
 	logger.InTheEnd(DB.Close)
 
 	switch strings.ToLower(Config.Get("configuration", "auth_mode")) {
-		case "signature":
-			auth_flow = SIGNATURE_AUTH
-		case "password":
-			auth_flow = PASSWORD_AUTH
-		default:
-			errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
+	case "signature":
+		auth_flow = SIGNATURE_AUTH
+	case "password":
+		auth_flow = PASSWORD_AUTH
+	default:
+		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
 	}
 
 	// Load API Settings
@@ -304,7 +227,7 @@ export_files = yes
 			Config.Unset("configuration", "account")
 			Config.Save("configuration")
 			logger.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
-			logger.TheEnd(0)	
+			logger.TheEnd(0)
 		}
 		logger.Put("Aborting, Access tokens not cleared.\n")
 		logger.TheEnd(0)
@@ -312,22 +235,23 @@ export_files = yes
 
 	ShowLoader()
 
-	var fail_count int
+	var second_attempt bool
 
 	for {
 		if _, err := Session(Config.Get("configuration", "account")).GetToken(); err != nil {
 
-			if auth_flow == SIGNATURE_AUTH && fail_count > 1 {
+			// Try twice before removing the signature secret, as we should try to get a new access token first.
+			if auth_flow == SIGNATURE_AUTH && second_attempt {
 				DB.Unset("kitebroker", "s")
-			} else {
-				fail_count++
+			} else if auth_flow == SIGNATURE_AUTH {
+				second_attempt = true
 				continue
 			}
 
 			logger.Err(err)
 			fmt.Printf("\n")
 			continue
-		}	
+		}
 		break
 	}
 	HideLoader()
@@ -352,7 +276,7 @@ export_files = yes
 
 	// Begin scan loop.
 	for {
-		//backgroundCleanup();
+		backgroundCleanup();
 		start := time.Now().Round(time.Second)
 		TaskHandler()
 		if continuous {

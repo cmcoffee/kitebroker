@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"text/template"
 )
 
@@ -43,9 +42,9 @@ MimeType = {{.Mime}}
 		*KiteData
 	}
 
-	var local_path string
+	var dest string
 
-	found, err = DB.Get("dl_folders", file_info.ParentID, &local_path)
+	found, err = DB.Get("dl_folders", file_info.ParentID, &dest)
 	if err != nil {
 		return err
 	}
@@ -53,15 +52,12 @@ MimeType = {{.Mime}}
 		return fmt.Errorf("Cannot download file %s, local destination folder missing.", file_info.Name)
 	}
 
-	local_path = cleanPath(local_path)
-
 	file_info_extended.Creator = Uploader
 	file_info_extended.KiteData = file_info
 
 	t := template.Must(template.New("metadata").Parse(metadata))
 
-
-	f, err := os.Create(cleanPath(fmt.Sprintf("%s/%s", local_path, file_info.Name+"-info")))
+	f, err := Create(fmt.Sprintf("%s/%s", dest, file_info.Name+"-info"))
 	if err != nil {
 		return err
 	}

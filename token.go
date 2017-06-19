@@ -7,12 +7,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/cmcoffee/go-logger"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"time"
-	"github.com/cmcoffee/go-logger"
 )
 
 // Authorization Information
@@ -41,14 +41,14 @@ func LoadCredentials() (password string, reset bool) {
 	Config.Set("configuration", "account", get_input("Account: "))
 
 	switch auth_flow {
-		case SIGNATURE_AUTH:
-			DB.Truncate("tokens")
-			password = get_passw("Signature Secret: ")
-			DB.CryptSet("kitebroker", "s", &password)
-			fmt.Println(NONE)
-		case PASSWORD_AUTH:
-			password = get_passw("Password: ")
-			fmt.Println(NONE)
+	case SIGNATURE_AUTH:
+		DB.Truncate("tokens")
+		password = get_passw("Signature Secret: ")
+		DB.CryptSet("kitebroker", "s", &password)
+		fmt.Println(NONE)
+	case PASSWORD_AUTH:
+		password = get_passw("Password: ")
+		fmt.Println(NONE)
 	}
 
 	Config.Save("configuration")
@@ -72,10 +72,14 @@ func (s Session) GetToken() (access_token string, err error) {
 func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 
 	found, err := DB.Get("tokens", s, &auth)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	// If token is still valid, just return current token.
-	if auth != nil && auth.AccessToken != NONE && auth.Expiry > time.Now().Unix() { return }
+	if auth != nil && auth.AccessToken != NONE && auth.Expiry > time.Now().Unix() {
+		return
+	}
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", server), nil)
 	if err != nil {
@@ -154,11 +158,15 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 		return nil, err
 	}
 
-	if err := s.DecodeJSON(resp, &auth); err != nil { return nil, err }
+	if err := s.DecodeJSON(resp, &auth); err != nil {
+		return nil, err
+	}
 
 	if err != nil {
 		if is_refresh {
-			if err := DB.Unset("tokens", s); err != nil { return nil, err }
+			if err := DB.Unset("tokens", s); err != nil {
+				return nil, err
+			}
 			return s.getAccessToken()
 		}
 		return nil, err

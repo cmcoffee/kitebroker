@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"github.com/cmcoffee/go-logger"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -12,11 +13,11 @@ import (
 	"os"
 	"strings"
 	"time"
-	"github.com/cmcoffee/go-logger"
 )
 
 // API Session
 type Session string
+
 var call_done struct{}
 var api_call_bank chan struct{}
 var transfer_call_bank chan struct{}
@@ -31,6 +32,7 @@ const (
 
 var ErrFileChanged = fmt.Errorf("File has been changed.")
 var ErrUploaded = fmt.Errorf("File is already uploaded.")
+var ErrZeroByte = fmt.Errorf("File has no content.")
 var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
 // Converts kiteworks API errors to standard golang error message.
@@ -57,41 +59,43 @@ func (s Session) respError(resp *http.Response) (err error) {
 		body = resp.Body
 	}
 
-	if snoop { logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status) }
+	if snoop {
+		logger.Put("<-- RESPONSE STATUS: %s\n", resp.Status)
+	}
 
 	output, err := ioutil.ReadAll(body)
 	if err != nil {
 		return err
 	}
 
-	if snoop { logger.Put("\n") }
+	if snoop {
+		logger.Put("\n")
+	}
 
-	var kite_err KiteErr
+	var kite_err *KiteErr
 
 	json.Unmarshal(output, &kite_err)
 
 	defer resp.Body.Close()
 
-	if len(kite_err.Errors) > 0 {
-		var error_text []string
-		error_text = append(error_text, "kiteworks error(s):")
-		for n, v := range kite_err.Errors {
-			if v.Code == ErrBadAuth {
-				DB.Unset("tokens", s)
+	if kite_err != nil {
+		e := NewKError()
+		for _, v := range kite_err.Errors {
+			e.AddError(v.Code, v.Message)
+		}
+		if kite_err.ErrorDesc != NONE {
+			e.AddError(kite_err.Error, kite_err.ErrorDesc)
+		}
+		if e.IsSet(ERR_AUTH_PROFILE_CHANGED) {
+			var kauth *KiteAuth
+			DB.Get("tokens", s, &kauth)
+			if kauth != nil {
+				kauth.Expiry = 0
+				DB.Set("tokens", s, &kauth)
 			}
-			error_text = append(error_text, fmt.Sprintf("  [%d] %s => %s", n, v.Code, v.Message))
 		}
-		error_text = append(error_text, "\n")
-		return fmt.Errorf("%s", strings.Join(error_text[0:], "\n"))
+		return e
 	}
-
-	if kite_err.ErrorDesc != NONE {
-		if kite_err.Error == "invalid_grant" { 
-			DB.Unset("tokens", s) 
-		}
-		return fmt.Errorf("%s => %s\n", kite_err.Error, kite_err.ErrorDesc)
-	}
-
 	return fmt.Errorf(resp.Status)
 }
 
@@ -105,7 +109,9 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 
 	action = strings.ToUpper(action)
 
-	if snoop { logger.Put("\n--> ACTION: \"%s\" PATH: \"%s\"\n", action, path) }
+	if snoop {
+		logger.Put("\n--> ACTION: \"%s\" PATH: \"%s\"\n", action, path)
+	}
 
 	for _, in := range input {
 		switch i := in.(type) {
@@ -196,14 +202,17 @@ func (s Session) NewClient() *http.Client {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	return &http.Client{Transport: &transport, }
+	return &http.Client{Transport: &transport}
 }
 
 // Decodes JSON response body to provided interface.
 func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error) {
 
 	defer resp.Body.Close()
-
+	defer func() {
+		if snoop { logger.Put("} \n\n") }
+	}()
+	
 	err = s.respError(resp)
 	if err != nil {
 		return
@@ -233,10 +242,7 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	err = dec.Decode(output)
 	if err == io.EOF {
 		return nil
-	} else if err == nil && snoop {
-		logger.Put("} \n\n")
-	}
-
+	} 
 	return
 }
 
@@ -362,7 +368,9 @@ func (s Session) FindUser(user_email string) (id int, err error) {
 
 func (s Session) FindChildFolder(parent_folder int, child_folder string) (id int, err error) {
 	sub_folders, err := s.ListFolders(parent_folder)
-	if err != nil { return -1, err }
+	if err != nil {
+		return -1, err
+	}
 	for _, folder := range sub_folders.Data {
 		if folder.Name == child_folder {
 			return folder.ID, nil
@@ -431,13 +439,13 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 func (s Session) NewUpload(folder_id int, filename string, modtime time.Time) (int, string, error) {
 	type T struct {
 		URI string `json:"uri"`
-		ID int `json:"id"`
+		ID  int    `json:"id"`
 	}
 	var o T
 	return o.ID, o.URI, s.Call("POST", fmt.Sprintf("/rest/folders/%d/actions/initiateUpload", folder_id), &o, PostJSON{"filename": filename, "clientModified": write_kw_time(modtime)}, Query{"returnEntity": "true", "mode": "full"})
 }
 
-func (s Session) DeleteUpload(upload_id int) (error) {
+func (s Session) DeleteUpload(upload_id int) error {
 	return s.Call("DELETE", fmt.Sprintf("/rest/uploads/%d", upload_id), nil)
 }
 
@@ -496,24 +504,24 @@ func (s Session) EraseFile(file_id int) (err error) {
 	return s.Call("DELETE", fmt.Sprintf("/rest/files/%d/actions/permanent", file_id), nil)
 }
 
-// Add User to system.
-func (s Session) AddUser(email, password string, verify, notify bool) (err error) {
-	var (
-		new_user KiteData
-		verified bool
-	)
-	if !verify {
-		verified = true
+// Find sent files
+func (s Session) FindMail(filter Query) (mail_id []int, err error) {
+	var m struct {
+		Data []struct {
+			ID int `json:"id"`
+		} `json:"data"`
 	}
 
-	json_post := PostJSON{"email": email, "sendNotification": notify}
-	if password != NONE {
-		json_post["password"] = password
+	if err = s.Call("GET", "/rest/mail", &m, filter); err != nil {
+		return nil, err
+	}
+	if err != nil {
+		return nil, err
 	}
 
-	if err = s.Call("POST", "/rest/admin/users", &new_user, json_post, Query{"returnEntity": true}); err != nil {
-		return err
+	for _, ent := range m.Data {
+		mail_id = append(mail_id, ent.ID)
 	}
 
-	return s.Call("PUT", fmt.Sprintf("/rest/admin/users/%d", new_user.ID), nil, PostJSON{"active": true, "verified": verified})
+	return
 }
