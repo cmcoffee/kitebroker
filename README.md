@@ -1,5 +1,12 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.1.0 - 06-20-2017)
+    * Added send_file and recv_file task types for sending files via smtp and downloading files within inbox.
+    * Added background database clean up thread.
+    * Changed some internal background functions and calls for folder_download, folder_upload and dli_export.
+    * Added logic for handling files in process. (ie.. currently being written to.)
+    * --snoop option renamed --rest_snoop.
+
 ## (v0.0.9 - 05-04-2017)
     * Updated error handling on failed transfers.
     * Exposed and updated --snoop option for snooping on API calls to kiteworks appliance.

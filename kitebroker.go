@@ -145,7 +145,7 @@ func main() {
 
 	reset := flags.Bool("reset", false, "Reconfigure client credentials.")
 
-	flags.BoolVar(&snoop, "resp_snoop", false, "Snoop API calls to and from kiteworks appliance.")
+	flags.BoolVar(&snoop, "rest_snoop", false, "Snoop on API calls to the kiteworks appliance.")
 
 	flags.Parse(os.Args[1:])
 
