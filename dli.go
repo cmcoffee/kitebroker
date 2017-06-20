@@ -351,7 +351,7 @@ func (j Session) DLIReport() (err error) {
 					errors_found = true
 					break
 				}
-				err := j.DLIDownload(dli_resume)
+				err := s.DLIDownload(dli_resume)
 				if err != nil && err == ErrNotReady {
 					time.Sleep(time.Second * 10)
 					err = nil
@@ -376,6 +376,7 @@ func (j Session) DLIReport() (err error) {
 			}
 			s.DeleteExport(lastUpdate[n].Export_id)
 		}
+
 
 		// Generate a new request.
 		x, err := s.DLIGenerateReport(string(j), n, lastUpdate[n].Start_time, task_time)
@@ -409,7 +410,7 @@ func (j Session) DLIReport() (err error) {
 				}
 				for {
 					// Loop until we download the export, or error out.
-					err := j.DLIDownload(x.Exports[k])
+					err := s.DLIDownload(x.Exports[k])
 					if err != nil && err == ErrNotReady {
 						time.Sleep(time.Second * 10)
 						continue

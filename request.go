@@ -91,7 +91,7 @@ func (s Session) respError(resp *http.Response) (err error) {
 			DB.Get("tokens", s, &kauth)
 			if kauth != nil {
 				kauth.Expiry = 0
-				DB.Set("tokens", s, &kauth)
+				DB.CryptSet("tokens", s, &kauth)
 			}
 		}
 		return e
@@ -354,16 +354,20 @@ func (s Session) GetFolders() (output KiteArray, err error) {
 // Find a user_id
 func (s Session) FindUser(user_email string) (id int, err error) {
 	id = -1
-	sub_session := Session(user_email)
 
-	info, err := sub_session.MyUser()
+	var info struct {
+		Users []KiteUser `json:"data"`
+	}
+
+	err = s.Call("GET", "/rest/users", &info, Query{"email":user_email, "mode":"compact"})
 	if err != nil {
-		if strings.Contains(err.Error(), "Invalid user") {
-			return -1, fmt.Errorf("No such user: %s", user_email)
-		}
 		return -1, err
 	}
-	return info.ID, nil
+
+	if len(info.Users) == 0 {
+		return -1, fmt.Errorf("No such user: %s", user_email)
+	}
+	return info.Users[0].ID, nil
 }
 
 func (s Session) FindChildFolder(parent_folder int, child_folder string) (id int, err error) {

@@ -126,6 +126,10 @@ func backgroundCleanup() {
 		for {
 			if time.Since(last_cleanup) >= ival {
 				switch Config.Get("configuration", "task") {
+					case "recv_file":
+						if err := cleanupRecv(); err != nil {
+							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+						}
 					case "folder_download":
 						if err := cleanupDownloads(); err != nil {
 							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
@@ -147,6 +151,39 @@ func backgroundCleanup() {
 			time.Sleep(last_cleanup.Add(ival).Sub(time.Now()))
 		}
 	}()
+}
+
+func cleanupRecv() error {
+	records, err := DB.ListNKeys("inbox")
+	if err != nil {
+		return err
+	}
+
+	var M struct {
+		Deleted bool `json:"deleted"`
+	}
+
+	for _, key := range records {
+		var s Session
+		if _, err = DB.Get("inbox", key, &s); err != nil {
+			return err
+		}
+
+		M.Deleted = true
+
+		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", key), &M, Query{"mode":"compact", "with":"(deleted)"})
+		if err != nil {
+			logger.Err(err)
+			continue
+		}
+		if M.Deleted {
+			if err := DB.Unset("inbox", key); err != nil {
+				return err
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	return nil
 }
 
 // Cleans up upload records, make sure files are there, if not delete record.
@@ -252,11 +289,13 @@ func (s Session) UploadFolder() (err error) {
 
 		folders, files := scanPath(root_folder)
 
-		for _, folder := range folders {
-			_, err = s.getKWDestination(folder, false)
-			if err != nil {
-				logger.Err(err)
-				continue
+		if strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders")) == "yes" {
+			for _, folder := range folders {
+				_, err = s.getKWDestination(folder, false)
+				if err != nil {
+					logger.Err(err)
+					continue
+				}
 			}
 		}
 

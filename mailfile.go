@@ -194,6 +194,7 @@ func (s Session) RecvFile() (err error) {
 		file_withdrawn
 		file_deleted
 		file_downloaded
+		file_access_denied
 	)
 
 	type attachment struct {
@@ -394,6 +395,10 @@ func (s Session) RecvFile() (err error) {
 				if err != nil {
 					if IsKiteError(err) {
 						logger.Log("[%d] %s(%s) cannot be downloaded. %s.", id, record.File[i].Filename, showSize(record.File[i].Filesize), err.Error())
+						e := err.(*KError)
+						if e.IsSet(ERR_ACCESS_USER) {
+							record.File[i].Flag |= file_access_denied
+						}
 						continue
 					} else {
 						logger.Err(err)
@@ -428,14 +433,14 @@ func (s Session) RecvFile() (err error) {
 			if err != nil {
 				if err == ErrDownloaded  {
 					logger.Log("[%d] %s(%s) was previously downloaded already.", id, record.File[i].Filename, showSize(record.File[i].Filesize))
-					f.Flag |= file_downloaded
-				} else if err == nil {
-					f.Flag |= file_downloaded
+					record.File[i].Flag |= file_downloaded
 				} else {
 					logger.Err(err)
 					continue mail_loop
 				}
-			} 
+			} else {
+				record.File[i].Flag |= file_downloaded
+			}
 			DB.Unset("downloads", fid)
 		}
 
@@ -482,9 +487,11 @@ func (s Session) RecvFile() (err error) {
 			} else {
 				manifest := make([]string, 0)
 				manifest = append(manifest, "filename,filesize,fingerprint,status,downloaded")
-				for _, info := range  record.File {
+				for _, info := range record.File {
 					var status, flag string
 					switch {
+						case info.Flag & file_access_denied != 0:
+							flag ="access_denied"
 						case info.Flag & file_allowed != 0:
 							flag = "allowed"
 						case info.Flag & file_quarantined != 0:
@@ -511,7 +518,7 @@ func (s Session) RecvFile() (err error) {
 			}
 		}
 
-		err = DB.Set("inbox", id, 0)
+		err = DB.Set("inbox", id, s)
 		if err != nil {
 			return err
 		}

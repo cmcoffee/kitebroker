@@ -8,6 +8,7 @@ import (
 const ( 
 	ERR_AUTH_UNAUTHORIZED = 1 << iota
 	ERR_AUTH_PROFILE_CHANGED
+	ERR_ACCESS_USER
 )
 
 type KError struct {
@@ -42,6 +43,8 @@ func (e *KError) AddError(code, message string) {
 			e.flag |= ERR_AUTH_UNAUTHORIZED
 		case "ERR_AUTH_PROFILE_CHANGED":
 			e.flag |= ERR_AUTH_PROFILE_CHANGED
+		case "ERR_ACCESS_USER":
+			e.flag |= ERR_ACCESS_USER
 	}
 	e.message = append(e.message, message)
 }
