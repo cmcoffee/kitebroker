@@ -395,8 +395,7 @@ func (s Session) RecvFile() (err error) {
 				if err != nil {
 					if IsKiteError(err) {
 						logger.Log("[%d] %s(%s) cannot be downloaded. %s.", id, record.File[i].Filename, showSize(record.File[i].Filesize), err.Error())
-						e := err.(*KError)
-						if e.IsSet(ERR_ACCESS_USER) {
+						if KiteError(err, ERR_ACCESS_USER) {
 							record.File[i].Flag |= file_access_denied
 						}
 						continue

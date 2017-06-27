@@ -1,5 +1,9 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.1.1 - 06-21-2017)
+    * Added configurable timeout for requests.
+    * Fixed issue of switching from recv_mail to send_mail when using password auth_mode.
+
 ## (v0.1.0 - 06-20-2017)
     * Added send_file and recv_file task types for sending files via smtp and downloading files within inbox.
     * Added background database clean up thread.

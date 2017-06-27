@@ -9,6 +9,9 @@ const (
 	ERR_AUTH_UNAUTHORIZED = 1 << iota
 	ERR_AUTH_PROFILE_CHANGED
 	ERR_ACCESS_USER
+	ERR_INVALID_GRANT
+	ERR_ENTITY_DELETED_PERMANENTLY
+	ERR_ENTITY_NOT_FOUND
 )
 
 type KError struct {
@@ -45,6 +48,12 @@ func (e *KError) AddError(code, message string) {
 			e.flag |= ERR_AUTH_PROFILE_CHANGED
 		case "ERR_ACCESS_USER":
 			e.flag |= ERR_ACCESS_USER
+		case "invalid_grant":
+			e.flag |= ERR_INVALID_GRANT
+		case "ERR_ENTITY_DELETED_PERMANENTLY":
+			e.flag |= ERR_ENTITY_DELETED_PERMANENTLY
+		case "ERR_ENTITY_NOT_FOUND":
+			e.flag |= ERR_ENTITY_NOT_FOUND
 	}
 	e.message = append(e.message, message)
 }
@@ -57,9 +66,13 @@ func IsKiteError(err error) bool {
 }
 
 // Check for specific error code.
-func (e *KError) IsSet(input int64) bool {
-	if e.flag & input != 0 {
-		return true
+func KiteError(err error, input int64) bool {
+	if e, ok := err.(*KError); !ok {
+		return false
+	} else {
+		if e.flag & input != 0 {
+			return true
+		}
 	}
 	return false
 }

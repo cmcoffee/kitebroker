@@ -56,34 +56,24 @@ func LoadCredentials() (password string, reset bool) {
 	return
 }
 
-// Returns a valid auth token... or an error.
+// Call to appliance for Bearer token.
 func (s Session) GetToken() (access_token string, err error) {
 
-	auth, err := s.getAccessToken()
-
-	if err != nil {
-		DB.Unset("tokens", s)
-		return NONE, err
-	}
-	return auth.AccessToken, nil
-}
-
-// Call to appliance for Bearer token.
-func (s Session) getAccessToken() (auth *KiteAuth, err error) {
+	var auth *KiteAuth
 
 	found, err := DB.Get("tokens", s, &auth)
 	if err != nil {
-		return nil, err
+		return NONE, err
 	}
 
 	// If token is still valid, just return current token.
 	if auth != nil && auth.AccessToken != NONE && auth.Expiry > time.Now().Unix() {
-		return
+		return auth.AccessToken, nil
 	}
 
 	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", server), nil)
 	if err != nil {
-		return nil, err
+		return NONE, err
 	}
 
 	header := make(http.Header)
@@ -99,13 +89,10 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 		"client_secret": {client_secret},
 	}
 
-	var is_refresh bool
-
 	// If refresh token exists, use it. Otherwise request new access token.
 	if found && auth.RefreshToken != NONE {
 		postform.Add("grant_type", "refresh_token")
 		postform.Add("refresh_token", auth.RefreshToken)
-		is_refresh = true
 	} else {
 		postform.Add("redirect_uri", Config.Get("configuration", "redirect_uri"))
 		postform.Add("scope", "*/*/*")
@@ -151,28 +138,21 @@ func (s Session) getAccessToken() (auth *KiteAuth, err error) {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := s.respError(resp); err != nil {
-		return nil, err
+		return NONE, err
 	}
 
 	if err := s.DecodeJSON(resp, &auth); err != nil {
-		return nil, err
+		return NONE, err
 	}
 
 	if err != nil {
-		if is_refresh {
-			if err := DB.Unset("tokens", s); err != nil {
-				return nil, err
-			}
-			return s.getAccessToken()
+		if err := DB.Unset("tokens", s); err != nil {
+			return NONE, err
 		}
-		return nil, err
+		return NONE, err
 	}
 
 	auth.Expiry = auth.Expiry + time.Now().Unix()
 
-	return auth, DB.CryptSet("tokens", s, auth)
+	return auth.AccessToken, DB.CryptSet("tokens", s, auth)
 }

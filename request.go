@@ -24,6 +24,7 @@ var transfer_call_bank chan struct{}
 
 type PostJSON map[string]interface{}
 type PostFORM map[string]interface{}
+type AccessToken string
 type Query map[string]interface{}
 
 const (
@@ -36,7 +37,7 @@ var ErrZeroByte = fmt.Errorf("File has no content.")
 var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
 // Converts kiteworks API errors to standard golang error message.
-func (s Session) respError(resp *http.Response) (err error) {
+func respError(resp *http.Response) (err error) {
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
@@ -86,17 +87,32 @@ func (s Session) respError(resp *http.Response) (err error) {
 		if kite_err.ErrorDesc != NONE {
 			e.AddError(kite_err.Error, kite_err.ErrorDesc)
 		}
-		if e.IsSet(ERR_AUTH_PROFILE_CHANGED) {
-			var kauth *KiteAuth
-			DB.Get("tokens", s, &kauth)
-			if kauth != nil {
-				kauth.Expiry = 0
-				DB.CryptSet("tokens", s, &kauth)
-			}
+		if e.flag != 0 {
+			return e
 		}
-		return e
 	}
+
 	return fmt.Errorf(resp.Status)
+}
+
+// RetryToken till we get a good one.
+func (s Session)RetryToken(err error) bool {
+	if KiteError(err, ERR_AUTH_PROFILE_CHANGED|ERR_AUTH_UNAUTHORIZED|ERR_INVALID_GRANT) {
+		var kauth *KiteAuth
+		DB.Get("tokens", s, &kauth)
+		if kauth != nil {
+			kauth.Expiry = 0
+			DB.CryptSet("tokens", s, &kauth)
+		}
+		for ;err != nil; _, err = s.GetToken(){
+			if err != nil {
+				logger.Err(err)
+				continue
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // Wrapper around request and client to make simple requests for information to appliance.
@@ -112,6 +128,8 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 	if snoop {
 		logger.Put("\n--> ACTION: \"%s\" PATH: \"%s\"\n", action, path)
 	}
+
+	var preset_token bool
 
 	for _, in := range input {
 		switch i := in.(type) {
@@ -144,15 +162,21 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 				}
 			}
 			req.URL.RawQuery = q.Encode()
+		case AccessToken:
+			req.Header.Set("Authorization", "Bearer "+string(i))
+			preset_token = true
 		case io.ReadCloser:
 			req.Body = i
 		}
 	}
 
-	client := s.NewClient()
+	if !preset_token {
+		if err = s.SignRequest(req); err != nil {
+			return err
+		}
+	}
 
-	<-api_call_bank
-	defer func() { api_call_bank <- call_done }()
+	client := s.NewClient()
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -172,21 +196,40 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 	req.URL.Host = server
 	req.URL.Scheme = "https"
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
-	req.Header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
+	req.Header.Set("User-Agent", fmt.Sprintf("%s-%s", NAME, VERSION))
 	req.Header.Set("Referer", "https://"+server+"/")
-
-	access_token, err := s.GetToken()
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Authorization", "Bearer "+access_token)
 
 	return req, nil
 }
 
+// Signs a request with the appropriate access token.
+func (s Session) SignRequest(req *http.Request) error {
+	access_token, err := s.GetToken()
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer " + access_token)
+	return nil
+}
+
+
+type KCall struct {
+	*http.Client
+}
+
+func (c *KCall) Do(req *http.Request) (*http.Response, error) {
+	<-api_call_bank
+	defer func() { api_call_bank <- call_done }()
+	resp, err := c.Client.Do(req)
+	if err != nil { 
+		return nil, err 
+	}
+	err = respError(resp)
+	return resp, err
+}
+
 // Create new client session to appliance.
-func (s Session) NewClient() *http.Client {
+func (s Session) NewClient() *KCall {
 
 	var transport http.Transport
 
@@ -202,7 +245,7 @@ func (s Session) NewClient() *http.Client {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	return &http.Client{Transport: &transport}
+	return &KCall{&http.Client{Transport: &transport, Timeout: timeout_secs}}
 }
 
 // Decodes JSON response body to provided interface.
@@ -213,11 +256,6 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 		if snoop { logger.Put("} \n\n") }
 	}()
 	
-	err = s.respError(resp)
-	if err != nil {
-		return
-	}
-
 	var body io.Reader
 
 	if snoop {

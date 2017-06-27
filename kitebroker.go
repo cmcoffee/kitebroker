@@ -12,19 +12,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync/atomic"
 )
 
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.1.0"
-	KWAPI_VERSION = "7"
+	VERSION       = "0.1.1"
+	KWAPI_VERSION = "5"
 )
 
 var (
 	Config        cfg.Store
 	DB            *kvlite.Store
 	chunk_size    int
+	timeout_secs  time.Duration
 	snoop         bool
 	server        string
 	client_id     string
@@ -135,7 +137,7 @@ func loadAPIConfig(config_filename string) {
 func main() {
 	var err error
 
-	logger.Put("[ Accellion %s(v%s) ]\n\n", NAME, VERSION)
+	logger.Put("[ Accellion %s %s ]\n\n", NAME, VERSION)
 
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ExitOnError)
@@ -224,25 +226,13 @@ func main() {
 
 	ShowLoader()
 
-	var second_attempt bool
 
-	for {
-		if _, err := Session(Config.Get("configuration", "account")).GetToken(); err != nil {
-
-			// Try twice before removing the signature secret, as we should try to get a new access token first.
-			if auth_flow == SIGNATURE_AUTH && second_attempt {
-				DB.Unset("kitebroker", "s")
-			} else if auth_flow == SIGNATURE_AUTH {
-				second_attempt = true
-				continue
-			}
-
-			logger.Err(err)
-			fmt.Printf("\n")
-			continue
-		}
-		break
+	_, err = Session(Config.Get("configuration", "account")).MyUser()
+	for ; err != nil; _, err = Session(Config.Get("configuration", "account")).MyUser() {
+		logger.Err(err)
+		continue
 	}
+
 	HideLoader()
 
 	var (
@@ -251,13 +241,21 @@ func main() {
 		ctime      time.Duration
 	)
 
+	// Set http.Client timeout.
+	if t, err := strconv.Atoi(Config.Get("configuration", "timeout_secs")); err != nil {
+		logger.Warn("Could not parse timeout_secs, defaulting to 15 seconds.")
+		timeout_secs = time.Duration(time.Second * 60)
+	} else {
+		timeout_secs = time.Duration(t) * time.Second
+	}
+
 	// Setup continuous scan loop.
 	if strings.ToLower(Config.Get("configuration", "continuous_mode")) == "yes" {
 		continuous = true
 		t, err := strconv.Atoi(Config.Get("configuration", "continuous_rate_secs"))
 		if err != nil {
-			logger.Warn("Could not parse continous_rate, defaulting to 1800 seconds.")
-			t = 1800
+			logger.Warn("Could not parse continous_rate, defaulting to 30 seconds.")
+			t = 30
 		}
 
 		ival = time.Duration(t) * time.Second
@@ -283,6 +281,17 @@ func main() {
 			logger.Log("\n")
 			continue
 		} else {
+			if (atomic.LoadInt32(&cleanup_working) == 1) {
+				logger.Log("Waiting on cleanup process to complete...")
+				ShowLoader()
+				for {
+					time.Sleep(100 * time.Millisecond)
+					if atomic.LoadInt32(&cleanup_working) == 0 {
+						break
+					}
+				}
+				HideLoader()
+			}
 			logger.Log("Non-continuous total task time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
 			break
 		}

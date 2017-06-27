@@ -9,6 +9,7 @@ server =
 account = 
 auth_mode = password
 redirect_uri = https://kitebroker
+timeout_secs = 15
 proxy =
 
 # Auto-Generated Config ####################################

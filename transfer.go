@@ -275,6 +275,10 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		return
 	}
 
+	if err = s.SignRequest(req); err != nil {
+		return
+	}
+
 	req.Header.Set("Content-Type", "application/octet-stream")
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
@@ -286,13 +290,6 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.ContentLength == -1 {
-		err = s.respError(resp)
-		if err != nil {
-			return err
-		}
-	}
 
 	tm := NewTMonitor("download", nfo.Size)
 	tm.Offset(offset)
@@ -557,9 +554,13 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			return -1, err
 		}
 
-		req, err := s.NewRequest("POST", fmt.Sprintf("/%s?apiVersion=5", record.URI))
+		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", record.URI))
 		if err != nil {
 			return -1, err
+		}
+
+		if err = s.SignRequest(req); err != nil { 
+			return -1, err 
 		}
 
 		if snoop {

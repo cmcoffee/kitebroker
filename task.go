@@ -8,9 +8,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
+var cleanup_working int32
 var task_time time.Time
 var users []string
 
@@ -50,7 +52,7 @@ func TaskHandler() {
 		case "folder_download":
 			fallthrough
 		case "folder_upload":
-			if len(users) == 1 && auth_flow != SIGNATURE_AUTH {
+			if auth_flow != SIGNATURE_AUTH {
 				users = []string{my_user}
 			}
 		}
@@ -69,8 +71,11 @@ func TaskHandler() {
 
 		s := Session(user)
 
+		prep := "for"
+
 		switch task {
 		case "send_file":
+			prep = "to"
 			jfunc = s.SendFile
 		case "recv_file":
 			jfunc = s.RecvFile
@@ -79,15 +84,22 @@ func TaskHandler() {
 		case "folder_upload":
 			jfunc = s.UploadFolder
 		case "dli_export":
+			prep = "of"
 			jfunc = s.DLIReport
 		default:
 			logger.Err("- Error: Unrecognized or missing task of %s.\n", task)
 			return
 		}
 
-		logger.Log("----------> Starting task %s for %s.", Config.Get("configuration", "task"), s)
+		logger.Log("----------> Starting task %s %s %s.", Config.Get("configuration", "task"), prep, s)
+		retry:
 		ShowLoader()
 		err := jfunc()
+		HideLoader()
+		if s.RetryToken(err) {
+			logger.Err(err)
+			goto retry
+		}
 		HideLoader()
 		if err != nil {
 			logger.Err(err)
@@ -111,36 +123,38 @@ func backgroundCleanup() {
 	ival := time.Second * time.Duration(secs)
 
 	var last_cleanup time.Time
-	found, err := DB.Get("kitebroker", "last_cleanup", &last_cleanup)
+	_, err = DB.Get("kitebroker", "last_cleanup", &last_cleanup)
 	if err != nil {
 		errChk(err)
 	}
 
-	if !found {
-		if err := DB.Set("kitebroker", "last_cleanup", time.Now()); err != nil {
-			errChk(err)
-		}
-	}
-
 	go func() {
 		for {
+			var err error
 			if time.Since(last_cleanup) >= ival {
+				atomic.CompareAndSwapInt32(&cleanup_working, 0, 1)
 				switch Config.Get("configuration", "task") {
 					case "recv_file":
-						if err := cleanupRecv(); err != nil {
-							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+						if err = cleanupRecv(); err != nil {
+							logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
 						}
 					case "folder_download":
-						if err := cleanupDownloads(); err != nil {
-							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+						if err = cleanupDownloads(); err != nil {
+							logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
 						}
 					case "folder_upload":
-						if err := cleanupLocal("uploads"); err != nil {
-							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+						if err = cleanupLocal("uploads"); err != nil {
+							logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
 						}
-						if err := cleanupLocal("folders"); err != nil {
-							logger.Err(fmt.Sprintf("cleanup: %s", err.Error()))
+						if err = cleanupLocal("folders"); err != nil {
+							logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
 						}
+				}
+				atomic.CompareAndSwapInt32(&cleanup_working, 1, 0)
+				if err != nil {
+					logger.Debug("cleanup process error: %s", err.Error())
+					time.Sleep(time.Minute)
+					continue
 				}
 				last_cleanup = time.Now()
 				if err := DB.Set("kitebroker", "last_cleanup", last_cleanup); err != nil {
@@ -159,31 +173,41 @@ func cleanupRecv() error {
 		return err
 	}
 
+	for _, key := range records {
+
+		var s Session
+		if _, err = DB.Get("inbox", key, &s); err != nil {
+			logger.Debug("cleanup process error: %s", err.Error())
+			continue
+		}
+
+		if IsDeleted(s, fmt.Sprintf("/rest/mail/%d", key)) {
+			DB.Unset("inbox", key)
+		}
+	}
+	return nil
+}
+
+func IsDeleted(user Session, path string) bool {
+	var auth *KiteAuth
+	found, _ := DB.Get("tokens", user, &auth)
+	if !found { 
+		return false
+	}
+
 	var M struct {
 		Deleted bool `json:"deleted"`
 	}
 
-	for _, key := range records {
-		var s Session
-		if _, err = DB.Get("inbox", key, &s); err != nil {
-			return err
+	err := user.Call("GET", path, &M, AccessToken(auth.AccessToken), Query{"mode":"compact", "with":"(deleted)"})
+	if err != nil {
+		if KiteError(err, ERR_ENTITY_NOT_FOUND|ERR_ENTITY_DELETED_PERMANENTLY) {
+			return true
 		}
-
-		M.Deleted = true
-
-		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", key), &M, Query{"mode":"compact", "with":"(deleted)"})
-		if err != nil {
-			logger.Err(err)
-			continue
-		}
-		if M.Deleted {
-			if err := DB.Unset("inbox", key); err != nil {
-				return err
-			}
-		}
-		time.Sleep(time.Second)
+		logger.Debug(err)
+		return false
 	}
-	return nil
+	return M.Deleted
 }
 
 // Cleans up upload records, make sure files are there, if not delete record.
@@ -194,9 +218,7 @@ func cleanupLocal(table string) error {
 	}
 	for _, key := range records {
 		if _, err := Stat(key); os.IsNotExist(err) {
-			if err := DB.Unset(table, key); err != nil {
-				return err
-			}
+			DB.Unset(table, key)
 		}
 	}
 	return nil
@@ -213,20 +235,17 @@ func cleanupDownloads() error {
 	for _, key := range records {
 		found, err := DB.Get("downloads", key, &dl_record)
 		if err != nil {
-			return err
+			logger.Debug("cleanup process error: %s", err.Error())
+			continue
 		}
 
 		if !found {
 			continue
 		}
 
-		data, err := dl_record.User.FileInfo(key)
-		if data.Deleted {
-			if err := DB.Unset("downloads", key); err != nil {
-				return err
-			}
+		if IsDeleted(dl_record.User, fmt.Sprintf("/rest/files/%d", key)) {
+			DB.Unset("downloads", key)
 		}
-		time.Sleep(time.Second)
 	}
 	return nil
 }

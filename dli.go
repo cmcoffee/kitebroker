@@ -81,6 +81,10 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 		return
 	}
 
+	if err = s.SignRequest(req); err != nil {
+		return err
+	}
+
 	req.Header.Set("Content-Type", "application/octet-stream")
 	if offset > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
@@ -92,13 +96,6 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 		return
 	}
 	defer resp.Body.Close()
-
-	if resp.ContentLength == -1 {
-		err = s.respError(resp)
-		if err != nil {
-			return
-		}
-	}
 
 	total_size := offset + resp.ContentLength
 
