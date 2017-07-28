@@ -6,6 +6,7 @@ import (
 	"github.com/cmcoffee/go-eflag"
 	"github.com/cmcoffee/go-kvlite"
 	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-fin"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,8 +19,8 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.1.1"
-	KWAPI_VERSION = "5"
+	VERSION       = "0.1.1b"
+	KWAPI_VERSION = "7"
 )
 
 var (
@@ -34,6 +35,7 @@ var (
 	auth_flow     uint
 	retry_count   int
 	local_path    string
+	first_token_set bool
 )
 
 // Authentication Mechnism Constants
@@ -135,6 +137,11 @@ func loadAPIConfig(config_filename string) {
 }
 
 func main() {
+	fin.SetErrorLogger(logger.Err)
+	defer fin.Exit(0)
+	fin.Defer(func() {logger.Log("User interrupt detected, Goodbye!")}) 
+	logger.Notify(fin.Collector)
+
 	var err error
 
 	logger.Put("[ Accellion %s %s ]\n\n", NAME, VERSION)
@@ -204,34 +211,50 @@ func main() {
 
 	// Open datastore
 	open_database(db_filename)
-	logger.InTheEnd(DB.Close)
+
+	fin.Defer(DB.Close)
 
 	// Load API Settings
 	loadAPIConfig(*config_file)
 
 	// Reset credentials, if requested.
 	if *reset {
-		logger.Put("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n")
+		logger.Put("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n\n")
 		if confirm := getConfirm("Are you sure you want do this"); confirm {
 			errChk(DB.Truncate("tokens"))
 			errChk(DB.Unset("kitebroker", "s"))
 			Config.Unset("configuration", "account")
 			Config.Save("configuration")
 			logger.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
-			logger.TheEnd(0)
+			fin.Exit(0)
 		}
 		logger.Put("Aborting, Access tokens not cleared.\n")
-		logger.TheEnd(0)
+		fin.Exit(0)
 	}
 
 	ShowLoader()
 
+	// Get first token.
+	user := Session(Config.Get("configuration", "account"))
 
-	_, err = Session(Config.Get("configuration", "account")).MyUser()
-	for ; err != nil; _, err = Session(Config.Get("configuration", "account")).MyUser() {
+	for {
+		_, err := user.MyUser()
+		if err == nil {
+			break
+		}
+		first_token_set = true
+		if user.RetryToken(err) {
+			_, err := user.MyUser()
+			if err == nil { break }
+		} else {
+			DB.Unset("tokens", user)
+		}
 		logger.Err(err)
+		first_token_set = false
 		continue
 	}
+
+	first_token_set = true
 
 	HideLoader()
 

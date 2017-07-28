@@ -25,16 +25,19 @@ const (
 
 const none = ""
 
+var internal_sigchan chan os.Signal
+
 var (
-   flush_len int
-   flush_line []rune
-   mutex sync.RWMutex
-   log_map = make(map[int]*log.Logger)
+	flush_len   int
+	flush_line  []rune
+	mutex       sync.RWMutex
+	log_map     = make(map[int]*log.Logger)
+	signal_chan chan os.Signal
 )
 
 var out_map = map[int][2]io.Writer{
 	ERR:    {os.Stderr, ioutil.Discard},
-	WARN:   {os.Stdout, ioutil.Discard}, 
+	WARN:   {os.Stdout, ioutil.Discard},
 	INFO:   {os.Stdout, ioutil.Discard},
 	NOTICE: {os.Stdout, ioutil.Discard},
 	DEBUG:  {os.Stdout, ioutil.Discard},
@@ -47,6 +50,11 @@ var DebugLogging = false
 
 // Enables or Disables Trace Logging
 var TraceLogging = false
+
+// Sets channel for notifying when logger.Fatal is used.
+func Notify(c chan os.Signal) {
+	signal_chan = c
+}
 
 // Reloads all loggers.
 func resetLoggers() {
@@ -73,7 +81,7 @@ func SetOutput(logger int, w io.Writer) {
 	mutex.Lock()
 	for n, v := range out_map {
 		if logger&n == n || logger == ALL {
-			out_map[n] = [2]io.Writer{w, v[1]} 
+			out_map[n] = [2]io.Writer{w, v[1]}
 		}
 	}
 	mutex.Unlock()
@@ -81,7 +89,7 @@ func SetOutput(logger int, w io.Writer) {
 }
 
 // Don't log, only display via fmt.Printf.
-func Put (vars ...interface{}) {
+func Put(vars ...interface{}) {
 	write2log(no_log, vars...)
 }
 
@@ -112,17 +120,23 @@ func Fatal(vars ...interface{}) {
 
 // Log as Debug.
 func Debug(vars ...interface{}) {
-	if !DebugLogging { return }
+	if !DebugLogging {
+		return
+	}
 	write2log(DEBUG, vars...)
 }
 
 // Log as Trace.
 func Trace(vars ...interface{}) {
-	if !TraceLogging { return }
+	if !TraceLogging {
+		return
+	}
 	write2log(TRACE, vars...)
 }
 
 func init() {
+	internal_sigchan = make(chan os.Signal, 1)
+	signal_chan = internal_sigchan
 	resetLoggers()
 }
 
@@ -130,14 +144,17 @@ func init() {
 func write2log(flag int, vars ...interface{}) {
 
 	mutex.Lock()
-	defer mutex.Unlock()
 
 	vlen := len(vars)
 
 	var msg string
 
-	if vlen == 0 { return }
-	if vlen == 1 { msg = fmt.Sprintf("%v", vars[0]) }
+	if vlen == 0 {
+		return
+	}
+	if vlen == 1 {
+		msg = fmt.Sprintf("%v", vars[0])
+	}
 	if vlen > 1 {
 		str, ok := vars[0].(string)
 		if ok {
@@ -161,29 +178,52 @@ func write2log(flag int, vars ...interface{}) {
 	flush_len = utf8.RuneCountInString(msg)
 
 	switch flag {
-		case INFO:
-			if remote_log != nil { remote_log.Info(msg) }
-			log_map[INFO].Print(msg)
-		case ERR:
-			if remote_log != nil { remote_log.Err(msg) }
-			log_map[ERR].Print("[ERROR] " + msg)
-		case WARN:
-			if remote_log != nil { remote_log.Warning(msg) }
-			log_map[WARN].Print("[WARN] " + msg)
-		case FATAL:
-			if remote_log != nil { remote_log.Emerg(msg) }
-			log_map[FATAL].Print("[FATAL] " + msg)
-			TheEnd(1)
-		case NOTICE:
-			if remote_log != nil { remote_log.Notice(msg) }
-			log_map[NOTICE].Print("[NOTICE] " + msg)
-		case DEBUG:
-			if remote_log != nil { remote_log.Debug(msg) }
-			log_map[DEBUG].Print("[DEBUG] " + msg)
-		case TRACE:
-			if remote_log != nil { remote_log.Debug(msg) }
-			log_map[DEBUG].Print("[TRACE] " + msg)
-		default:
-			fmt.Printf("%s", msg)
+	case INFO:
+		if remote_log != nil {
+			remote_log.Info(msg)
+		}
+		log_map[INFO].Print(msg)
+	case ERR:
+		if remote_log != nil {
+			remote_log.Err(msg)
+		}
+		log_map[ERR].Print("[ERROR] " + msg)
+	case WARN:
+		if remote_log != nil {
+			remote_log.Warning(msg)
+		}
+		log_map[WARN].Print("[WARN] " + msg)
+	case FATAL:
+		if remote_log != nil {
+			remote_log.Emerg(msg)
+		}
+		log_map[FATAL].Print("[FATAL] " + msg)
+		mutex.Unlock()
+		signal_chan <- os.Kill
+		if signal_chan == internal_sigchan {
+			select {
+			case <-signal_chan:
+			default:
+			}
+		}
+		return
+	case NOTICE:
+		if remote_log != nil {
+			remote_log.Notice(msg)
+		}
+		log_map[NOTICE].Print("[NOTICE] " + msg)
+	case DEBUG:
+		if remote_log != nil {
+			remote_log.Debug(msg)
+		}
+		log_map[DEBUG].Print("[DEBUG] " + msg)
+	case TRACE:
+		if remote_log != nil {
+			remote_log.Debug(msg)
+		}
+		log_map[DEBUG].Print("[TRACE] " + msg)
+	default:
+		fmt.Printf("%s", msg)
 	}
+	mutex.Unlock()
 }

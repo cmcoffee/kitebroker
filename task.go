@@ -92,16 +92,23 @@ func TaskHandler() {
 		}
 
 		logger.Log("----------> Starting task %s %s %s.", Config.Get("configuration", "task"), prep, s)
-		retry:
+
+		var err error
+
 		ShowLoader()
-		err := jfunc()
-		HideLoader()
-		if s.RetryToken(err) {
-			logger.Err(err)
-			goto retry
+		for {
+			err = jfunc()
+			HideLoader()
+			if s.RetryToken(err) {
+				continue
+			}
+			break
 		}
 		HideLoader()
 		if err != nil {
+			if err == NoValidToken {
+				logger.Fatal(err)
+			}
 			logger.Err(err)
 		}
 		logger.Log("\n")
@@ -199,7 +206,16 @@ func IsDeleted(user Session, path string) bool {
 		Deleted bool `json:"deleted"`
 	}
 
-	err := user.Call("GET", path, &M, AccessToken(auth.AccessToken), Query{"mode":"compact", "with":"(deleted)"})
+	var err error
+
+	for {
+		err = user.Call("GET", path, &M, Query{"mode":"compact", "with":"(deleted)"})
+			if user.RetryToken(err) {
+				continue
+			}
+		break
+	}
+
 	if err != nil {
 		if KiteError(err, ERR_ENTITY_NOT_FOUND|ERR_ENTITY_DELETED_PERMANENTLY) {
 			return true

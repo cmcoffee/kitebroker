@@ -24,7 +24,6 @@ var transfer_call_bank chan struct{}
 
 type PostJSON map[string]interface{}
 type PostFORM map[string]interface{}
-type AccessToken string
 type Query map[string]interface{}
 
 const (
@@ -92,6 +91,12 @@ func respError(resp *http.Response) (err error) {
 		}
 	}
 
+	if resp.Status == "401 Unauthorized" {
+		e := NewKError()
+		e.AddError("ERR_AUTH_UNAUTHORIZED", "Unathorized Access Token")
+		return e
+	}
+
 	return fmt.Errorf(resp.Status)
 }
 
@@ -104,13 +109,11 @@ func (s Session)RetryToken(err error) bool {
 			kauth.Expiry = 0
 			DB.CryptSet("tokens", s, &kauth)
 		}
-		for ;err != nil; _, err = s.GetToken(){
-			if err != nil {
-				logger.Err(err)
-				continue
+
+		_, err := s.GetToken()
+			if err == nil {
+				return true
 			}
-			return true
-		}
 	}
 	return false
 }
@@ -128,8 +131,6 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 	if snoop {
 		logger.Put("\n--> ACTION: \"%s\" PATH: \"%s\"\n", action, path)
 	}
-
-	var preset_token bool
 
 	for _, in := range input {
 		switch i := in.(type) {
@@ -162,17 +163,8 @@ func (s Session) Call(action, path string, output interface{}, input ...interfac
 				}
 			}
 			req.URL.RawQuery = q.Encode()
-		case AccessToken:
-			req.Header.Set("Authorization", "Bearer "+string(i))
-			preset_token = true
 		case io.ReadCloser:
 			req.Body = i
-		}
-	}
-
-	if !preset_token {
-		if err = s.SignRequest(req); err != nil {
-			return err
 		}
 	}
 
@@ -199,19 +191,14 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 	req.Header.Set("User-Agent", fmt.Sprintf("%s-%s", NAME, VERSION))
 	req.Header.Set("Referer", "https://"+server+"/")
 
-	return req, nil
-}
-
-// Signs a request with the appropriate access token.
-func (s Session) SignRequest(req *http.Request) error {
 	access_token, err := s.GetToken()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer " + access_token)
-	return nil
-}
 
+	return req, nil
+}
 
 type KCall struct {
 	*http.Client

@@ -2,26 +2,26 @@ package logger
 
 import (
 	"bytes"
-	"sync"
-	"sync/atomic"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"fmt"
-	"strings"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type logFile struct {
 	write_lock sync.Mutex
-	sem	int32
-	buffer bytes.Buffer
-	file *os.File
+	sem        int32
+	buffer     bytes.Buffer
+	file       *os.File
 }
 
 const (
-	to_BUFFER = iota 
+	to_BUFFER = iota
 	to_FILE
 )
 
@@ -49,10 +49,12 @@ func File(logger int, filename string, max_size int64, max_rotation int) (err er
 		log_file = dest
 	} else {
 		log_file, err = open_file(filename, max_size, max_rotation)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		open_files[filename] = log_file
 	}
-	
+
 	for k, v := range out_map {
 		if logger&k == k || logger == ALL {
 			out_map[k] = [2]io.Writer{v[0], log_file}
@@ -85,7 +87,7 @@ func open_file(filename string, max_size int64, max_rotation int) (logger *logFi
 	logger = new(logFile)
 
 	logger.file, err = os.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-	if err != nil { 
+	if err != nil {
 		return nil, err
 	}
 
@@ -97,11 +99,13 @@ func open_file(filename string, max_size int64, max_rotation int) (logger *logFi
 				for k, v := range out_map {
 					if v[1] == logger.file {
 						err = File(k, filename, max_size, max_rotation)
-						if err != nil { panic(err) }
+						if err != nil {
+							panic(err)
+						}
 						break
 					}
 				}
-			}			
+			}
 
 			// If file size exceeds the max_size specified, begin file rotation.
 			if finfo.Size() > max_size {
@@ -111,7 +115,9 @@ func open_file(filename string, max_size int64, max_rotation int) (logger *logFi
 				logger.file.Close()
 
 				flist, err := ioutil.ReadDir(fpath)
-				if err != nil { panic(err) }
+				if err != nil {
+					panic(err)
+				}
 
 				var files []os.FileInfo
 
@@ -132,21 +138,26 @@ func open_file(filename string, max_size int64, max_rotation int) (logger *logFi
 
 				// Rename files
 				for i := len(files); i > 0; i-- {
-						err = os.Rename(fmt.Sprintf("%s%s", fpath, files[i - 1].Name()), fmt.Sprintf("%s%s.%d", fpath, fname, i))
-						if err != nil { panic (err) }
+					err = os.Rename(fmt.Sprintf("%s%s", fpath, files[i-1].Name()), fmt.Sprintf("%s%s.%d", fpath, fname, i))
+					if err != nil {
+						panic(err)
+					}
 				}
-
 
 				// Open new file.
 				logger.file, err = os.OpenFile(filename, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0666)
-				if err != nil { panic(err) }
+				if err != nil {
+					panic(err)
+				}
 
 				// Switch Write function back to writing to file.
 				atomic.StoreInt32(&logger.sem, to_FILE)
 
 				// Copy buffer to new file.
 				_, err = io.Copy(logger.file, &logger.buffer)
-				if err != nil { panic(err) }
+				if err != nil {
+					panic(err)
+				}
 
 				logger.buffer.Reset()
 
@@ -154,7 +165,7 @@ func open_file(filename string, max_size int64, max_rotation int) (logger *logFi
 				logger.write_lock.Unlock()
 			}
 			time.Sleep(time.Minute)
-	}
+		}
 
 	}(logger)
 

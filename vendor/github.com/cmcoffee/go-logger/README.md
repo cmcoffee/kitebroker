@@ -18,9 +18,6 @@ const (
     ALL
 )
 ```
-``` go
-const FLUSH_BUFFER = 32
-```
 
 ## Variables
 ``` go
@@ -28,11 +25,6 @@ var DebugLogging = false
 ```
 Enables or Disables Debug Logging
 
-``` go
-var (
-    IgnoreInterrupt = false
-)
-```
 ``` go
 var TraceLogging = false
 ```
@@ -67,25 +59,11 @@ func Fatal(vars ...interface{})
 Log as Fatal, then quit.
 
 
-## func FatalChk
-``` go
-func FatalChk(err error)
-```
-if err is not nil, proceed with fatal shutdown.
-
-
 ## func File
 ``` go
 func File(logger int, filename string, max_size int64, max_rotation int) (err error)
 ```
 Opens a new log file for writing, max_size is threshold for rotation, max_rotation is number of previous logs to hold on to.
-
-
-## func InTheEnd
-``` go
-func InTheEnd(closer interface{})
-```
-Adds a func to the global defer.
 
 
 ## func Log
@@ -100,6 +78,13 @@ Log as Info.
 func Notice(vars ...interface{})
 ```
 Log as Notice.
+
+
+## func Notify
+``` go
+func Notify(c chan os.Signal)
+```
+Sets channel for notifying when logger.Fatal is used.
 
 
 ## func Put
@@ -129,15 +114,6 @@ func Syslog(network, raddr string, tag string)
 ```
 Opens connection to remote syslog, tag specifies application name that will be prefixed to syslog entry.
 ex: logger.RemoteSyslog("udp", "192.168.0.4:514", "application_name")
-
-
-## func TheEnd
-``` go
-func TheEnd(errorCode int)
-```
-Intended to be a defer statement at the begining of main.
-Tries to catch a panic if possible and log it as a fatal error,
-then proceeds to send a signal to the global defer/shutdown handler
 
 
 ## func Trace

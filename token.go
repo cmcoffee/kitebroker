@@ -24,21 +24,27 @@ type KiteAuth struct {
 	Type         string `json:"token_type"`
 }
 
-func LoadCredentials() (password string, reset bool) {
+func LoadCredentials() (username, password string, err error) {
 
-	username := Config.Get("configuration", "account")
+	username = Config.Get("configuration", "account")
 	password = DB.SGet("kitebroker", "s")
 
 	if password != NONE && username != NONE {
-		return password, false
+		return username, password, nil
 	}
 
 	HideLoader()
 	defer ShowLoader()
 
+	if first_token_set {
+		return username, password, NoValidToken
+	}
+
 	logger.Put("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
 
-	Config.Set("configuration", "account", get_input("Account: "))
+	username = get_input("Account: ")
+
+	Config.Set("configuration", "account", username)
 
 	switch auth_flow {
 	case SIGNATURE_AUTH:
@@ -52,9 +58,10 @@ func LoadCredentials() (password string, reset bool) {
 	}
 
 	Config.Save("configuration")
-	reset = true
-	return
+	return 
 }
+
+var NoValidToken = fmt.Errorf("No valid authentication tokens available.")
 
 // Call to appliance for Bearer token.
 func (s Session) GetToken() (access_token string, err error) {
@@ -99,7 +106,11 @@ func (s Session) GetToken() (access_token string, err error) {
 
 		switch auth_flow {
 		case SIGNATURE_AUTH:
-			signature, reset_auth := LoadCredentials()
+			username, signature, err := LoadCredentials()
+			if s == NONE {
+				s = Session(username)
+			}
+			if err != nil { return NONE, err }
 			randomizer := rand.New(rand.NewSource(int64(time.Now().Unix())))
 			nonce := randomizer.Int() % 999999
 			timestamp := int64(time.Now().Unix())
@@ -110,10 +121,6 @@ func (s Session) GetToken() (access_token string, err error) {
 			mac.Write([]byte(base_string))
 			signature = hex.EncodeToString(mac.Sum(nil))
 
-			if reset_auth {
-				s = Session(Config.Get("configuration", "account"))
-			}
-
 			auth_code := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d|@@|%s",
 				base64.StdEncoding.EncodeToString([]byte(client_id)),
 				base64.StdEncoding.EncodeToString([]byte(s)),
@@ -123,9 +130,9 @@ func (s Session) GetToken() (access_token string, err error) {
 			postform.Add("code", auth_code)
 
 		case PASSWORD_AUTH:
-			password, _ := LoadCredentials()
+			username, password, err := LoadCredentials()
+			if err != nil { return NONE, err }
 			postform.Add("grant_type", "password")
-			username := Config.Get("configuration", "account")
 			postform.Add("username", username)
 			postform.Add("password", password)
 			s = Session(username)
