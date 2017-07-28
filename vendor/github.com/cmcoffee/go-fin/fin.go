@@ -85,6 +85,8 @@ func init() {
 			}
 		}
 
+		fmt.Printf("\n")
+
 		// Finally exit the application
 		os.Exit(errCode)
 	}()

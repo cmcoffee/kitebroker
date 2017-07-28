@@ -139,7 +139,6 @@ func loadAPIConfig(config_filename string) {
 func main() {
 	fin.SetErrorLogger(logger.Err)
 	defer fin.Exit(0)
-	fin.Defer(func() {logger.Log("User interrupt detected, Goodbye!")}) 
 	logger.Notify(fin.Collector)
 
 	var err error
@@ -283,6 +282,8 @@ func main() {
 
 		ival = time.Duration(t) * time.Second
 	}
+
+	fin.Defer(func(){logger.Log("Application exit requested.")})
 
 	// Begin scan loop.
 	for {
