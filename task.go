@@ -415,6 +415,9 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 			fid = folder_id
 			finfo, err := s.FolderInfo(fid)
 			if err != nil || finfo.Deleted {
+				if KiteError(err, ERR_ENTITY_DELETED_PERMANENTLY) {
+					DB.Unset("folders", strings.Join(split_path[0:i], SLASH))
+				}
 				missing++
 			} else {
 				break
@@ -437,8 +440,8 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		}
 		missing_folder := split_path[i]
 		new_path := strings.Join(split_path[0:i+1], SLASH)
-		//if re.MatchString(new_path) { continue }
-		cid, _ := s.FindChildFolder(fid, missing_folder)
+
+		cid, err := s.FindChildFolder(fid, missing_folder)
 		if cid == -1 {
 			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s)+SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
