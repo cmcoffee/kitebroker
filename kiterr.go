@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const ( 
+const (
 	ERR_AUTH_UNAUTHORIZED = 1 << iota
 	ERR_AUTH_PROFILE_CHANGED
 	ERR_ACCESS_USER
@@ -15,12 +15,12 @@ const (
 )
 
 type KError struct {
-	flag int64
+	flag    int64
 	message []string
 }
 
 // Implement error interface.
-func (e KError) Error() (string) {
+func (e KError) Error() string {
 	str := make([]string, 0)
 	e_len := len(e.message)
 	for i := 0; i < e_len; i++ {
@@ -42,18 +42,18 @@ func NewKError() *KError {
 // Add an error to KError
 func (e *KError) AddError(code, message string) {
 	switch code {
-		case "ERR_AUTH_UNAUTHORIZED": 
-			e.flag |= ERR_AUTH_UNAUTHORIZED
-		case "ERR_AUTH_PROFILE_CHANGED":
-			e.flag |= ERR_AUTH_PROFILE_CHANGED
-		case "ERR_ACCESS_USER":
-			e.flag |= ERR_ACCESS_USER
-		case "invalid_grant":
-			e.flag |= ERR_INVALID_GRANT
-		case "ERR_ENTITY_DELETED_PERMANENTLY":
-			e.flag |= ERR_ENTITY_DELETED_PERMANENTLY
-		case "ERR_ENTITY_NOT_FOUND":
-			e.flag |= ERR_ENTITY_NOT_FOUND
+	case "ERR_AUTH_UNAUTHORIZED":
+		e.flag |= ERR_AUTH_UNAUTHORIZED
+	case "ERR_AUTH_PROFILE_CHANGED":
+		e.flag |= ERR_AUTH_PROFILE_CHANGED
+	case "ERR_ACCESS_USER":
+		e.flag |= ERR_ACCESS_USER
+	case "invalid_grant":
+		e.flag |= ERR_INVALID_GRANT
+	case "ERR_ENTITY_DELETED_PERMANENTLY":
+		e.flag |= ERR_ENTITY_DELETED_PERMANENTLY
+	case "ERR_ENTITY_NOT_FOUND":
+		e.flag |= ERR_ENTITY_NOT_FOUND
 	}
 	e.message = append(e.message, message)
 }
@@ -70,7 +70,7 @@ func KiteError(err error, input int64) bool {
 	if e, ok := err.(*KError); !ok {
 		return false
 	} else {
-		if e.flag & input != 0 {
+		if e.flag&input != 0 {
 			return true
 		}
 	}

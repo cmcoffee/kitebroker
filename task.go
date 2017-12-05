@@ -10,7 +10,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	//"regexp"
 )
 
 var cleanup_working int32
@@ -20,8 +19,6 @@ var users []string
 // main task handler.
 func TaskHandler() {
 	task_time = time.Now()
-
-	DB.Truncate("ignore")
 
 	task := Config.Get("configuration", "task")
 
@@ -56,11 +53,9 @@ func TaskHandler() {
 	}
 
 	if users = load_users(task); len(users) == 0 {
-		logger.Notice("No valid target users found, task %s aborted.", task)
-		logger.Notice("To add target users, create e-mail subfolders under configured local_path.")
+		logger.Notice("No valid user subfolders (ie.. %s) found, task %s aborted.", FullPath("user@domain.com"), task)
 		logger.Log("\n")
 	}
-
 
 	for _, user := range users {
 		var jfunc func() error
@@ -137,21 +132,21 @@ func backgroundCleanup() {
 			if time.Since(last_cleanup) >= ival {
 				atomic.CompareAndSwapInt32(&cleanup_working, 0, 1)
 				switch Config.Get("configuration", "task") {
-					case "recv_file":
-						if err = cleanupRecv(); err != nil {
-							logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
-						}
-					case "folder_download":
-						if err = cleanupDownloads(); err != nil {
-							logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
-						}
-					case "folder_upload":
-						if err = cleanupLocal("uploads"); err != nil {
-							logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
-						}
-						if err = cleanupLocal("folders"); err != nil {
-							logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
-						}
+				case "recv_file":
+					if err = cleanupRecv(); err != nil {
+						logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+					}
+				case "folder_download":
+					if err = cleanupDownloads(); err != nil {
+						logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+					}
+				case "folder_upload":
+					if err = cleanupLocal("uploads"); err != nil {
+						logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
+					}
+					if err = cleanupLocal("folders"); err != nil {
+						logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
+					}
 				}
 				atomic.CompareAndSwapInt32(&cleanup_working, 1, 0)
 				if err != nil {
@@ -170,6 +165,7 @@ func backgroundCleanup() {
 	}()
 }
 
+// Cleanup received emails.
 func cleanupRecv() error {
 	records, err := DB.ListNKeys("inbox")
 	if err != nil {
@@ -191,10 +187,11 @@ func cleanupRecv() error {
 	return nil
 }
 
+// Checks if remote file is deleted.
 func IsDeleted(user Session, path string) bool {
 	var auth *KiteAuth
 	found, _ := DB.Get("tokens", user, &auth)
-	if !found { 
+	if !found {
 		return false
 	}
 
@@ -205,10 +202,10 @@ func IsDeleted(user Session, path string) bool {
 	var err error
 
 	for {
-		err = user.Call("GET", path, &M, Query{"mode":"compact", "with":"(deleted)"})
-			if user.RetryToken(err) {
-				continue
-			}
+		err = user.Call("GET", path, &M, Query{"mode": "compact", "with": "(deleted)"})
+		if user.RetryToken(err) {
+			continue
+		}
 		break
 	}
 
@@ -234,6 +231,26 @@ func cleanupLocal(table string) error {
 		}
 	}
 	return nil
+}
+
+// Displays files that will be skipped in scan.
+func show_skipped_files() {
+	rdir, err := ioutil.ReadDir(FullPath(NONE))
+	if err != nil {
+		return
+	}
+	var bad_files []string
+	for _, finfo := range rdir {
+		fname := finfo.Name()
+		if !finfo.IsDir() {
+			bad_files = append(bad_files, fname)
+		}
+	}
+	if len(bad_files) > 0 {
+		for _, name := range bad_files {
+			logger.Notice("skipped %s: file not in a kiteworks subfolder under local_path.", name)
+		}
+	}
 }
 
 // Cleanup old download records that are no longer relevant.
@@ -276,11 +293,13 @@ func (s Session) UploadFolder() (err error) {
 	show_no_files_found := true
 
 	// get folders which we have been told to handle on kw.
-	sync_folders := Config.MGet("configuration", "kw_folders")
+	sync_folders := Config.MGet("configuration", "kw_folder")
 	if len(sync_folders) == 1 && sync_folders[0] == NONE {
 		start_path := Config.Get("configuration", "local_path")
 
-		if err = MkDir(start_path); err != nil { return err }
+		if err = MkDir(start_path); err != nil {
+			return err
+		}
 
 		rdir, err := ioutil.ReadDir(start_path)
 		if err != nil {
@@ -293,6 +312,8 @@ func (s Session) UploadFolder() (err error) {
 			}
 		}
 	}
+
+	show_skipped_files()
 
 	sync_folders = cleanSlice(sync_folders)
 
@@ -350,10 +371,6 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		path := splitLast(file, SLASH)[0]
 
 		if path == NONE {
-			if found, _ := DB.Get("ignore", file, nil); !found {
-				logger.Notice("%s will be ignored, all files must be in a subfolder.", FullPath(file))
-				DB.Set("ignore", file, 1)
-			}
 			continue
 		}
 
@@ -385,9 +402,6 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 
 	fid = -1
 	folder_id := -1
-
-	//re := regexp.MustCompile("^[A-Z]:$")
-
 
 	for i := split_len; i >= 1; i-- {
 		found, err := DB.Get("folders", strings.Join(split_path[0:i], SLASH), &folder_id)
@@ -426,7 +440,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		//if re.MatchString(new_path) { continue }
 		cid, _ := s.FindChildFolder(fid, missing_folder)
 		if cid == -1 {
-			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s) + SLASH))
+			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s)+SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
 			if err != nil {
 				return -1, err
@@ -440,8 +454,8 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 }
 
 type download_task struct {
-	kw_file    KiteData
-	path string
+	kw_file KiteData
+	path    string
 }
 
 // DownloadFolder task.
@@ -471,13 +485,7 @@ func (s Session) DownloadFolder() (err error) {
 	}()
 
 	sync_map := make(map[string]int)
-
-	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folders"))
-
-	// Backwards compatible with config name change.
-	if len(sync_folders) == 0 {
-		sync_folders = cleanSlice(Config.MGet("configuration", "kw_folder"))
-	}
+	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder"))
 
 	if len(sync_folders) == 0 {
 		kw_folders, err := s.GetFolders()

@@ -4,16 +4,16 @@ package fin
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"syscall"
-	"log"
 )
 
 var (
 	// Signal Notification Channel. (ie..fin.Signal<-os.Kill will initiate a shutdown.)
-	Collector      = make(chan os.Signal)
+	Collector   = make(chan os.Signal)
 	globalDefer []func() error
 	errorLogger func(...interface{})
 	errCode     = 0

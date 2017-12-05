@@ -246,7 +246,9 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 	split_path := strings.Split(local_dest, SLASH)
 	for n, _ := range split_path {
 		err = MkPath(strings.Join(split_path[0:n+1], SLASH))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 	}
 
 	fname := fmt.Sprintf("%s/%s", local_dest, nfo.Name)
@@ -270,7 +272,7 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		offset = fstat.Size()
 	}
 
-	f, err = OpenFile(fname + ".incomplete", os.O_CREATE|os.O_RDWR, 0755)
+	f, err = OpenFile(fname+".incomplete", os.O_CREATE|os.O_RDWR, 0755)
 	if err != nil {
 		return
 	}
@@ -358,7 +360,7 @@ renameFile:
 	f.Close()
 
 	// Rename file.
-	if err = Rename(fname + ".incomplete", fname); err != nil {
+	if err = Rename(fname+".incomplete", fname); err != nil {
 		return
 	}
 

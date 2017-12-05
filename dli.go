@@ -71,7 +71,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 		offset = fstat.Size()
 	}
 
-	f, err = OpenFile(fname + ".incomplete", os.O_CREATE|os.O_RDWR, 0755)
+	f, err = OpenFile(fname+".incomplete", os.O_CREATE|os.O_RDWR, 0755)
 	if err != nil {
 		return
 	}
@@ -140,7 +140,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 		return
 	}
 
-	renameFile:
+renameFile:
 	tm.ShowTransfer()
 	fmt.Println(NONE)
 	logger.Log("[%v]: Download completed succesfully.", j)
@@ -152,7 +152,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 	}
 
 	// Rename file.
-	if err = Rename(fname + ".incomplete", fname); err != nil {
+	if err = Rename(fname+".incomplete", fname); err != nil {
 		return
 	}
 
@@ -369,7 +369,6 @@ func (j Session) DLIReport() (err error) {
 			}
 			s.DeleteExport(lastUpdate[n].Export_id)
 		}
-
 
 		// Generate a new request.
 		x, err := s.DLIGenerateReport(string(j), n, lastUpdate[n].Start_time, task_time)

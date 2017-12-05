@@ -58,7 +58,7 @@ func LoadCredentials() (username, password string, err error) {
 	}
 
 	Config.Save("configuration")
-	return 
+	return
 }
 
 var NoValidToken = fmt.Errorf("No valid authentication tokens available.")
@@ -110,7 +110,9 @@ func (s Session) GetToken() (access_token string, err error) {
 			if s == NONE {
 				s = Session(username)
 			}
-			if err != nil { return NONE, err }
+			if err != nil {
+				return NONE, err
+			}
 			randomizer := rand.New(rand.NewSource(int64(time.Now().Unix())))
 			nonce := randomizer.Int() % 999999
 			timestamp := int64(time.Now().Unix())
@@ -131,7 +133,9 @@ func (s Session) GetToken() (access_token string, err error) {
 
 		case PASSWORD_AUTH:
 			username, password, err := LoadCredentials()
-			if err != nil { return NONE, err }
+			if err != nil {
+				return NONE, err
+			}
 			postform.Add("grant_type", "password")
 			postform.Add("username", username)
 			postform.Add("password", password)

@@ -8,9 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/mattn/go-sqlite3"
+	"strconv"
 	"strings"
 	"sync"
-	"strconv"
 )
 
 type Store struct {
@@ -108,10 +108,10 @@ func (s *Store) set(table string, key interface{}, val interface{}, flags int) (
 	var new_table string
 
 	switch key.(type) {
-		case int:
-			new_table = "key INT PRIMARY KEY, value BLOB, e INT"
-		default:
-			new_table = "key TEXT PRIMARY KEY, value BLOB, e INT"
+	case int:
+		new_table = "key INT PRIMARY KEY, value BLOB, e INT"
+	default:
+		new_table = "key TEXT PRIMARY KEY, value BLOB, e INT"
 	}
 
 	key_str := fmt.Sprintf("%v", key)
@@ -375,7 +375,9 @@ func (s *Store) ListNKeys(table string, filters ...string) (keyList []int, err e
 	keys, err = s.ListKeys(table, filters...)
 	for _, k := range keys {
 		i, err := strconv.Atoi(k)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		keyList = append(keyList, i)
 	}
 	return

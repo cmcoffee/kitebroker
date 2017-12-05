@@ -35,7 +35,7 @@ cleanup_time_secs = 86400
 local_path = kiteworks
 
 # kiteworks Remote Folder for downloading/uploading, leave blank for all.
-kw_folders = My Folder
+kw_folder = My Folder
 
 # Upload chunk size in kilobytes.
 upload_chunk_size = 68157
@@ -52,7 +52,7 @@ delete_source_files_on_complete = no
 task = folder_download
 
 [send_file:opts]
-addl_to =
+to =
 cc =
 bcc =
 subject = Upload Summary

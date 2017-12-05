@@ -1,13 +1,13 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/cmcoffee/go-logger"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
-	"encoding/json"
-	"path/filepath"
 )
 
 type marker struct{}
@@ -17,12 +17,11 @@ type KBMeta struct {
 }
 
 type Sendmail struct {
-	Date *time.Time
-	Files []string   `json:"files"`
+	Date      *time.Time
+	Files     []string `json:"files"`
 	SentFiles []string `json:"sentfiles"`
-	FileIDs []int    `json:"file_ids"`
+	FileIDs   []int    `json:"file_ids"`
 }
-
 
 // Sends files to receipients.
 func (s Session) SendFile() (err error) {
@@ -44,7 +43,7 @@ func (s Session) SendFile() (err error) {
 		}
 	}
 
-	To := Config.MGet("send_file:opts", "addl_to")
+	To := Config.MGet("send_file:opts", "to")
 	Cc := Config.MGet("send_file:opts", "cc")
 	Bcc := Config.MGet("send_file:opts", "bcc")
 	Subj := Config.Get("send_file:opts", "subject")
@@ -65,7 +64,9 @@ func (s Session) SendFile() (err error) {
 
 	// Uploads all files in folder.
 	for i, file := range mail.Files {
-		if file == NONE { continue }
+		if file == NONE {
+			continue
+		}
 
 		id, err := s.Upload(file, mail_folder)
 		if err != nil && err != ErrUploaded {
@@ -91,9 +92,11 @@ func (s Session) SendFile() (err error) {
 		}
 
 		metadata, err := json.Marshal(meta)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 
-		err = s.Call("POST", fmt.Sprintf("/rest/files/%d/comments", id), nil, PostJSON{"contents":"kitebroker_meta:" + string(metadata)})
+		err = s.Call("POST", fmt.Sprintf("/rest/files/%d/comments", id), nil, PostJSON{"contents": "kitebroker_meta:" + string(metadata)})
 		if err != nil {
 			logger.Err(err)
 		}
@@ -117,7 +120,9 @@ func (s Session) SendFile() (err error) {
 	id_map := make(map[int]marker)
 
 	for _, fid := range mail.FileIDs {
-		if fid == -1 { continue }
+		if fid == -1 {
+			continue
+		}
 		id_map[fid] = marker{}
 	}
 
@@ -150,13 +155,12 @@ func (s Session) SendFile() (err error) {
 		ID int `json:"id"`
 	}
 
-
 	err = s.Call("POST", "/rest/mail/actions/sendFile", &Entity, JSON, Query{"returnEntity": true})
 	if err != nil {
 		return err
 	}
 
-	err = Rename("sent/" + rcpt + SLASH + folderDate(*mail.Date), fmt.Sprintf("sent/%s/%d-%s", rcpt, Entity.ID, folderDate(*mail.Date)))
+	err = Rename("sent/"+rcpt+SLASH+folderDate(*mail.Date), fmt.Sprintf("sent/%s/%d-%s", rcpt, Entity.ID, folderDate(*mail.Date)))
 	if err != nil {
 		logger.Err(err)
 	}
@@ -193,36 +197,38 @@ func (s Session) RecvFile() (err error) {
 	)
 
 	type attachment struct {
-		Filename string
-		Filesize int64
-		Fingerprint string
-		FileID int
+		Filename       string
+		Filesize       int64
+		Fingerprint    string
+		FileID         int
 		OriginalFileID int
-		Flag int
+		Flag           int
 	}
 
 	type MailEnt struct {
 		Date time.Time
-		To []string
-		Cc []string
+		To   []string
+		Cc   []string
 		File []attachment
 	}
 
 	var mail_ids []int
 
 	q := Query{
-		"status": "sent",
-		"mode": "compact",
-		"deleted": false,
-		"isUserSent": true,
+		"status":      "sent",
+		"mode":        "compact",
+		"deleted":     false,
+		"isUserSent":  true,
 		"isRecipient": true,
 	}
 
 	days, err := strconv.Atoi(Config.Get("recv_file:opts", "email_age_days"))
-	if err != nil { days = 0 }
+	if err != nil {
+		days = 0
+	}
 
 	if days > 0 {
-		q["date:gte"] = write_kw_time(time.Now().AddDate(0, 0, days * -1))
+		q["date:gte"] = write_kw_time(time.Now().AddDate(0, 0, days*-1))
 	}
 
 	sender_filter := Config.MGet("recv_file:opts", "sender")
@@ -234,34 +240,38 @@ func (s Session) RecvFile() (err error) {
 	o := mail_ids[:0]
 	for _, v := range mail_ids {
 		found, err := DB.Get("inbox", v, nil)
-		if err != nil { return err }
-		if found { continue }
+		if err != nil {
+			return err
+		}
+		if found {
+			continue
+		}
 		o = append(o, v)
 	}
 	mail_ids = o
 
 	var mail_cnt int
 
-	mail_loop:
+mail_loop:
 	// Get all mail_ids gathered.
 	for _, id := range mail_ids {
 
 		var record MailEnt
 
 		var r struct {
-			Date string `json:"date"`
+			Date       string `json:"date"`
 			Recipients []struct {
-				UserID int `json:"userId"`
+				UserID   int `json:"userId"`
 				UserType int `json:"type"`
 			} `json:"recipients"`
 
 			Variables []struct {
 				Variable string `json:"variable"`
-				Value string `json:"value"`
+				Value    string `json:"value"`
 			} `json:"variables"`
 		}
 
-		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", id), &r, Query{"mode":"compact", "with": "(variables, recipients)"})
+		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", id), &r, Query{"mode": "compact", "with": "(variables, recipients)"})
 		if err != nil {
 			logger.Err(err)
 			continue
@@ -280,11 +290,13 @@ func (s Session) RecvFile() (err error) {
 		}
 
 		for i, s := range sender_filter {
-			if s == NONE { break }
+			if s == NONE {
+				break
+			}
 			if strings.ToLower(s) == strings.ToLower(vars["SENDER_EMAIL"]) {
 				break
 			} else {
-				if i == len(sender_filter) - 1 {
+				if i == len(sender_filter)-1 {
 					continue mail_loop
 				}
 			}
@@ -316,31 +328,31 @@ func (s Session) RecvFile() (err error) {
 			switch e.UserType {
 			case 0:
 				record.To = append(record.To, email)
-			case 1: 
+			case 1:
 				record.Cc = append(record.Cc, email)
 			}
 		}
 
 		var a struct {
 			Attachments []struct {
-				Withdrawn bool `json:"withdrawn"`
+				Withdrawn    bool `json:"withdrawn"`
 				OriginalFile struct {
 					ID int `json:"id"`
 				} `json:"originalFile"`
 				File struct {
-					Name string `json:"name"`
-					ID int  `json:"objectId"`
-					Size int64 `json:"size"`
-					Blocked string `json:"adminQuarantineStatus"`
+					Name        string `json:"name"`
+					ID          int    `json:"objectId"`
+					Size        int64  `json:"size"`
+					Blocked     string `json:"adminQuarantineStatus"`
 					Fingerprint string `json:"fingerprint"`
-					DLPStatus string `json:"dlpStatus"`
-					AVStatus string `json:"avStatus"`
-					Deleted bool `json:"deleted"`
+					DLPStatus   string `json:"dlpStatus"`
+					AVStatus    string `json:"avStatus"`
+					Deleted     bool   `json:"deleted"`
 				} `json:"frozenFile"`
 			} `json:"data"`
 		}
 
-		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d/attachments", id), &a, Query{"mode":"full_no_links", "orderBy":"originalFileId:asc","with":"(frozenFile,originalFile)"})
+		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d/attachments", id), &a, Query{"mode": "full_no_links", "orderBy": "originalFileId:asc", "with": "(frozenFile,originalFile)"})
 		if err != nil {
 			logger.Err(err)
 			continue
@@ -349,8 +361,8 @@ func (s Session) RecvFile() (err error) {
 		for _, e := range a.Attachments {
 
 			file_attach := attachment{
-				Filename: e.File.Name,
-				Filesize: e.File.Size,
+				Filename:    e.File.Name,
+				Filesize:    e.File.Size,
 				Fingerprint: e.File.Fingerprint,
 			}
 
@@ -385,7 +397,9 @@ func (s Session) RecvFile() (err error) {
 
 		for i, f := range record.File {
 			fid := f.FileID
-			if fid == 0 { continue }
+			if fid == 0 {
+				continue
+			}
 			finfo, err := s.FileInfo(fid)
 			if err != nil {
 				if err != nil {
@@ -399,7 +413,7 @@ func (s Session) RecvFile() (err error) {
 						logger.Err(err)
 						continue mail_loop
 					}
-				} 
+				}
 			}
 
 			DB.Unset("downloads", fid)
@@ -411,7 +425,9 @@ func (s Session) RecvFile() (err error) {
 			}
 
 			err = s.Call("GET", fmt.Sprintf("/rest/files/%d/comments", f.OriginalFileID), &Comment, Query{"contents:contains": "kitebroker_meta:", "orderBy": "created:asc", "limit": 1, "mode": "compact"})
-			if err != nil { return err }
+			if err != nil {
+				return err
+			}
 
 			var metadata KBMeta
 
@@ -419,14 +435,16 @@ func (s Session) RecvFile() (err error) {
 				if len(Comment.Data[0].Content) > 0 {
 					j := strings.TrimPrefix(Comment.Data[0].Content, "kitebroker_meta:")
 					err = json.Unmarshal([]byte(j), &metadata)
-					if err != nil { return err }
+					if err != nil {
+						return err
+					}
 					metadata.Path = filepath.Clean(metadata.Path)
 				}
 			}
 
-			err = s.Download(finfo, folder + metadata.Path)
+			err = s.Download(finfo, folder+metadata.Path)
 			if err != nil {
-				if err == ErrDownloaded  {
+				if err == ErrDownloaded {
 					logger.Log("[%d] %s(%s) was previously downloaded already.", id, record.File[i].Filename, showSize(record.File[i].Filesize))
 					record.File[i].Flag |= file_downloaded
 				} else {
@@ -448,11 +466,11 @@ func (s Session) RecvFile() (err error) {
 			} else {
 
 				_, err = fmt.Fprint(f, "from: ", vars["SENDER_EMAIL"],
-									   "\ndate: ", record.Date.String(),
-									   "\nto: ", strings.Join(record.To, ";"),
-									   "\ncc: ", strings.Join(record.Cc, ";"),
-									   "\nsubject: ", vars["SUBJECT"],
-									   "\n\n", vars["BODY"], "\n")
+					"\ndate: ", record.Date.String(),
+					"\nto: ", strings.Join(record.To, ";"),
+					"\ncc: ", strings.Join(record.Cc, ";"),
+					"\nsubject: ", vars["SUBJECT"],
+					"\n\n", vars["BODY"], "\n")
 				if err != nil {
 					logger.Err("[%d] %s", id, err.Error())
 				}
@@ -466,7 +484,7 @@ func (s Session) RecvFile() (err error) {
 			if err != nil {
 				logger.Err("[%d] %s", id, err.Error())
 			} else {
-				_, err = fmt.Fprint(f, vars["BODY"] + "\n")
+				_, err = fmt.Fprint(f, vars["BODY"]+"\n")
 				if err != nil {
 					logger.Err("[%d] %s", id, err.Error())
 				}
@@ -485,19 +503,19 @@ func (s Session) RecvFile() (err error) {
 				for _, info := range record.File {
 					var status, flag string
 					switch {
-						case info.Flag & file_access_denied != 0:
-							flag ="access_denied"
-						case info.Flag & file_allowed != 0:
-							flag = "allowed"
-						case info.Flag & file_quarantined != 0:
-							flag = "quarantined"
-						case info.Flag & file_withdrawn != 0:
-							flag = "withdrawn"
-						case info.Flag & file_deleted != 0:
-							flag = "deleted"
+					case info.Flag&file_access_denied != 0:
+						flag = "access_denied"
+					case info.Flag&file_allowed != 0:
+						flag = "allowed"
+					case info.Flag&file_quarantined != 0:
+						flag = "quarantined"
+					case info.Flag&file_withdrawn != 0:
+						flag = "withdrawn"
+					case info.Flag&file_deleted != 0:
+						flag = "deleted"
 					}
 
-					if info.Flag & file_downloaded != 0 {
+					if info.Flag&file_downloaded != 0 {
 						status = "yes"
 					} else {
 						status = "no"

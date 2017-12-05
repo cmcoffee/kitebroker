@@ -19,10 +19,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
-	"strconv"
 )
 
 const (
@@ -74,9 +74,9 @@ func HideLoader() {
 	atomic.CompareAndSwapInt32(&show_loader, 1, 0)
 }
 
-// Scans local path for all folders and files.
-func scanPath(root_folder string) (folders []string, files []string) {
-	folders = []string{filepath.Clean(Config.Get("configuration", "local_path") + "/" + root_folder)}
+// Scans parent_folder for all subfolders and files.
+func scanPath(parent_folder string) (folders []string, files []string) {
+	folders = []string{filepath.Clean(Config.Get("configuration", "local_path") + "/" + parent_folder)}
 	var n int
 
 	nextFolder := func() (output string) {
@@ -87,14 +87,14 @@ func scanPath(root_folder string) (folders []string, files []string) {
 		}
 		return NONE
 	}
-	
+
 	files = make([]string, 0)
 
 	for {
 		folder := nextFolder()
 		if folder == NONE {
 			break
-		} 
+		}
 		data, err := ioutil.ReadDir(folder)
 		if err != nil && !os.IsNotExist(err) {
 			logger.Err(err)
@@ -102,7 +102,9 @@ func scanPath(root_folder string) (folders []string, files []string) {
 		}
 		for _, finfo := range data {
 			if finfo.IsDir() {
-				if folder == local_path && finfo.Name() == "sent" { continue }
+				if folder == local_path && finfo.Name() == "sent" {
+					continue
+				}
 				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
 			} else {
 				files = append(files, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
@@ -111,10 +113,10 @@ func scanPath(root_folder string) (folders []string, files []string) {
 	}
 
 	for n, folder := range folders {
-		folders[n] = strings.TrimPrefix(folder, local_path + SLASH)
+		folders[n] = strings.TrimPrefix(folder, local_path+SLASH)
 	}
 	for n, file := range files {
-		files[n] = strings.TrimPrefix(file, local_path + SLASH)
+		files[n] = strings.TrimPrefix(file, local_path+SLASH)
 	}
 
 	return folders, files
@@ -328,8 +330,8 @@ func moveFile(src, dst string) (err error) {
 	src = FullPath(src)
 	dst = FullPath(dst)
 
-	if err = MkDir(splitLast(dst, SLASH)[0]); err != nil { 
-		return err 
+	if err = MkDir(splitLast(dst, SLASH)[0]); err != nil {
+		return err
 	}
 
 	s_file, err := os.Open(src)
@@ -493,7 +495,9 @@ func MkDir(path string) (err error) {
 	split_path := strings.Split(path, SLASH)
 	for i, _ := range split_path {
 		err = create(strings.Join(split_path[0:i+1], SLASH))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 	}
 
 	return
@@ -502,7 +506,7 @@ func MkDir(path string) (err error) {
 func MkPath(path string) (err error) {
 	return MkDir(FullPath(path))
 }
- 
+
 func Chtimes(name string, atime time.Time, mtime time.Time) error {
 	return os.Chtimes(FullPath(name), atime, mtime)
 }

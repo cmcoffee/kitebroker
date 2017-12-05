@@ -97,7 +97,7 @@ func respError(resp *http.Response) (err error) {
 }
 
 // RetryToken till we get a good one.
-func (s Session)RetryToken(err error) bool {
+func (s Session) RetryToken(err error) bool {
 	if KiteError(err, ERR_AUTH_PROFILE_CHANGED|ERR_AUTH_UNAUTHORIZED|ERR_INVALID_GRANT) {
 		var kauth *KiteAuth
 		DB.Get("tokens", s, &kauth)
@@ -107,9 +107,9 @@ func (s Session)RetryToken(err error) bool {
 		}
 
 		_, err := s.GetToken()
-			if err == nil {
-				return true
-			}
+		if err == nil {
+			return true
+		}
 	}
 	return false
 }
@@ -191,7 +191,7 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer " + access_token)
+	req.Header.Set("Authorization", "Bearer "+access_token)
 
 	return req, nil
 }
@@ -204,9 +204,9 @@ func (c *KCall) Do(req *http.Request) (*http.Response, error) {
 	<-api_call_bank
 	defer func() { api_call_bank <- call_done }()
 	resp, err := c.Client.Do(req)
-	if err != nil { 
+	if err != nil {
 		fmt.Println("Hey")
-		return nil, err 
+		return nil, err
 	}
 	err = respError(resp)
 	return resp, err
@@ -237,9 +237,11 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 
 	defer resp.Body.Close()
 	defer func() {
-		if snoop { logger.Put("} \n\n") }
+		if snoop {
+			logger.Put("} \n\n")
+		}
 	}()
-	
+
 	var body io.Reader
 
 	if snoop {
@@ -264,7 +266,7 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	err = dec.Decode(output)
 	if err == io.EOF {
 		return nil
-	} 
+	}
 	return
 }
 
@@ -381,7 +383,7 @@ func (s Session) FindUser(user_email string) (id int, err error) {
 		Users []KiteUser `json:"data"`
 	}
 
-	err = s.Call("GET", "/rest/users", &info, Query{"email":user_email, "mode":"compact"})
+	err = s.Call("GET", "/rest/users", &info, Query{"email": user_email, "mode": "compact"})
 	if err != nil {
 		return -1, err
 	}

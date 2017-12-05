@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-cfg"
 	"github.com/cmcoffee/go-eflag"
+	"github.com/cmcoffee/go-fin"
 	"github.com/cmcoffee/go-kvlite"
 	"github.com/cmcoffee/go-logger"
-	"github.com/cmcoffee/go-fin"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"sync/atomic"
+	"time"
 )
 
 const (
@@ -24,17 +24,17 @@ const (
 )
 
 var (
-	Config        cfg.Store
-	DB            *kvlite.Store
-	chunk_size    int
-	timeout       time.Duration
-	snoop         bool
-	server        string
-	client_id     string
-	client_secret string
-	auth_flow     uint
-	retry_count   int
-	local_path    string
+	Config          cfg.Store
+	DB              *kvlite.Store
+	chunk_size      int
+	timeout         time.Duration
+	snoop           bool
+	server          string
+	client_id       string
+	client_secret   string
+	auth_flow       uint
+	retry_count     int
+	local_path      string
 	first_token_set bool
 )
 
@@ -155,7 +155,7 @@ func main() {
 
 	flags.BoolVar(&snoop, "rest_snoop", false, "Snoop on API calls to the kiteworks appliance.")
 
-	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute * 5), "Timeout for HTTP/S requests to kiteworks server.")
+	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute*5), "Timeout for HTTP/S requests to kiteworks server.")
 
 	flags.Parse(os.Args[1:])
 
@@ -246,9 +246,9 @@ func main() {
 	} else {
 		if user.RetryToken(err) {
 			_, err := user.MyUser()
-			if err == nil { 
+			if err == nil {
 				first_token_set = true
-			 }
+			}
 		}
 	}
 
@@ -276,11 +276,11 @@ func main() {
 		ival = time.Duration(t) * time.Second
 	}
 
-	fin.Defer(func(){logger.Log("Application exit requested.")})
+	fin.Defer(func() { logger.Log("Application exit requested.") })
 
 	// Begin scan loop.
 	for {
-		backgroundCleanup();
+		backgroundCleanup()
 		start := time.Now().Round(time.Second)
 		TaskHandler()
 		if continuous {
@@ -298,7 +298,7 @@ func main() {
 			logger.Log("\n")
 			continue
 		} else {
-			if (atomic.LoadInt32(&cleanup_working) == 1) {
+			if atomic.LoadInt32(&cleanup_working) == 1 {
 				logger.Log("Waiting on cleanup process to complete...")
 				ShowLoader()
 				for {

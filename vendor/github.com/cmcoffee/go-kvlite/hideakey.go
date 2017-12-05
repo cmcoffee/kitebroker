@@ -183,7 +183,9 @@ func (s *Store) dblocker(passphrase, key, padlock []byte) []byte {
 	}
 
 	s.dbCon.Exec("DROP TABLE KVLite")
-	if _, err := s.dbCon.Exec("ALTER TABLE KVLite_Staging RENAME TO KVLite"); err == nil { s.dbCon.Exec("DROP TABLE KVLite_Staging") }
+	if _, err := s.dbCon.Exec("ALTER TABLE KVLite_Staging RENAME TO KVLite"); err == nil {
+		s.dbCon.Exec("DROP TABLE KVLite_Staging")
+	}
 	return key[0:32]
 }
 
@@ -192,13 +194,19 @@ func (s *Store) dbunlocker(padlock []byte) (err error) {
 
 	// Run this to clean up a failed shutdown last time.
 	c, err := s.CountKeys("KVLite")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if c == 0 {
 		c, err := s.CountKeys("KVLite_Staging")
-		if err != nil {return err}
+		if err != nil {
+			return err
+		}
 		if c != 0 {
 			s.dbCon.Exec("DROP TABLE KVLite")
-			if _, err := s.dbCon.Exec("ALTER TABLE KVLite_Staging RENAME TO KVLite"); err == nil { s.dbCon.Exec("DROP TABLE KVLite_Staging") }	
+			if _, err := s.dbCon.Exec("ALTER TABLE KVLite_Staging RENAME TO KVLite"); err == nil {
+				s.dbCon.Exec("DROP TABLE KVLite_Staging")
+			}
 		}
 	}
 

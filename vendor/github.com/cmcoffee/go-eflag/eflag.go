@@ -8,37 +8,39 @@ package eflag
 import (
 	"flag"
 	"fmt"
-	"os"
 	"io"
-	"time"
-	"text/tabwriter"
+	"os"
 	"strings"
+	"text/tabwriter"
+	"time"
 )
 
 // Duplicate flag's ErrorHandling.
 type ErrorHandling int
 
 const (
-   		ContinueOnError ErrorHandling = iota
-		ExitOnError
-		PanicOnError
+	ContinueOnError ErrorHandling = iota
+	ExitOnError
+	PanicOnError
 )
 
 // Write to nothing, to remove standard output of flag.
 type _voidText struct{}
-var voidText _voidText 
+
+var voidText _voidText
+
 func (s _voidText) Write(p []byte) (n int, err error) {
-		return len(p), nil
+	return len(p), nil
 }
 
 type EFlagSet struct {
-	name string
-	Header string
-	Footer string
-	alias map[string]string
+	name       string
+	Header     string
+	Footer     string
+	alias      map[string]string
 	stringVars map[string]bool
 	*flag.FlagSet
-	out io.Writer
+	out           io.Writer
 	errorHandling ErrorHandling
 }
 
@@ -68,11 +70,13 @@ func NewFlagSet(name string, errorHandling ErrorHandling) *EFlagSet {
 
 // Reads through all flags available and outputs with better formatting.
 func (s *EFlagSet) PrintDefaults() {
-	
+
 	output := tabwriter.NewWriter(s.out, 34, 8, 1, ' ', 0)
-	
+
 	s.VisitAll(func(flag *flag.Flag) {
-		if flag.Usage == "" { return }
+		if flag.Usage == "" {
+			return
+		}
 		var text []string
 		name := flag.Name
 		alias := s.alias[flag.Name]
@@ -88,7 +92,7 @@ func (s *EFlagSet) PrintDefaults() {
 		if alias == "" {
 			space = "  "
 		}
- 		if len(name) > 1 {
+		if len(name) > 1 {
 			text = append(text, fmt.Sprintf("%s--%s", space, name))
 		} else {
 			text = append(text, fmt.Sprintf("%s-%s", space, name))
@@ -101,37 +105,39 @@ func (s *EFlagSet) PrintDefaults() {
 			}
 		}
 		text = append(text, fmt.Sprintf("\t%s\n", flag.Usage))
-		
+
 		fmt.Fprintf(output, strings.Join(text[0:], ""))
 	})
-		fmt.Fprintf(output, "  --help\tDisplays usage information.\n")
-		output.Flush()
+	fmt.Fprintf(output, "  --help\tDisplays usage information.\n")
+	output.Flush()
 }
 
 // Adds an alias to an existing flag, requires a pointer to the variable, the current name and the new alias name.
 func (s *EFlagSet) Alias(val interface{}, name string, alias string) {
 	flag := s.Lookup(name)
-	if flag == nil { return }
+	if flag == nil {
+		return
+	}
 	switch v := val.(type) {
-		case *bool:
-			s.BoolVar(v, alias, *v, "")
-		case *time.Duration:
-			s.DurationVar(v, alias, *v, "")
-		case *float64:
-			s.Float64Var(v, alias, *v, "")
-		case *int:
-			s.IntVar(v, alias, *v, "")
-		case *int64:
-			s.Int64Var(v, alias, *v, "")
-		case *string:
-			s.StringVar(v, alias, *v, "")
-		case *uint:
-			s.UintVar(v, alias, *v, "")
-		case *uint64:
-			s.Uint64Var(v, alias, *v, "")
-		default:
-			s.Var(flag.Value, alias, "")
-			
+	case *bool:
+		s.BoolVar(v, alias, *v, "")
+	case *time.Duration:
+		s.DurationVar(v, alias, *v, "")
+	case *float64:
+		s.Float64Var(v, alias, *v, "")
+	case *int:
+		s.IntVar(v, alias, *v, "")
+	case *int64:
+		s.Int64Var(v, alias, *v, "")
+	case *string:
+		s.StringVar(v, alias, *v, "")
+	case *uint:
+		s.UintVar(v, alias, *v, "")
+	case *uint64:
+		s.Uint64Var(v, alias, *v, "")
+	default:
+		s.Var(flag.Value, alias, "")
+
 	}
 	s.alias[name] = alias
 }
@@ -143,11 +149,19 @@ func (s *EFlagSet) Parse(args []string) (err error) {
 
 	// Split bool flags so that '-abc' becomes '-a -b -c' before being parsed.
 	for i, a := range args {
-		if !strings.Contains(a, "-") { continue }
-		if strings.Contains(a, "=") { continue }
-		if strings.Contains(a, "--") { continue }
+		if !strings.Contains(a, "-") {
+			continue
+		}
+		if strings.Contains(a, "=") {
+			continue
+		}
+		if strings.Contains(a, "--") {
+			continue
+		}
 		a = strings.TrimPrefix(a, "-")
-		if len(a) == 0 { continue }
+		if len(a) == 0 {
+			continue
+		}
 		args[i] = fmt.Sprintf("-%c", a[0])
 		for _, ch := range a[1:] {
 			args = append(args[0:], "")
@@ -155,10 +169,10 @@ func (s *EFlagSet) Parse(args []string) (err error) {
 			args[0] = fmt.Sprintf("-%c", ch)
 		}
 	}
-	
+
 	// Remove normal error message printing.
 	s.FlagSet.SetOutput(voidText)
-	
+
 	// Harvest error message, conceal flag.Parse() output, then reconstruct error message.
 	stdOut := s.out
 	s.out = voidText
@@ -182,10 +196,12 @@ func (s *EFlagSet) Parse(args []string) (err error) {
 			}
 		}
 		s.PrintDefaults()
-		if s.Footer != "" { fmt.Fprintf(s.out, "%s\n", s.Footer) }
+		if s.Footer != "" {
+			fmt.Fprintf(s.out, "%s\n", s.Footer)
+		}
 	}
-	
-	// Implement a new error message.	
+
+	// Implement a new error message.
 	if err != nil {
 		if err != flag.ErrHelp {
 			errStr := err.Error()
@@ -202,18 +218,18 @@ func (s *EFlagSet) Parse(args []string) (err error) {
 				fmt.Fprintf(s.out, "%s\n\n", errStr)
 			}
 		}
-		
+
 		// Errorflag handling.
 		switch s.errorHandling {
-			case ContinueOnError:
-				s.Usage()
-			case ExitOnError:
-				s.Usage()
-				os.Exit(2)
-			case PanicOnError:
-				panic(err)
+		case ContinueOnError:
+			s.Usage()
+		case ExitOnError:
+			s.Usage()
+			os.Exit(2)
+		case PanicOnError:
+			panic(err)
 		}
-	}	
+	}
 	return
 }
 

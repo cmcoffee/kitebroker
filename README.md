@@ -1,7 +1,7 @@
 # kitebroker: Automation Assistant for kiteworks.
 
 ## (v0.1.2 - 12-04-2017)
-    * Cleaned up configuration file
+    * Updated text within config file.
     * Simplified signature setup (act as single account.)
     * Fixed issues when local_path is a root folder, such as C:\
     * Extended on error messages, including those provided for empty user lists for send_file and dli_export.
