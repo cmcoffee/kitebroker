@@ -286,7 +286,7 @@ func main() {
 		if continuous {
 			for time.Now().Sub(start) < ival {
 				ctime = time.Duration(ival - time.Now().Round(time.Second).Sub(start))
-				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.Round(time.Second).String()))
+				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.String()))
 				if ctime > time.Second {
 					time.Sleep(time.Duration(time.Second))
 				} else {
