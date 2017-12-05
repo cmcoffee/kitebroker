@@ -19,7 +19,7 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.1.1b"
+	VERSION       = "0.1.2b"
 	KWAPI_VERSION = "7"
 )
 
@@ -27,7 +27,7 @@ var (
 	Config        cfg.Store
 	DB            *kvlite.Store
 	chunk_size    int
-	timeout_secs  time.Duration
+	timeout       time.Duration
 	snoop         bool
 	server        string
 	client_id     string
@@ -155,6 +155,8 @@ func main() {
 
 	flags.BoolVar(&snoop, "rest_snoop", false, "Snoop on API calls to the kiteworks appliance.")
 
+	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute * 5), "Timeout for HTTP/S requests to kiteworks server.")
+
 	flags.Parse(os.Args[1:])
 
 	// Read configuration file.
@@ -169,7 +171,10 @@ func main() {
 		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
 	}
 
+	// Prepare our local base path.
 	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
+	local_path = strings.TrimSuffix(local_path, ".")
+	local_path = strings.TrimSuffix(local_path, SLASH)
 
 	// Make our paths if they don't exist.
 	errChk(MkDir(Config.Get("configuration", "local_path")))
@@ -199,17 +204,16 @@ func main() {
 		log_size = 10240
 	}
 
-	err = logger.File(logger.ALL, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), os.Args[0])), int64(log_size)*1024, log_rotate)
+	_, b := filepath.Split(*config_file)
+	basename := strings.Split(b, ".")[0]
+
+	err = logger.File(logger.ALL, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), int64(log_size)*1024, log_rotate)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	// Generate database based on config file name.
-	_, db_filename := filepath.Split(*config_file)
-	db_filename = strings.Split(db_filename, ".")[0] + ".db"
-
 	// Open datastore
-	open_database(db_filename)
+	open_database(basename + ".db")
 
 	fin.Defer(DB.Close)
 
@@ -236,24 +240,21 @@ func main() {
 	// Get first token.
 	user := Session(Config.Get("configuration", "account"))
 
-	for {
-		_, err := user.MyUser()
-		if err == nil {
-			break
-		}
+	_, err = user.MyUser()
+	if err == nil {
 		first_token_set = true
+	} else {
 		if user.RetryToken(err) {
 			_, err := user.MyUser()
-			if err == nil { break }
-		} else {
-			DB.Unset("tokens", user)
+			if err == nil { 
+				first_token_set = true
+			 }
 		}
-		logger.Err(err)
-		first_token_set = false
-		continue
 	}
 
-	first_token_set = true
+	if !first_token_set {
+		logger.Fatal(err)
+	}
 
 	HideLoader()
 
@@ -262,14 +263,6 @@ func main() {
 		continuous bool
 		ctime      time.Duration
 	)
-
-	// Set http.Client timeout.
-	if t, err := strconv.Atoi(Config.Get("configuration", "timeout_secs")); err != nil {
-		logger.Warn("Could not parse timeout_secs, defaulting to 15 seconds.")
-		timeout_secs = time.Duration(time.Second * 60)
-	} else {
-		timeout_secs = time.Duration(t) * time.Second
-	}
 
 	// Setup continuous scan loop.
 	if strings.ToLower(Config.Get("configuration", "continuous_mode")) == "yes" {
@@ -293,7 +286,7 @@ func main() {
 		if continuous {
 			for time.Now().Sub(start) < ival {
 				ctime = time.Duration(ival - time.Now().Round(time.Second).Sub(start))
-				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.String()))
+				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.Round(time.Second).String()))
 				if ctime > time.Second {
 					time.Sleep(time.Duration(time.Second))
 				} else {

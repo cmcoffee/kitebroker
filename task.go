@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	//"regexp"
 )
 
 var cleanup_working int32
@@ -19,6 +20,8 @@ var users []string
 // main task handler.
 func TaskHandler() {
 	task_time = time.Now()
+
+	DB.Truncate("ignore")
 
 	task := Config.Get("configuration", "task")
 
@@ -39,32 +42,25 @@ func TaskHandler() {
 			}
 		}
 
-		switch task {
-		case "send_file":
+		if task == "send_file" || task == "dli_export" {
 			str := users[:0]
 			for _, v := range users {
-				if v == my_user { continue }
 				str = append(str, v)
 			}
 			users = str
-		case "recv_file":
-			users = []string{my_user}
-		case "folder_download":
-			fallthrough
-		case "folder_upload":
-			if auth_flow != SIGNATURE_AUTH {
-				users = []string{my_user}
-			}
-		}
-
-		if len(users) == 0 {
+		} else {
 			users = []string{my_user}
 		}
 
 		return
 	}
 
-	users = load_users(task)
+	if users = load_users(task); len(users) == 0 {
+		logger.Notice("No valid target users found, task %s aborted.", task)
+		logger.Notice("To add target users, create e-mail subfolders under configured local_path.")
+		logger.Log("\n")
+	}
+
 
 	for _, user := range users {
 		var jfunc func() error
@@ -240,6 +236,7 @@ func cleanupLocal(table string) error {
 	return nil
 }
 
+// Cleanup old download records that are no longer relevant.
 func cleanupDownloads() error {
 	records, err := DB.ListNKeys("downloads")
 	if err != nil {
@@ -277,24 +274,11 @@ type exit struct{}
 func (s Session) UploadFolder() (err error) {
 
 	show_no_files_found := true
-	sync_map := make(map[string]int)
 
-	top_folders, err := s.GetFolders()
-	if err != nil {
-		return err
-	}
-
-	for _, f := range top_folders.Data {
-		sync_map[f.Name] = f.ID
-	}
-
-	sync_folders := Config.MGet("configuration", "kw_folder")
+	// get folders which we have been told to handle on kw.
+	sync_folders := Config.MGet("configuration", "kw_folders")
 	if len(sync_folders) == 1 && sync_folders[0] == NONE {
 		start_path := Config.Get("configuration", "local_path")
-
-		if auth_flow == SIGNATURE_AUTH {
-			start_path = start_path + SLASH + string(s)
-		}
 
 		if err = MkDir(start_path); err != nil { return err }
 
@@ -313,16 +297,7 @@ func (s Session) UploadFolder() (err error) {
 	sync_folders = cleanSlice(sync_folders)
 
 	for _, parent_folder := range sync_folders {
-
-		var root_folder string
-
-		if auth_flow == SIGNATURE_AUTH {
-			root_folder = string(s) + SLASH + parent_folder
-		} else {
-			root_folder = parent_folder
-		}
-
-		folders, files := scanPath(root_folder)
+		folders, files := scanPath(parent_folder)
 
 		if strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders")) == "yes" {
 			for _, folder := range folders {
@@ -360,7 +335,7 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		if err != nil {
 			return true, err
 		}
-		if found && checkFile(file, record) {
+		if found && checkFile(file, record) && record.Flag == DONE {
 			continue
 		} else {
 			if fstat, err := Stat(file); err == nil {
@@ -370,10 +345,17 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 			} else {
 				return true, err
 			}
-
 		}
 
 		path := splitLast(file, SLASH)[0]
+
+		if path == NONE {
+			if found, _ := DB.Get("ignore", file, nil); !found {
+				logger.Notice("%s will be ignored, all files must be in a subfolder.", FullPath(file))
+				DB.Set("ignore", file, 1)
+			}
+			continue
+		}
 
 		fid, err := s.getKWDestination(path, true)
 		if err != nil {
@@ -383,7 +365,7 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		if _, err := s.Upload(file, fid); err != nil {
 			if err != ErrUploaded && err != ErrNotReady {
 				files_uploaded = true
-				return files_uploaded, err
+				logger.Err(err)
 			}
 		} else {
 			files_uploaded = true
@@ -403,6 +385,9 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 
 	fid = -1
 	folder_id := -1
+
+	//re := regexp.MustCompile("^[A-Z]:$")
+
 
 	for i := split_len; i >= 1; i-- {
 		found, err := DB.Get("folders", strings.Join(split_path[0:i], SLASH), &folder_id)
@@ -438,6 +423,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		}
 		missing_folder := split_path[i]
 		new_path := strings.Join(split_path[0:i+1], SLASH)
+		//if re.MatchString(new_path) { continue }
 		cid, _ := s.FindChildFolder(fid, missing_folder)
 		if cid == -1 {
 			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s) + SLASH))
@@ -486,7 +472,13 @@ func (s Session) DownloadFolder() (err error) {
 
 	sync_map := make(map[string]int)
 
-	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder"))
+	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folders"))
+
+	// Backwards compatible with config name change.
+	if len(sync_folders) == 0 {
+		sync_folders = cleanSlice(Config.MGet("configuration", "kw_folder"))
+	}
+
 	if len(sync_folders) == 0 {
 		kw_folders, err := s.GetFolders()
 		if err != nil {
@@ -515,15 +507,7 @@ func (s Session) DownloadFolder() (err error) {
 			}
 		}
 
-		var root_folder string
-
-		if auth_flow != SIGNATURE_AUTH {
-			root_folder = kw_folder
-		} else {
-			root_folder = string(s) + SLASH + kw_folder
-		}
-
-		if err := s.mapFolders(root_folder, folder_id, queue); err != nil {
+		if err := s.mapFolders(kw_folder, folder_id, queue); err != nil {
 			return err
 		}
 	}

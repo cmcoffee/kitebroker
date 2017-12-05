@@ -23,6 +23,8 @@ type Sendmail struct {
 	FileIDs []int    `json:"file_ids"`
 }
 
+
+// Sends files to receipients.
 func (s Session) SendFile() (err error) {
 	rcpt := string(s)
 	s = Session(Config.Get("configuration", "account"))
@@ -42,22 +44,15 @@ func (s Session) SendFile() (err error) {
 		}
 	}
 
-	To := Config.MGet("send_file:opts", "to")
+	To := Config.MGet("send_file:opts", "addl_to")
 	Cc := Config.MGet("send_file:opts", "cc")
 	Bcc := Config.MGet("send_file:opts", "bcc")
 	Subj := Config.Get("send_file:opts", "subject")
 
 	var files []string
 
-	if rcpt != string(s) {
-		To = append(To, rcpt)
-		_, files = scanPath(rcpt)
-	} else {
-		if To[0] == NONE {
-			return fmt.Errorf("No recipients specified, please check config.")
-		}
-		_, files = scanPath(NONE)
-	}
+	To = append(To, rcpt)
+	_, files = scanPath(rcpt)
 
 	To = cleanSlice(To)
 
@@ -76,7 +71,7 @@ func (s Session) SendFile() (err error) {
 		if err != nil && err != ErrUploaded {
 			mail.Files[i] = NONE
 			if err != ErrZeroByte {
-				logger.Err(fmt.Sprintf("%s: %s", file, err))
+				return err
 			}
 			continue
 		}
@@ -219,6 +214,7 @@ func (s Session) RecvFile() (err error) {
 		"status": "sent",
 		"mode": "compact",
 		"deleted": false,
+		"isUserSent": true,
 		"isRecipient": true,
 	}
 

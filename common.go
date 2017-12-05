@@ -76,8 +76,7 @@ func HideLoader() {
 
 // Scans local path for all folders and files.
 func scanPath(root_folder string) (folders []string, files []string) {
-	folders = []string{FullPath(root_folder)}
-
+	folders = []string{filepath.Clean(Config.Get("configuration", "local_path") + "/" + root_folder)}
 	var n int
 
 	nextFolder := func() (output string) {
@@ -95,7 +94,7 @@ func scanPath(root_folder string) (folders []string, files []string) {
 		folder := nextFolder()
 		if folder == NONE {
 			break
-		}
+		} 
 		data, err := ioutil.ReadDir(folder)
 		if err != nil && !os.IsNotExist(err) {
 			logger.Err(err)
@@ -121,6 +120,7 @@ func scanPath(root_folder string) (folders []string, files []string) {
 	return folders, files
 }
 
+// Provides root folder plus subfolder.
 func FullPath(path string) string {
 	return filepath.Clean(Config.Get("configuration", "local_path") + SLASH + path)
 }

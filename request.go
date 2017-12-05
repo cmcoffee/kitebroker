@@ -76,8 +76,6 @@ func respError(resp *http.Response) (err error) {
 
 	json.Unmarshal(output, &kite_err)
 
-	defer resp.Body.Close()
-
 	if kite_err != nil {
 		e := NewKError()
 		for _, v := range kite_err.Errors {
@@ -86,9 +84,7 @@ func respError(resp *http.Response) (err error) {
 		if kite_err.ErrorDesc != NONE {
 			e.AddError(kite_err.Error, kite_err.ErrorDesc)
 		}
-		if e.flag != 0 {
-			return e
-		}
+		return e
 	}
 
 	if resp.Status == "401 Unauthorized" {
@@ -209,6 +205,7 @@ func (c *KCall) Do(req *http.Request) (*http.Response, error) {
 	defer func() { api_call_bank <- call_done }()
 	resp, err := c.Client.Do(req)
 	if err != nil { 
+		fmt.Println("Hey")
 		return nil, err 
 	}
 	err = respError(resp)
@@ -232,7 +229,7 @@ func (s Session) NewClient() *KCall {
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	return &KCall{&http.Client{Transport: &transport, Timeout: timeout_secs}}
+	return &KCall{&http.Client{Transport: &transport, Timeout: timeout}}
 }
 
 // Decodes JSON response body to provided interface.
@@ -401,7 +398,7 @@ func (s Session) FindChildFolder(parent_folder int, child_folder string) (id int
 		return -1, err
 	}
 	for _, folder := range sub_folders.Data {
-		if folder.Name == child_folder {
+		if strings.ToLower(folder.Name) == strings.ToLower(child_folder) {
 			return folder.ID, nil
 		}
 	}
@@ -432,7 +429,7 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	}
 
 	for _, e := range top_shared.Data {
-		if e.Name == folder_names[0] {
+		if strings.ToLower(e.Name) == strings.ToLower(folder_names[0]) {
 			id = e.ID
 			break
 		}
@@ -450,7 +447,7 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 		}
 
 		for _, elem := range nested.Data {
-			if elem.Name == folder_names[0] {
+			if strings.ToLower(elem.Name) == strings.ToLower(folder_names[0]) {
 				id = elem.ID
 				found = true
 				break

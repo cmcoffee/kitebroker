@@ -87,9 +87,14 @@ func showSize(bytes int64) string {
 	return fmt.Sprintf("%.1f%s", size, names[suffix])
 }
 
+// Provides average rate of transfer.
 func (t *TMonitor) showRate() string {
 
 	size := t.transfered - t.offset
+
+	if size == t.total_size && t.rate != "0.0bps" {
+		return t.rate
+	}
 
 	names := []string{
 		"bps",
@@ -114,6 +119,7 @@ func (t *TMonitor) showRate() string {
 	return t.rate
 }
 
+// Produces progress bar for information on update.
 func (t *TMonitor) progressBar() string {
 	num := int((float64(t.transfered) / float64(t.total_size)) * 100)
 	if t.total_size == 0 {
@@ -149,6 +155,7 @@ type TMonitor struct {
 	offset     int64
 	rate       string
 	start_time time.Time
+	done_time  time.Time
 	last_shown time.Time
 }
 

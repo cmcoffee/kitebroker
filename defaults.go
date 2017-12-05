@@ -9,7 +9,6 @@ server =
 account = 
 auth_mode = password
 redirect_uri = https://kitebroker
-timeout_secs = 15
 proxy =
 
 # Auto-Generated Config ####################################
@@ -36,10 +35,10 @@ cleanup_time_secs = 86400
 local_path = kiteworks
 
 # kiteworks Remote Folder for downloading/uploading, leave blank for all.
-kw_folder = My Folder
+kw_folders = My Folder
 
 # Upload chunk size in kilobytes.
-upload_chunk_size = 32768
+upload_chunk_size = 68157
 
 # Removed source copy of file from either local machine(when uploading) or kiteworks appliance(when downloading).
 delete_source_files_on_complete = no
@@ -53,7 +52,7 @@ delete_source_files_on_complete = no
 task = folder_download
 
 [send_file:opts]
-to =
+addl_to =
 cc =
 bcc =
 subject = Upload Summary
