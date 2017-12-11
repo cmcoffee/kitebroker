@@ -96,7 +96,7 @@ func respError(resp *http.Response) (err error) {
 	return fmt.Errorf(resp.Status)
 }
 
-// RetryToken till we get a good one.
+// RetryToken will attempt to get a new token when there is an error with the current token.
 func (s Session) RetryToken(err error) bool {
 	if KiteError(err, ERR_AUTH_PROFILE_CHANGED|ERR_AUTH_UNAUTHORIZED|ERR_INVALID_GRANT) {
 		var kauth *KiteAuth
@@ -204,11 +204,12 @@ func (c *KCall) Do(req *http.Request) (*http.Response, error) {
 	<-api_call_bank
 	defer func() { api_call_bank <- call_done }()
 	resp, err := c.Client.Do(req)
-	if err != nil {
-		fmt.Println("Hey")
-		return nil, err
+
+	kerr := respError(resp)
+	if kerr != nil {
+		return resp, kerr
 	}
-	err = respError(resp)
+
 	return resp, err
 }
 

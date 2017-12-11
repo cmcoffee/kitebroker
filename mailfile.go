@@ -478,7 +478,7 @@ mail_loop:
 		}
 
 		// Save Email body.
-		if strings.ToLower(Config.Get("recv_file:opts", "download_email_body")) == "yes" {
+		if strings.ToLower(Config.Get("recv_file:opts", "download_seperate_email_body")) == "yes" {
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_mailbody.txt", folder))
 			if err != nil {

@@ -164,6 +164,5 @@ func (s Session) GetToken() (access_token string, err error) {
 	}
 
 	auth.Expiry = auth.Expiry + time.Now().Unix()
-
 	return auth.AccessToken, DB.CryptSet("tokens", s, auth)
 }

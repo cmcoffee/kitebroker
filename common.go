@@ -64,6 +64,14 @@ func init() {
 	}()
 }
 
+// Move old key name to new keyname.
+func migrateConfig(section, old_key, new_key string) {
+	if result := Config.MGet(section, old_key); result[0] != NONE {
+		Config.Set(section, new_key, result[0:]...)
+		Config.Unset(section, old_key)
+	}
+}
+
 // Displays loader. "[>>>] Working, Please wait."
 func ShowLoader() {
 	atomic.CompareAndSwapInt32(&show_loader, 0, 1)

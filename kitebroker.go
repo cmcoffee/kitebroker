@@ -19,7 +19,7 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.1.2b"
+	VERSION       = "0.1.3"
 	KWAPI_VERSION = "7"
 )
 
@@ -157,7 +157,14 @@ func main() {
 
 	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute*5), "Timeout for HTTP/S requests to kiteworks server.")
 
+	debug := flags.Bool("debug", false, NONE)
+
 	flags.Parse(os.Args[1:])
+
+	// Enable debug logging if --debug flag given.
+	if *debug {
+		logger.DebugLogging = true
+	}
 
 	// Read configuration file.
 	errChk(Config.File(*config_file))
@@ -170,6 +177,10 @@ func main() {
 	default:
 		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
 	}
+
+	// Handle changes in config file key names.
+	migrateConfig("rec_file:opts", "download_email_body", "download_seperate_email_body")
+	migrateConfig("configuration", "kw_folder", "kw_folder_filter")
 
 	// Prepare our local base path.
 	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
@@ -244,6 +255,12 @@ func main() {
 	if err == nil {
 		first_token_set = true
 	} else {
+		if KiteError(err, ERR_INVALID_GRANT) {
+			if auth_flow != SIGNATURE_AUTH {
+				logger.Err(err)
+			}
+			DB.Unset("tokens", Config.Get("configuration", "account"))
+		}
 		if user.RetryToken(err) {
 			_, err := user.MyUser()
 			if err == nil {

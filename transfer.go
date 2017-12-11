@@ -277,7 +277,7 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		return
 	}
 
-	logger.Log("Downloading %s(%s).\n", nfo.Name, showSize(nfo.Size))
+	logger.Log("Downloading %s(%s).\n", strings.TrimPrefix(fname, Config.Get("configuration", "local_path")), showSize(nfo.Size))
 
 	req, err := s.NewRequest("GET", fmt.Sprintf("/rest/files/%d/content", nfo.ID))
 	if err != nil {
@@ -353,7 +353,6 @@ renameFile:
 	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("Download completed succesfully.")
 	ShowLoader()
 
 	// Close the file stream.
@@ -376,6 +375,9 @@ renameFile:
 
 	// Set modified and access times on file.
 	err = Chtimes(fname, time.Now(), record.ModTime)
+	if err == nil {
+		logger.Log("%s: Download complete.", nfo.Name)
+	}
 	return
 }
 
@@ -662,7 +664,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("Upload completed succesfully.")
+	logger.Log("%s: Upload complete.", local_file)
 	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
 		logger.Log("Remvoing local file %s.", local_file)
 		err = Remove(local_file)

@@ -1,5 +1,10 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (V0.1.3 - 12-07-2017)
+    * File downloads will now provide parent folder information for file.
+    * Expired tokens will now require reauthentication when set to auth = password.
+    * Fixed issue with bad token causing fatal exit, now will retry/reprompt for credentials.
+
 ## (v0.1.2 - 12-04-2017)
     * Updated text within config file.
     * Simplified signature setup (act as single account.)

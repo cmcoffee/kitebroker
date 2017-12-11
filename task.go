@@ -39,6 +39,7 @@ func TaskHandler() {
 			}
 		}
 
+		// target users will be email subdirectories found under local_path.
 		if task == "send_file" || task == "dli_export" {
 			str := users[:0]
 			for _, v := range users {
@@ -97,9 +98,6 @@ func TaskHandler() {
 		}
 		HideLoader()
 		if err != nil {
-			if err == NoValidToken {
-				logger.Fatal(err)
-			}
 			logger.Err(err)
 		}
 		logger.Log("\n")
@@ -293,15 +291,13 @@ func (s Session) UploadFolder() (err error) {
 	show_no_files_found := true
 
 	// get folders which we have been told to handle on kw.
-	sync_folders := Config.MGet("configuration", "kw_folder")
+	sync_folders := Config.MGet("configuration", "kw_folder_filter")
 	if len(sync_folders) == 1 && sync_folders[0] == NONE {
-		start_path := Config.Get("configuration", "local_path")
-
-		if err = MkDir(start_path); err != nil {
+		if err = MkDir(local_path); err != nil {
 			return err
 		}
 
-		rdir, err := ioutil.ReadDir(start_path)
+		rdir, err := ioutil.ReadDir(local_path)
 		if err != nil {
 			return err
 		}
@@ -318,13 +314,20 @@ func (s Session) UploadFolder() (err error) {
 	sync_folders = cleanSlice(sync_folders)
 
 	for _, parent_folder := range sync_folders {
+		logger.Log("Processing: %s", parent_folder)
+		_, err := Stat(parent_folder)
+		if err != nil {
+			logger.Err(err)
+			continue
+		}
+
 		folders, files := scanPath(parent_folder)
 
 		if strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders")) == "yes" {
 			for _, folder := range folders {
 				_, err = s.getKWDestination(folder, false)
 				if err != nil {
-					logger.Err(err)
+					logger.Err("%s: Scan failure, %s.", folder, err)
 					continue
 				}
 			}
@@ -337,7 +340,6 @@ func (s Session) UploadFolder() (err error) {
 		} else if found {
 			show_no_files_found = false
 		}
-
 	}
 
 	if show_no_files_found {
@@ -382,7 +384,7 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		if _, err := s.Upload(file, fid); err != nil {
 			if err != ErrUploaded && err != ErrNotReady {
 				files_uploaded = true
-				logger.Err(err)
+				logger.Err("%s: %s.", file, err)
 			}
 		} else {
 			files_uploaded = true
@@ -427,23 +429,41 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		}
 	}
 
+	var no_search bool
+
 	if fid == -1 {
-		fid, err = s.MyBaseDirID()
-		if err != nil {
-			return -1, err
+		// Search for folder initially.
+		no_search = true
+		fid, _ = s.FindFolder(split_path[0])
+
+		// If we didn't find it, we're going to make a new folder.
+		if fid == -1 {
+			no_search = false
+			fid, err = s.MyBaseDirID()
+			if err != nil {
+				return -1, err
+			}
 		}
 	}
 
 	for i := split_len - missing; i < split_len; i++ {
+		var cid int
+
 		if i == 0 && split_path[i] == string(s) {
 			continue
 		}
 		missing_folder := split_path[i]
 		new_path := strings.Join(split_path[0:i+1], SLASH)
 
-		cid, err := s.FindChildFolder(fid, missing_folder)
+		if !no_search {
+			cid, err = s.FindChildFolder(fid, missing_folder)
+		} else {
+			cid = fid
+			no_search = false
+		}
+
 		if cid == -1 {
-			logger.Log("Creating new kiteworks folder: [%s]", strings.TrimPrefix(new_path, string(s)+SLASH))
+			logger.Log("Creating kiteworks folder: %s", strings.TrimPrefix(new_path, string(s)+SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
 			if err != nil {
 				return -1, err
@@ -466,14 +486,16 @@ func (s Session) DownloadFolder() (err error) {
 	var files_found bool
 
 	queue := make(chan (interface{}), 0)
+	defer func() { queue <- exit{} }()
 
+	// Downloader background function.
 	go func() {
 		var halt bool
 		for e := range queue {
 			switch msg := e.(type) {
 			case download_task:
 				if err := s.Download(msg.kw_file, msg.path); err != nil && err != ErrDownloaded {
-					logger.Err(err)
+					logger.Err("%s: %s.", fmt.Sprintf("%s/%s", msg.path, msg.kw_file.Name), err)
 					files_found = true
 				} else if err == nil {
 					files_found = true
@@ -487,8 +509,9 @@ func (s Session) DownloadFolder() (err error) {
 		}
 	}()
 
+	// Establish which folders we will be downloading.
 	sync_map := make(map[string]int)
-	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder"))
+	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder_filter"))
 
 	if len(sync_folders) == 0 {
 		kw_folders, err := s.GetFolders()
@@ -504,6 +527,7 @@ func (s Session) DownloadFolder() (err error) {
 	var folder_id int
 
 	for _, kw_folder := range sync_folders {
+		logger.Log("Processing: %s", kw_folder)
 
 		if fid, found := sync_map[kw_folder]; found {
 			folder_id = fid
@@ -522,8 +546,6 @@ func (s Session) DownloadFolder() (err error) {
 			return err
 		}
 	}
-
-	queue <- exit{}
 
 	if !files_found {
 		logger.Log("No new files found.")
@@ -552,7 +574,7 @@ func (s Session) mapFolders(path string, folder_id int, queue chan interface{}) 
 
 	folders, err := s.ListFolders(folder_id)
 	if err != nil {
-		logger.Err(err)
+		return err
 	}
 
 	for _, folder := range folders.Data {
@@ -560,7 +582,7 @@ func (s Session) mapFolders(path string, folder_id int, queue chan interface{}) 
 		go func(folder_name string, folder_id int, queue chan interface{}) {
 			err := s.mapFolders(folder_name, folder_id, queue)
 			if err != nil {
-				logger.Err(err)
+				logger.Err("%s: Scan fail, %s.", folder_name, err)
 			}
 			vg.Done()
 		}(path+SLASH+folder.Name, folder.ID, queue)
