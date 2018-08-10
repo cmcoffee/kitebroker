@@ -360,15 +360,15 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		}
 		if found && checkFile(file, record) && record.Flag == DONE {
 			continue
-		} else {
-			if fstat, err := Stat(file); err == nil {
-				if fstat.Size() == 0 {
-					continue
-				}
-			} else {
-				return true, err
-			}
-		}
+		} //else {
+			//if fstat, err := Stat(file); err != nil {
+				//if fstat.Size() == 0 {
+				//	continue
+				//}
+			//} else {
+			//	return true, err
+			//}
+		//}
 
 		path := splitLast(file, SLASH)[0]
 

@@ -454,11 +454,6 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		return -1, err
 	}
 
-	// Skip 0 byte files.
-	if fstat.Size() == 0 {
-		return -1, ErrZeroByte
-	}
-
 	var record *UploadRecord
 	_, err = DB.Get("uploads", local_file, &record)
 	if err != nil {
@@ -547,7 +542,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		}
 	}()
 
-	for record.Transfered < record.TotalSize {
+	for record.Transfered < record.TotalSize || record.TotalSize == 0 {
 		if !checkFile(local_file, record) {
 			s.DeleteUpload(record.ID)
 			logger.Err("%s: Detected change in file while uploading.")
@@ -642,6 +637,9 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		record.Transfered = record.Transfered + ChunkSize
 		if err := DB.Set("uploads", local_file, &record); err != nil {
 			return -1, err
+		}
+		if record.TotalSize == 0 {
+			break
 		}
 	}
 

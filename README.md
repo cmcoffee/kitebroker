@@ -1,5 +1,8 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.1.4 - 09-10-1028)
+    * Added support for 0byte files.
+
 ## (V0.1.3 - 12-10-2017)
     * File downloads will now provide parent folder information for file.
     * Expired tokens will now require reauthentication when set to auth = password.
