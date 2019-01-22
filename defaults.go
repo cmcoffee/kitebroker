@@ -9,6 +9,8 @@ server =
 account = 
 auth_mode = signature
 redirect_uri = https://kitebroker
+
+# Proxy should be specified in URI format. (ie..https://proxy.com:3128)
 proxy =
 
 # Auto-Generated Config ####################################
@@ -37,9 +39,9 @@ kw_folder_filter =
 upload_chunk_size = 68157
 
 # Logging settings
-log_path = log
-log_size = 10240
-log_rotate = 5
+log_path = log  # Logging path (Default is ./log)
+log_size = 10	# Log size in Megabytes.
+log_rotate = 5  # How many log files to keep.
 
 # DB Cleanup interval.
 cleanup_time_secs = 86400
@@ -89,5 +91,18 @@ start_date = 2017-Jan-01
 export_activities = yes
 export_emails = yes
 export_files = no
+
+### Custom Task Area ###
+
+[csv_onboarding:opts]
+csv_file = RemoteClients.csv # FolderName,Description,FileExpiry,User1,User2
+primary_folder = Remote Clients
+sub_folders = Returns,Reports,Requested Documents
+manager_newuser_profile_id = 1
+ext_newuser_profile_id = 4
+manager_folder_role = manager
+ext_folder_role = manager
+send_notifications = false
+subscribe_file_notifications = true
 `)
 }

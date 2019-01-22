@@ -4,9 +4,8 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-cfg"
 	"github.com/cmcoffee/go-eflag"
-	"github.com/cmcoffee/go-fin"
 	"github.com/cmcoffee/go-kvlite"
-	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-nfo"
 	"net"
 	"os"
 	"path/filepath"
@@ -19,8 +18,8 @@ import (
 const (
 	DEFAULT_CONF  = "kitebroker.cfg"
 	NAME          = "kitebroker"
-	VERSION       = "0.1.4"
-	KWAPI_VERSION = "7"
+	VERSION       = "0.1.6"
+	KWAPI_VERSION = "11"
 )
 
 var (
@@ -137,13 +136,13 @@ func loadAPIConfig(config_filename string) {
 }
 
 func main() {
-	fin.SetErrorLogger(logger.Err)
-	defer fin.Exit(0)
-	logger.Notify(fin.Collector)
+	defer nfo.Exit(0)
+	nfo.HideTS()
 
 	var err error
 
-	logger.Put("[ Accellion %s %s ]\n\n", NAME, VERSION)
+	//nfo.HideTS()
+	nfo.Print("[ Accellion %s %s ]\n\n", NAME, VERSION)
 
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ExitOnError)
@@ -163,7 +162,7 @@ func main() {
 
 	// Enable debug logging if --debug flag given.
 	if *debug {
-		logger.DebugLogging = true
+		nfo.SetLoggers(nfo.Std|nfo.DEBUG)
 	}
 
 	// Read configuration file.
@@ -205,45 +204,45 @@ func main() {
 
 	log_rotate, err := strconv.Atoi(Config.Get("configuration", "log_rotate"))
 	if err != nil {
-		logger.Warn("Could not parse log_rotate, defaulting to log_rotate of 5.")
+		nfo.Warn("Could not parse log_rotate, defaulting to log_rotate of 5.")
 		log_rotate = 10
 	}
 
 	log_size, err := strconv.Atoi(Config.Get("configuration", "log_size"))
 	if err != nil {
-		logger.Warn("Could not parse log_size, defaulting to log_size of 10240 kilobytes.")
-		log_size = 10240
+		nfo.Warn("Could not parse log_size, defaulting to log_size of 10 Megabytes.")
+		log_size = 10
 	}
 
 	_, b := filepath.Split(*config_file)
 	basename := strings.Split(b, ".")[0]
 
-	err = logger.File(logger.ALL, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), int64(log_size)*1024, log_rotate)
+	err = nfo.File(nfo.Std, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), uint(log_size), uint(log_rotate))
 	if err != nil {
-		logger.Fatal(err)
+		nfo.Fatal(err)
 	}
 
 	// Open datastore
 	open_database(basename + ".db")
 
-	fin.Defer(DB.Close)
+	nfo.Defer(DB.Close)
 
 	// Load API Settings
 	loadAPIConfig(*config_file)
 
 	// Reset credentials, if requested.
 	if *reset {
-		logger.Put("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n\n")
+		nfo.Print("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n\n")
 		if confirm := getConfirm("Are you sure you want do this"); confirm {
 			errChk(DB.Truncate("tokens"))
 			errChk(DB.Unset("kitebroker", "s"))
 			Config.Unset("configuration", "account")
 			Config.Save("configuration")
-			logger.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
-			fin.Exit(0)
+			nfo.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
+			nfo.Exit(0)
 		}
-		logger.Put("Aborting, Access tokens not cleared.\n")
-		fin.Exit(0)
+		nfo.Print("Aborting, Access tokens not cleared.\n")
+		nfo.Exit(0)
 	}
 
 	ShowLoader()
@@ -257,7 +256,7 @@ func main() {
 	} else {
 		if KiteError(err, ERR_INVALID_GRANT) {
 			if auth_flow != SIGNATURE_AUTH {
-				logger.Err(err)
+				nfo.Err(err)
 			}
 			DB.Unset("tokens", Config.Get("configuration", "account"))
 		}
@@ -270,7 +269,7 @@ func main() {
 	}
 
 	if !first_token_set {
-		logger.Fatal(err)
+		nfo.Fatal(err)
 	}
 
 	HideLoader()
@@ -286,14 +285,14 @@ func main() {
 		continuous = true
 		t, err := strconv.Atoi(Config.Get("configuration", "continuous_rate_secs"))
 		if err != nil {
-			logger.Warn("Could not parse continous_rate, defaulting to 30 seconds.")
+			nfo.Warn("Could not parse continous_rate, defaulting to 30 seconds.")
 			t = 30
 		}
 
 		ival = time.Duration(t) * time.Second
 	}
 
-	fin.Defer(func() { logger.Log("Application exit requested.") })
+	nfo.Defer(func() { nfo.Log("Application exit requested.  ") })
 
 	// Begin scan loop.
 	for {
@@ -303,7 +302,7 @@ func main() {
 		if continuous {
 			for time.Now().Sub(start) < ival {
 				ctime = time.Duration(ival - time.Now().Round(time.Second).Sub(start))
-				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.String()))
+				nfo.Flash("* Rescan will occur in %s", ctime.String())
 				if ctime > time.Second {
 					time.Sleep(time.Duration(time.Second))
 				} else {
@@ -311,12 +310,12 @@ func main() {
 					break
 				}
 			}
-			logger.Log("Restarting scan cycle ... (%s has elapsed since last run.)\n", time.Now().Round(time.Second).Sub(start).String())
-			logger.Log("\n")
+			nfo.Log("Restarting scan cycle ... (%s has elapsed since last run.)\n", time.Now().Round(time.Second).Sub(start).String())
+			nfo.Log("\n")
 			continue
 		} else {
 			if atomic.LoadInt32(&cleanup_working) == 1 {
-				logger.Log("Waiting on cleanup process to complete...")
+				nfo.Log("Waiting on cleanup process to complete...")
 				ShowLoader()
 				for {
 					time.Sleep(100 * time.Millisecond)
@@ -326,7 +325,7 @@ func main() {
 				}
 				HideLoader()
 			}
-			logger.Log("Non-continuous total task time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
+			nfo.Log("Non-continuous total task time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
 			break
 		}
 	}

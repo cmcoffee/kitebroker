@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-nfo"
 	"os"
 	"strconv"
 	"strings"
@@ -99,7 +99,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 	tm.Offset(offset)
 
 	HideLoader()
-	logger.Log("[%v]: Downloading %s(%s).\n", j, target.Filename, showSize(total_size))
+	nfo.Log("[%v]: Downloading %s(%s).\n", j, target.Filename, showSize(total_size))
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
 
@@ -143,7 +143,7 @@ func (j Session) DLIDownload(target dli_export) (err error) {
 renameFile:
 	tm.ShowTransfer()
 	fmt.Println(NONE)
-	logger.Log("[%v]: Download completed succesfully.", j)
+	nfo.Log("[%v]: Download completed succesfully.", j)
 	ShowLoader()
 
 	// Close the file stream.
@@ -335,12 +335,12 @@ func (j Session) DLIReport() (err error) {
 			case export_emails:
 				t_name = "emails"
 			}
-			logger.Log("[%v]: Resuming previous %s export.", j, t_name)
+			nfo.Log("[%v]: Resuming previous %s export.", j, t_name)
 			err := s.Call("GET", fmt.Sprintf("/rest/dli/exports/%s", lastUpdate[n].Export_id), &dli_resume, Query{"id": lastUpdate[n].Export_id})
 			errors_found := false
 			for {
 				if err != nil {
-					logger.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
+					nfo.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
 					errors_found = true
 					break
 				}
@@ -350,7 +350,7 @@ func (j Session) DLIReport() (err error) {
 					err = nil
 					continue
 				} else if err != nil {
-					logger.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
+					nfo.Err("[%v]: Unable to resume previous %s export. %s", j, t_name, err.Error())
 					errors_found = true
 					break
 				} else {
@@ -378,7 +378,7 @@ func (j Session) DLIReport() (err error) {
 			tmp.Completed = true
 			lastUpdate[n] = tmp
 			if err := DB.Set("dli_export", j, &lastUpdate); err != nil {
-				logger.Err(err)
+				nfo.Err(err)
 			}
 			return err
 		}
@@ -386,11 +386,11 @@ func (j Session) DLIReport() (err error) {
 		// From report, process all exports.
 		for k, v := range x.Exports {
 			if strings.Contains(v.Status, "nodata") {
-				logger.Log("[%v]: No new %s to export.", j, k)
+				nfo.Log("[%v]: No new %s to export.", j, k)
 				s.DeleteExport(x.Exports[k].ID)
 				continue
 			} else {
-				logger.Log("[%v]: Processing new %s export.", j, k)
+				nfo.Log("[%v]: Processing new %s export.", j, k)
 				tmp := lastUpdate[n]
 				tmp.Completed = false
 				tmp.Export_id = x.Exports[k].ID
@@ -424,7 +424,7 @@ func (j Session) DLIReport() (err error) {
 						if err == nil {
 							return db_err
 						} else {
-							logger.Err(db_err)
+							nfo.Err(db_err)
 							return err
 						}
 					}

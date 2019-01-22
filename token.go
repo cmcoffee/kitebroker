@@ -7,7 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-nfo"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
@@ -40,7 +40,7 @@ func LoadCredentials() (username, password string, err error) {
 		return username, password, NoValidToken
 	}
 
-	logger.Put("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
+	nfo.Print("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
 
 	username = get_input("Account: ")
 
@@ -65,7 +65,6 @@ var NoValidToken = fmt.Errorf("No valid authentication tokens available.")
 
 // Call to appliance for Bearer token.
 func (s Session) GetToken() (access_token string, err error) {
-
 	var auth *KiteAuth
 
 	found, err := DB.Get("tokens", s, &auth)

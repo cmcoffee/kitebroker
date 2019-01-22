@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-nfo"
 	"io"
 	"mime/multipart"
 	"os"
@@ -45,7 +45,7 @@ func (s Session) getChunkInfo(sz int64) (chunk_size int64, total_chunks int, las
 
 	chunk_sz, err := strconv.Atoi(Config.Get("configuration", "upload_chunk_size"))
 	if err != nil {
-		logger.Warn("Could not parse upload_chunk_size, defaulting to 32768.")
+		nfo.Warn("Could not parse upload_chunk_size, defaulting to 32768.")
 		chunk_sz = 32768
 	}
 	chunk_size = int64(chunk_sz * 1000)
@@ -155,8 +155,8 @@ type TMonitor struct {
 	offset     int64
 	rate       string
 	start_time time.Time
-	done_time  time.Time
 	last_shown time.Time
+	complete   bool
 }
 
 func (t *TMonitor) RecordTransfer(current_sz int) {
@@ -168,9 +168,14 @@ func (t *TMonitor) ShowTransfer() {
 	transfered := atomic.LoadInt64(&t.transfered)
 
 	if t.total_size > -1 {
-		logger.Put(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
+		if transfered < t.total_size {
+			nfo.Flash(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
+		} else if !t.complete {
+			nfo.Log(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
+			t.complete = true
+		}
 	} else {
-		logger.Put(fmt.Sprintf("(%s) %s (%s)", t.name, t.showRate(), showSize(transfered)))
+		nfo.Flash(fmt.Sprintf("(%s) %s (%s)", t.name, t.showRate(), showSize(transfered)))
 	}
 	t.last_shown = time.Now()
 }
@@ -215,26 +220,39 @@ func Transfer(reader io.Reader, writer io.Writer, tm *TMonitor) (err error) {
 }
 
 // Downloads a file to a specific path
-func (s Session) Download(nfo KiteData, local_dest string) (err error) {
+func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 	var record FileRecord
-	_, err = DB.Get("downloads", nfo.ID, &record)
+	_, err = DB.Get("downloads", kwdl.ID, &record)
 	if err != nil {
 		return err
 	}
 
-	mtime, err := read_kw_time(nfo.Modified)
+	skip_empty_files := func() bool {
+		t := strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders"))
+		if t == "yes" || t == "true" {
+			return true
+		} else {
+			return false
+		}
+	}()
+
+	if kwdl.Size == 0 && skip_empty_files {
+		return ErrDownloaded
+	}
+
+	mtime, err := read_kw_time(kwdl.Modified)
 	if err != nil {
 		return err
 	}
 
-	if record.ModTime.IsZero() || time.Since(mtime) > time.Since(record.ModTime) || record.TotalSize != nfo.Size {
-		DB.Unset("downloads", nfo.ID)
+	if record.ModTime.IsZero() || time.Since(mtime) > time.Since(record.ModTime) || record.TotalSize != kwdl.Size {
+		DB.Unset("downloads", kwdl.ID)
 		record.Flag = 0
 		record.ModTime = mtime
 		record.User = s
-		record.TotalSize = nfo.Size
-		record.ID = nfo.ID
-		DB.Set("downloads", nfo.ID, &record)
+		record.TotalSize = kwdl.Size
+		record.ID = kwdl.ID
+		DB.Set("downloads", kwdl.ID, &record)
 	}
 
 	if record.Flag&DONE == DONE {
@@ -251,24 +269,29 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		}
 	}
 
-	fname := fmt.Sprintf("%s/%s", local_dest, nfo.Name)
+	fname := fmt.Sprintf("%s/%s", local_dest, kwdl.Name)
 
 	fstat, err := Stat(fname)
 	if err == nil && !os.IsNotExist(err) {
-		if fstat.Size() == nfo.Size {
+		if fstat.Size() == kwdl.Size {
 			md5sum, _ := md5Sum(fname)
-			if string(md5sum) == nfo.Fingerprint {
+			if string(md5sum) == kwdl.Fingerprint {
 				record.Flag = DONE
-				DB.Set("downloads", nfo.ID, record)
+				DB.Set("downloads", kwdl.ID, record)
 				return ErrDownloaded
 			}
 		}
 	}
 
 	var offset int64
+	var new_file bool
 
 	fstat, err = Stat(fname + ".incomplete")
-	if err == nil || !os.IsNotExist(err) {
+	if err != nil && os.IsNotExist(err) {
+		new_file = true
+	}
+
+	if err == nil || !new_file {
 		offset = fstat.Size()
 	}
 
@@ -277,10 +300,22 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		return
 	}
 
-	logger.Log("Downloading %s(%s).\n", strings.TrimPrefix(fname, Config.Get("configuration", "local_path")), showSize(nfo.Size))
+	nfo.Log("Downloading %s(%s).\n", strings.TrimPrefix(fname, Config.Get("configuration", "local_path")), showSize(kwdl.Size))
 
-	req, err := s.NewRequest("GET", fmt.Sprintf("/rest/files/%d/content", nfo.ID))
+	var request_path string
+
+	if kwdl.MailID > 0 {
+		request_path = fmt.Sprintf("/rest/mail/%d/attachments/%d/content", kwdl.MailID, kwdl.ID)
+	} else {
+		request_path = fmt.Sprintf("/rest/files/%d/content", kwdl.ID)
+	}
+
+
+	req, err := s.NewRequest("GET", request_path)
 	if err != nil {
+		if new_file {
+			os.Remove(FullPath(fname+".incomplete"))
+		}
 		return
 	}
 
@@ -292,17 +327,20 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 	client := s.NewClient()
 	resp, err := client.Do(req)
 	if err != nil && resp.StatusCode != 200 {
+		if new_file {
+			os.Remove(FullPath(fname+".incomplete"))
+		}
 		return err
 	}
 	defer resp.Body.Close()
 
-	tm := NewTMonitor("download", nfo.Size)
+	tm := NewTMonitor("download", kwdl.Size)
 	tm.Offset(offset)
 
 	HideLoader()
 
 	if snoop {
-		logger.Put("--> ACTION: \"GET\" PATH: \"%v\"\n", req.URL.Path)
+		nfo.Flash("--> ACTION: \"GET\" PATH: \"%v\"\n", req.URL.Path)
 	}
 
 	show_transfer := uint32(1)
@@ -342,17 +380,16 @@ func (s Session) Download(nfo KiteData, local_dest string) (err error) {
 		return err
 	}
 
-	record.ModTime, err = read_kw_time(nfo.Modified)
+	record.ModTime, err = read_kw_time(kwdl.Modified)
 	if err != nil {
 		return
 	}
 
-	DB.Set("downloads", nfo.ID, record)
+	DB.Set("downloads", kwdl.ID, record)
 
 renameFile:
 	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
-	fmt.Println(NONE)
 	ShowLoader()
 
 	// Close the file stream.
@@ -365,18 +402,18 @@ renameFile:
 
 	record.Flag |= DONE
 
-	DB.Set("downloads", nfo.ID, record)
+	DB.Set("downloads", kwdl.ID, record)
 
 	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
-		if err := s.EraseFile(nfo.ID); err != nil {
-			logger.Err(err)
+		if err := s.EraseFile(kwdl.ID); err != nil {
+			nfo.Err(err)
 		}
 	}
 
 	// Set modified and access times on file.
 	err = Chtimes(fname, time.Now(), record.ModTime)
 	if err == nil {
-		logger.Log("%s: Download complete.", nfo.Name)
+		nfo.Log("%s: Download complete.", fname)
 	}
 	return
 }
@@ -530,7 +567,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 
 	HideLoader()
 
-	logger.Log("Uploading %s(%s).", local_file, showSize(record.TotalSize))
+	nfo.Log("Uploading %s(%s).", local_file, showSize(record.TotalSize))
 
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
@@ -545,7 +582,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	for record.Transfered < record.TotalSize || record.TotalSize == 0 {
 		if !checkFile(local_file, record) {
 			s.DeleteUpload(record.ID)
-			logger.Err("%s: Detected change in file while uploading.")
+			nfo.Err("%s: Detected change in file while uploading.")
 			return -1, ErrNotReady
 		}
 		w_buff.Reset()
@@ -562,7 +599,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		}
 
 		if snoop {
-			logger.Put("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks+1, TotalChunks)
+			nfo.Flash("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks+1, TotalChunks)
 		}
 
 		w := multipart.NewWriter(w_buff)
@@ -646,7 +683,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	if resp_data == nil {
 		s.DeleteUpload(record.ID)
 		DB.Unset("uploads", local_file)
-		logger.Err("Unexpected result from server, rolling back upload.")
+		nfo.Err("Unexpected result from server, rolling back upload.")
 		return -1, ErrNotReady
 	}
 
@@ -661,10 +698,9 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	}
 	atomic.StoreUint32(&show_transfer, 0)
 	tm.ShowTransfer()
-	fmt.Println(NONE)
-	logger.Log("%s: Upload complete.", local_file)
+	nfo.Log("%s: Upload complete.", local_file)
 	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
-		logger.Log("Remvoing local file %s.", local_file)
+		nfo.Log("Remvoing local file %s.", local_file)
 		err = Remove(local_file)
 		if err == nil {
 			DB.Unset("uploads", local_file)

@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"github.com/cmcoffee/go-logger"
-	"path/filepath"
+	"github.com/cmcoffee/go-nfo"
 	"strconv"
 	"strings"
 	"time"
@@ -87,20 +85,6 @@ func (s Session) SendFile() (err error) {
 		dest := "/sent/" + rcpt + SLASH + folderDate(*mail.Date) + SLASH + r_path
 		r_path = splitLast(r_path, SLASH)[0]
 
-		meta := KBMeta{
-			Path: filepath.ToSlash(SLASH + r_path),
-		}
-
-		metadata, err := json.Marshal(meta)
-		if err != nil {
-			return err
-		}
-
-		err = s.Call("POST", fmt.Sprintf("/rest/files/%d/comments", id), nil, PostJSON{"contents": "kitebroker_meta:" + string(metadata)})
-		if err != nil {
-			logger.Err(err)
-		}
-
 		mail.FileIDs = append(mail.FileIDs, id)
 		mail.SentFiles = append(mail.SentFiles, file)
 		mail.Files[i] = NONE
@@ -127,7 +111,7 @@ func (s Session) SendFile() (err error) {
 	}
 
 	if len(id_map) == 0 {
-		logger.Log("No new files to send.")
+		nfo.Log("No new files to send.")
 		return nil
 	}
 
@@ -162,7 +146,7 @@ func (s Session) SendFile() (err error) {
 
 	err = Rename("sent/"+rcpt+SLASH+folderDate(*mail.Date), fmt.Sprintf("sent/%s/%d-%s", rcpt, Entity.ID, folderDate(*mail.Date)))
 	if err != nil {
-		logger.Err(err)
+		nfo.Err(err)
 	}
 
 	var total_size int64
@@ -177,7 +161,7 @@ func (s Session) SendFile() (err error) {
 		DB.Unset("uploads", f)
 	}
 
-	logger.Log("Sent Files: %d / Total Size: %s", len(mail.FileIDs), showSize(total_size))
+	nfo.Log("Sent Files: %d / Total Size: %s", len(mail.FileIDs), showSize(total_size))
 
 	err = DB.Unset("sendfile", rcpt)
 
@@ -203,6 +187,7 @@ func (s Session) RecvFile() (err error) {
 		FileID         int
 		OriginalFileID int
 		Flag           int
+		Modified       string
 	}
 
 	type MailEnt struct {
@@ -273,13 +258,13 @@ mail_loop:
 
 		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", id), &r, Query{"mode": "compact", "with": "(variables, recipients)"})
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 
 		record.Date, err = read_kw_time(r.Date)
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 
@@ -310,8 +295,8 @@ mail_loop:
 			vars["FILE_COUNT"] = "0"
 		}
 
-		logger.Log(NONE)
-		logger.Log("[%d] Sender:%s, TS:%s, FILES:%s", id, vars["SENDER_EMAIL"], r.Date, vars["FILE_COUNT"])
+		nfo.Log(NONE)
+		nfo.Log("[%d] Sender: %s, TS: %s, FILES: %s", id, vars["SENDER_EMAIL"], r.Date, vars["FILE_COUNT"])
 		MkPath(vars["SENDER_EMAIL"])
 		mail_cnt++
 
@@ -320,7 +305,7 @@ mail_loop:
 			var email string
 			user_data, err := s.UserInfo(e.UserID)
 			if err != nil {
-				logger.Err(err)
+				nfo.Err(err)
 				email = fmt.Sprintf("Unknown User ID: %d", strconv.Itoa(e.UserID))
 			} else {
 				email = user_data.Email
@@ -338,6 +323,7 @@ mail_loop:
 				Withdrawn    bool `json:"withdrawn"`
 				OriginalFile struct {
 					ID int `json:"id"`
+					Modified string `json:"modified"`
 				} `json:"originalFile"`
 				File struct {
 					Name        string `json:"name"`
@@ -348,13 +334,14 @@ mail_loop:
 					DLPStatus   string `json:"dlpStatus"`
 					AVStatus    string `json:"avStatus"`
 					Deleted     bool   `json:"deleted"`
+					Modified    string `json:"modified"`
 				} `json:"frozenFile"`
 			} `json:"data"`
 		}
 
 		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d/attachments", id), &a, Query{"mode": "full_no_links", "orderBy": "originalFileId:asc", "with": "(frozenFile,originalFile)"})
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 
@@ -364,25 +351,26 @@ mail_loop:
 				Filename:    e.File.Name,
 				Filesize:    e.File.Size,
 				Fingerprint: e.File.Fingerprint,
+				Modified: 	 e.OriginalFile.Modified,
 			}
 
 			// Files not ready for download.
 			if e.File.DLPStatus == "scanning" || e.File.AVStatus == "scanning" {
-				logger.Notice("[%d] Not yet ready, skipping for now..", id)
+				nfo.Notice("[%d] Not yet ready, skipping for now..", id)
 				continue mail_loop
 			}
 
 			// Provide log information if file is unable to be downloaded.
 			if e.Withdrawn {
-				logger.Log("[%d] %s(%s) was withdrawn by sender.", id, e.File.Name, showSize(e.File.Size))
+				nfo.Log("[%d] %s(%s) was withdrawn by sender.", id, e.File.Name, showSize(e.File.Size))
 				file_attach.Flag = file_withdrawn
 				file_attach.FileID = 0
 			} else if e.File.Blocked == "disallowed" {
-				logger.Log("[%d] %s(%s) was quarantined by kiteworks.", id, e.File.Name, showSize(e.File.Size))
+				nfo.Log("[%d] %s(%s) was quarantined by kiteworks.", id, e.File.Name, showSize(e.File.Size))
 				file_attach.Flag = file_quarantined
 				file_attach.FileID = 0
 			} else if e.File.Deleted {
-				logger.Log("[%d] %s(%s) was deleted from kiteworks.", id, e.File.Name, showSize(e.File.Size))
+				nfo.Log("[%d] %s(%s) was deleted from kiteworks.", id, e.File.Name, showSize(e.File.Size))
 				file_attach.Flag = file_deleted
 				file_attach.FileID = 0
 			} else {
@@ -400,55 +388,25 @@ mail_loop:
 			if fid == 0 {
 				continue
 			}
-			finfo, err := s.FileInfo(fid)
-			if err != nil {
-				if err != nil {
-					if IsKiteError(err) {
-						logger.Log("[%d] %s(%s) cannot be downloaded. %s.", id, record.File[i].Filename, showSize(record.File[i].Filesize), err.Error())
-						if KiteError(err, ERR_ACCESS_USER) {
-							record.File[i].Flag |= file_access_denied
-						}
-						continue
-					} else {
-						logger.Err(err)
-						continue mail_loop
-					}
-				}
+
+			finfo := KiteData {
+					ID: f.FileID,
+					Size: f.Filesize,
+					MailID: id,
+					Name: f.Filename,
+					Fingerprint: f.Fingerprint,
+					Modified: f.Modified,
 			}
 
 			DB.Unset("downloads", fid)
 
-			var Comment struct {
-				Data []struct {
-					Content string `json:"contents"`
-				} `json:"data"`
-			}
-
-			err = s.Call("GET", fmt.Sprintf("/rest/files/%d/comments", f.OriginalFileID), &Comment, Query{"contents:contains": "kitebroker_meta:", "orderBy": "created:asc", "limit": 1, "mode": "compact"})
-			if err != nil {
-				return err
-			}
-
-			var metadata KBMeta
-
-			if len(Comment.Data) > 0 {
-				if len(Comment.Data[0].Content) > 0 {
-					j := strings.TrimPrefix(Comment.Data[0].Content, "kitebroker_meta:")
-					err = json.Unmarshal([]byte(j), &metadata)
-					if err != nil {
-						return err
-					}
-					metadata.Path = filepath.Clean(metadata.Path)
-				}
-			}
-
-			err = s.Download(finfo, folder+metadata.Path)
+			err = s.Download(finfo, folder)
 			if err != nil {
 				if err == ErrDownloaded {
-					logger.Log("[%d] %s(%s) was previously downloaded already.", id, record.File[i].Filename, showSize(record.File[i].Filesize))
+					nfo.Log("[%d] %s(%s) was previously downloaded already.", id, record.File[i].Filename, showSize(record.File[i].Filesize))
 					record.File[i].Flag |= file_downloaded
 				} else {
-					logger.Err(err)
+					nfo.Err(err)
 					continue mail_loop
 				}
 			} else {
@@ -462,7 +420,7 @@ mail_loop:
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_mail.txt", folder))
 			if err != nil {
-				logger.Err("[%d] %s", id, err.Error())
+				nfo.Err("[%d] %s", id, err.Error())
 			} else {
 
 				_, err = fmt.Fprint(f, "from: ", vars["SENDER_EMAIL"],
@@ -472,7 +430,7 @@ mail_loop:
 					"\nsubject: ", vars["SUBJECT"],
 					"\n\n", vars["BODY"], "\n")
 				if err != nil {
-					logger.Err("[%d] %s", id, err.Error())
+					nfo.Err("[%d] %s", id, err.Error())
 				}
 			}
 		}
@@ -482,11 +440,11 @@ mail_loop:
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_mailbody.txt", folder))
 			if err != nil {
-				logger.Err("[%d] %s", id, err.Error())
+				nfo.Err("[%d] %s", id, err.Error())
 			} else {
 				_, err = fmt.Fprint(f, vars["BODY"]+"\n")
 				if err != nil {
-					logger.Err("[%d] %s", id, err.Error())
+					nfo.Err("[%d] %s", id, err.Error())
 				}
 			}
 		}
@@ -496,7 +454,7 @@ mail_loop:
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_manifest.csv", folder))
 			if err != nil {
-				logger.Err("[%d] %s", id, err.Error())
+				nfo.Err("[%d] %s", id, err.Error())
 			} else {
 				manifest := make([]string, 0)
 				manifest = append(manifest, "filename,filesize,fingerprint,status,downloaded")
@@ -526,7 +484,7 @@ mail_loop:
 				manifest = append(manifest, NONE)
 				_, err = fmt.Fprint(f, strings.Join(manifest, "\n"))
 				if err != nil {
-					logger.Err("[%d] %s", id, err.Error())
+					nfo.Err("[%d] %s", id, err.Error())
 				}
 			}
 		}
@@ -539,7 +497,7 @@ mail_loop:
 	}
 
 	if mail_cnt == 0 {
-		logger.Log("Nothing found in inbox to download.")
+		nfo.Log("Nothing found in inbox to download.")
 		return nil
 	}
 

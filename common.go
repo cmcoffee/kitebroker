@@ -12,7 +12,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"github.com/cmcoffee/go-logger"
 	"github.com/howeyc/gopass"
 	"io"
 	"io/ioutil"
@@ -23,6 +22,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"github.com/cmcoffee/go-nfo"
 )
 
 const (
@@ -55,7 +55,7 @@ func init() {
 					if snoop {
 						goto Exit
 					}
-					logger.Put("\r%s Working, Please wait...", str)
+					nfo.Flash("%s Working, Please wait...", str)
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
@@ -105,7 +105,7 @@ func scanPath(parent_folder string) (folders []string, files []string) {
 		}
 		data, err := ioutil.ReadDir(folder)
 		if err != nil && !os.IsNotExist(err) {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 		for _, finfo := range data {
@@ -378,9 +378,9 @@ func moveFile(src, dst string) (err error) {
 func errChk(err error, desc ...string) {
 	if err != nil {
 		if len(desc) > 0 {
-			logger.Fatal("[%s] %s", strings.Join(desc, "->"), err.Error())
+			nfo.Fatal("[%s] %s", strings.Join(desc, "->"), err.Error())
 		} else {
-			logger.Fatal(err)
+			nfo.Fatal(err)
 		}
 	}
 }
@@ -447,7 +447,7 @@ func compressFolder(input_folder, dest_file string) (err error) {
 	})
 
 	for _, file := range files {
-		logger.Log("Flattening %s ...", file)
+		nfo.Log("Flattening %s ...", file)
 		f, err := w.Create(file)
 		if err != nil {
 			return err
@@ -459,7 +459,7 @@ func compressFolder(input_folder, dest_file string) (err error) {
 
 		finfo, err := Stat(file)
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 		tm := NewTMonitor("processing", finfo.Size())
@@ -474,7 +474,7 @@ func compressFolder(input_folder, dest_file string) (err error) {
 		err = Transfer(r, f, tm)
 		atomic.StoreUint32(&show_transfer, 0)
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 	}

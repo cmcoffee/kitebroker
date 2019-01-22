@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-logger"
+	"github.com/cmcoffee/go-nfo"
 	"io/ioutil"
 	"os"
 	"strconv"
@@ -54,8 +54,8 @@ func TaskHandler() {
 	}
 
 	if users = load_users(task); len(users) == 0 {
-		logger.Notice("No valid user subfolders (ie.. %s) found, task %s aborted.", FullPath("user@domain.com"), task)
-		logger.Log("\n")
+		nfo.Notice("No valid user subfolders (ie.. %s) found, task %s aborted.", FullPath("user@domain.com"), task)
+		nfo.Log("\n")
 	}
 
 	for _, user := range users {
@@ -78,12 +78,14 @@ func TaskHandler() {
 		case "dli_export":
 			prep = "of"
 			jfunc = s.DLIReport
+		case "csv_onboarding":
+			jfunc = s.CSVOnboard
 		default:
-			logger.Err("- Error: Unrecognized or missing task of %s.\n", task)
+			nfo.Err("- Error: Unrecognized or missing task of %s.\n", task)
 			return
 		}
 
-		logger.Log("----------> Starting task %s %s %s.", Config.Get("configuration", "task"), prep, s)
+		nfo.Log("----------> Starting task %s %s %s.", Config.Get("configuration", "task"), prep, s)
 
 		var err error
 
@@ -98,9 +100,9 @@ func TaskHandler() {
 		}
 		HideLoader()
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 		}
-		logger.Log("\n")
+		nfo.Log("\n")
 	}
 }
 
@@ -112,7 +114,7 @@ func backgroundCleanup() {
 
 	secs, err := strconv.Atoi(Config.Get("configuration", "cleanup_time_secs"))
 	if err != nil {
-		logger.Warn("Could not parse cleanup_time_secs, defaulting to 86400 seconds. (1 day)")
+		nfo.Warn("Could not parse cleanup_time_secs, defaulting to 86400 seconds. (1 day)")
 		secs = 86400
 	}
 
@@ -132,23 +134,23 @@ func backgroundCleanup() {
 				switch Config.Get("configuration", "task") {
 				case "recv_file":
 					if err = cleanupRecv(); err != nil {
-						logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+						nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
 					}
 				case "folder_download":
 					if err = cleanupDownloads(); err != nil {
-						logger.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+						nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
 					}
 				case "folder_upload":
 					if err = cleanupLocal("uploads"); err != nil {
-						logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
+						nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
 					}
 					if err = cleanupLocal("folders"); err != nil {
-						logger.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
+						nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
 					}
 				}
 				atomic.CompareAndSwapInt32(&cleanup_working, 1, 0)
 				if err != nil {
-					logger.Debug("cleanup process error: %s", err.Error())
+					nfo.Debug("cleanup process error: %s", err.Error())
 					time.Sleep(time.Minute)
 					continue
 				}
@@ -174,7 +176,7 @@ func cleanupRecv() error {
 
 		var s Session
 		if _, err = DB.Get("inbox", key, &s); err != nil {
-			logger.Debug("cleanup process error: %s", err.Error())
+			nfo.Debug("cleanup process error: %s", err.Error())
 			continue
 		}
 
@@ -211,7 +213,7 @@ func IsDeleted(user Session, path string) bool {
 		if KiteError(err, ERR_ENTITY_NOT_FOUND|ERR_ENTITY_DELETED_PERMANENTLY) {
 			return true
 		}
-		logger.Debug(err)
+		nfo.Debug(err)
 		return false
 	}
 	return M.Deleted
@@ -246,7 +248,7 @@ func show_skipped_files() {
 	}
 	if len(bad_files) > 0 {
 		for _, name := range bad_files {
-			logger.Notice("skipped %s: file not in a kiteworks subfolder under local_path.", name)
+			nfo.Notice("skipped %s: file not in a kiteworks subfolder under local_path.", name)
 		}
 	}
 }
@@ -263,7 +265,7 @@ func cleanupDownloads() error {
 	for _, key := range records {
 		found, err := DB.Get("downloads", key, &dl_record)
 		if err != nil {
-			logger.Debug("cleanup process error: %s", err.Error())
+			nfo.Debug("cleanup process error: %s", err.Error())
 			continue
 		}
 
@@ -314,20 +316,20 @@ func (s Session) UploadFolder() (err error) {
 	sync_folders = cleanSlice(sync_folders)
 
 	for _, parent_folder := range sync_folders {
-		logger.Log("Processing: %s", parent_folder)
 		_, err := Stat(parent_folder)
 		if err != nil {
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		}
 
 		folders, files := scanPath(parent_folder)
+		nfo.Log("- %s (Total Folders: %d, Total Files: %d)", parent_folder, len(folders), len(files))
 
 		if strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders")) == "yes" {
 			for _, folder := range folders {
 				_, err = s.getKWDestination(folder, false)
 				if err != nil {
-					logger.Err("%s: Scan failure, %s.", folder, err)
+					nfo.Err("%s: Scan failure, %s.", folder, err)
 					continue
 				}
 			}
@@ -335,7 +337,7 @@ func (s Session) UploadFolder() (err error) {
 
 		if found, err := s.pushFiles(files); err != nil {
 			show_no_files_found = false
-			logger.Err(err)
+			nfo.Err(err)
 			continue
 		} else if found {
 			show_no_files_found = false
@@ -343,7 +345,7 @@ func (s Session) UploadFolder() (err error) {
 	}
 
 	if show_no_files_found {
-		logger.Log("No new files to upload.")
+		nfo.Log("No new files to upload.")
 	}
 
 	return nil
@@ -353,22 +355,36 @@ func (s Session) UploadFolder() (err error) {
 func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 	var record *UploadRecord
 
+	skip_zero_byte := func() bool {
+		t := strings.ToLower(Config.Get("folder_upload:opts", "skip_empty_files"))
+		if t == "yes" || t == "true" {
+			return true
+		} else {
+			return false
+		}
+	}()
+
 	for _, file := range files {
+		// Ignore incomplete files
+		if strings.HasSuffix(file, ".incomplete") {
+			continue
+		}
 		found, err := DB.Get("uploads", file, &record)
 		if err != nil {
 			return true, err
 		}
+
 		if found && checkFile(file, record) && record.Flag == DONE {
 			continue
-		} //else {
-			//if fstat, err := Stat(file); err != nil {
-				//if fstat.Size() == 0 {
-				//	continue
-				//}
-			//} else {
-			//	return true, err
-			//}
-		//}
+		} else {
+			if fstat, err := Stat(file); err != nil {
+				return true, err
+			} else {
+				if fstat.Size() == 0 && skip_zero_byte {
+					continue
+				}
+			}
+		}
 
 		path := splitLast(file, SLASH)[0]
 
@@ -384,7 +400,7 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		if _, err := s.Upload(file, fid); err != nil {
 			if err != ErrUploaded && err != ErrNotReady {
 				files_uploaded = true
-				logger.Err("%s: %s.", file, err)
+				nfo.Err("%s: %s.", file, err)
 			}
 		} else {
 			files_uploaded = true
@@ -463,7 +479,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		}
 
 		if cid == -1 {
-			logger.Log("Creating kiteworks folder: %s", strings.TrimPrefix(new_path, string(s)+SLASH))
+			nfo.Log("Creating kiteworks folder: %s", strings.TrimPrefix(new_path, string(s)+SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
 			if err != nil {
 				return -1, err
@@ -481,9 +497,20 @@ type download_task struct {
 	path    string
 }
 
+type download_list struct {
+	mutex sync.Mutex
+	list []download_task
+}
+func (d *download_list) AddFile(file download_task) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	d.list = append(d.list, file)
+}
+
 // DownloadFolder task.
 func (s Session) DownloadFolder() (err error) {
 	var files_found bool
+	var f_list download_list
 
 	queue := make(chan (interface{}), 0)
 	defer func() { queue <- exit{} }()
@@ -494,12 +521,10 @@ func (s Session) DownloadFolder() (err error) {
 		for e := range queue {
 			switch msg := e.(type) {
 			case download_task:
+				files_found = true
 				if err := s.Download(msg.kw_file, msg.path); err != nil && err != ErrDownloaded {
-					logger.Err("%s: %s.", fmt.Sprintf("%s/%s", msg.path, msg.kw_file.Name), err)
-					files_found = true
-				} else if err == nil {
-					files_found = true
-				}
+					nfo.Err("%s: %s.", fmt.Sprintf("%s/%s", msg.path, msg.kw_file.Name), err)
+				} 
 			case exit:
 				halt = true
 			}
@@ -527,7 +552,7 @@ func (s Session) DownloadFolder() (err error) {
 	var folder_id int
 
 	for _, kw_folder := range sync_folders {
-		logger.Log("Processing: %s", kw_folder)
+		//nfo.Log("Processing folder: %s", kw_folder)
 
 		if fid, found := sync_map[kw_folder]; found {
 			folder_id = fid
@@ -535,27 +560,35 @@ func (s Session) DownloadFolder() (err error) {
 			folder_id, err = s.FindFolder(kw_folder)
 			if err != nil {
 				if len(users) == 1 {
-					logger.Err(err)
+					nfo.Err(err)
 					files_found = true
 				}
 				continue
 			}
 		}
 
-		if err := s.mapFolders(kw_folder, folder_id, queue); err != nil {
+		if err := s.mapFolders(kw_folder, folder_id, &f_list); err != nil {
 			return err
 		}
 	}
 
+	for _, task := range f_list.list {
+		if err := s.Download(task.kw_file, task.path); err != nil && err != ErrDownloaded {
+			nfo.Err("%s: %s.", fmt.Sprintf("%s/%s", task.path, task.kw_file.Name), err)
+		} else if err == nil {
+			files_found = true
+		}
+	}
+
 	if !files_found {
-		logger.Log("No new files found.")
+		nfo.Log("\nNo new files found.")
 	}
 
 	return
 }
 
 // Creates folders locally, add to to kw_folders.
-func (s Session) mapFolders(path string, folder_id int, queue chan interface{}) (err error) {
+func (s Session) mapFolders(path string, folder_id int, f_list *download_list) (err error) {
 	var vg sync.WaitGroup
 
 	err = MkPath(path)
@@ -565,11 +598,11 @@ func (s Session) mapFolders(path string, folder_id int, queue chan interface{}) 
 
 	files, err := s.ListFiles(folder_id)
 	if err != nil {
-		logger.Err(err)
+		nfo.Err(err)
 	}
 
 	for _, file := range files.Data {
-		queue <- download_task{file, path}
+		f_list.AddFile(download_task{file, path})
 	}
 
 	folders, err := s.ListFolders(folder_id)
@@ -577,15 +610,24 @@ func (s Session) mapFolders(path string, folder_id int, queue chan interface{}) 
 		return err
 	}
 
+	nfo.Log("- %s (Nested Folders: %d Files: %d)", path, len(folders.Data), len(files.Data))
+
 	for _, folder := range folders.Data {
+		if !snoop {
 		vg.Add(1)
-		go func(folder_name string, folder_id int, queue chan interface{}) {
-			err := s.mapFolders(folder_name, folder_id, queue)
+			go func(folder_name string, folder_id int, f_list *download_list) {
+				err := s.mapFolders(folder_name, folder_id, f_list)
+				if err != nil {
+					nfo.Err("%s: Scan fail, %s.", folder_name, err)
+				}
+				vg.Done()
+			}(path+SLASH+folder.Name, folder.ID, f_list)
+		} else {
+			err := s.mapFolders(path+SLASH+folder.Name, folder.ID, f_list)
 			if err != nil {
-				logger.Err("%s: Scan fail, %s.", folder_name, err)
+				nfo.Err("%s: Scan fail, %s.", path+SLASH+folder.Name, err)
 			}
-			vg.Done()
-		}(path+SLASH+folder.Name, folder.ID, queue)
+		}
 	}
 	vg.Wait()
 	return
