@@ -1,6 +1,15 @@
 # kitebroker: Automation Assistant for kiteworks.
 
-## (v0.1.4 - 09-10-1028)
+## (v0.1.8 - 04-09-2018)
+    * Updated transfer calculation to be on written vs read.
+    * Removed custom tasks.
+    * Added retry behavior.
+    * Better error messages for issues talking to server.
+    * Updated --rest_snoop to show more information when getting a token and transfering files.
+    * Added optional API versioning to each call.
+    * Updated configuration file to be simpler.    
+
+## (v0.1.4 - 09-10-2018)
     * Added support for 0byte files.
 
 ## (V0.1.3 - 12-10-2017)

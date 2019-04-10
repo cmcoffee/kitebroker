@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/cmcoffee/go-nfo"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,6 @@ type KBMeta struct {
 
 type Sendmail struct {
 	Date      *time.Time
-	Files     []string `json:"files"`
 	SentFiles []string `json:"sentfiles"`
 	FileIDs   []int    `json:"file_ids"`
 }
@@ -46,14 +46,12 @@ func (s Session) SendFile() (err error) {
 	Bcc := Config.MGet("send_file:opts", "bcc")
 	Subj := Config.Get("send_file:opts", "subject")
 
-	var files []string
+	var files []FileInfo
 
 	To = append(To, rcpt)
 	_, files = scanPath(rcpt)
 
 	To = cleanSlice(To)
-
-	mail.Files = append(mail.Files, cleanSlice(files)[0:]...)
 
 	mail_folder, err := s.MyMailFolderID()
 	if err != nil {
@@ -61,14 +59,13 @@ func (s Session) SendFile() (err error) {
 	}
 
 	// Uploads all files in folder.
-	for i, file := range mail.Files {
-		if file == NONE {
+	for _, file := range files {
+		if file.string == NONE {
 			continue
 		}
 
 		id, err := s.Upload(file, mail_folder)
 		if err != nil && err != ErrUploaded {
-			mail.Files[i] = NONE
 			if err != ErrZeroByte {
 				return err
 			}
@@ -76,28 +73,27 @@ func (s Session) SendFile() (err error) {
 		}
 
 		if id == -1 {
-			mail.Files[i] = NONE
 			continue
 		}
 
-		r_path := file
+		r_path := file.string
 		r_path = strings.TrimPrefix(r_path, rcpt)
 		dest := "/sent/" + rcpt + SLASH + folderDate(*mail.Date) + SLASH + r_path
 		r_path = splitLast(r_path, SLASH)[0]
 
 		mail.FileIDs = append(mail.FileIDs, id)
-		mail.SentFiles = append(mail.SentFiles, file)
-		mail.Files[i] = NONE
-
-		if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) != "yes" {
-			if err := moveFile(file, dest); err != nil {
-				return err
-			}
-		}
+		mail.SentFiles = append(mail.SentFiles, file.string)
 
 		if err := DB.Set("sendfile", rcpt, &mail); err != nil {
 			return err
 		}
+
+		if !Config.GetBool(task+":opts", "delete_source_files_on_complete") {
+			if err := moveFile(file.string, dest); err != nil {
+				return err
+			}
+		}
+
 	}
 
 	// Remove duplicates file ids.
@@ -111,6 +107,7 @@ func (s Session) SendFile() (err error) {
 	}
 
 	if len(id_map) == 0 {
+		nfo.Log("\n")
 		nfo.Log("No new files to send.")
 		return nil
 	}
@@ -121,31 +118,41 @@ func (s Session) SendFile() (err error) {
 		mail.FileIDs = append(mail.FileIDs, fid)
 	}
 
-	JSON := PostJSON{
+	req_body := PostJSON{
 		"subject": Subj,
 		"to":      To,
 		"files":   mail.FileIDs,
 	}
 
 	if Cc[0] != NONE {
-		JSON["cc"] = Cc
+		req_body["cc"] = Cc
 	}
 
 	if Bcc[0] != NONE {
-		JSON["bcc"] = Bcc
+		req_body["bcc"] = Bcc
 	}
 
 	var Entity struct {
 		ID int `json:"id"`
 	}
 
-	err = s.Call("POST", "/rest/mail/actions/sendFile", &Entity, JSON, Query{"returnEntity": true})
+	err = s.Call(KiteRequest{
+		Action: "POST",
+		Path:   "/rest/mail/actions/sendFile",
+		Params: SetParams(req_body, Query{"returnEntity": true}),
+		Output: &Entity,
+	})
 	if err != nil {
+		// Is this a stale record? If so clear it.
+		if KiteError(err, ERR_ACCESS_USER) {
+			DB.Unset("sendfile", rcpt)
+			return fmt.Errorf("Removed stale sendfile record for %s.", rcpt)
+		}
 		return err
 	}
 
 	err = Rename("sent/"+rcpt+SLASH+folderDate(*mail.Date), fmt.Sprintf("sent/%s/%d-%s", rcpt, Entity.ID, folderDate(*mail.Date)))
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		nfo.Err(err)
 	}
 
@@ -188,6 +195,9 @@ func (s Session) RecvFile() (err error) {
 		OriginalFileID int
 		Flag           int
 		Modified       string
+		Mime           string
+		Created        string
+		Links          []KiteLinks
 	}
 
 	type MailEnt struct {
@@ -207,12 +217,9 @@ func (s Session) RecvFile() (err error) {
 		"isRecipient": true,
 	}
 
-	days, err := strconv.Atoi(Config.Get("recv_file:opts", "email_age_days"))
-	if err != nil {
-		days = 0
-	}
+	days := int(Config.GetInt("recv_file:opts", "email_age_days"))
 
-	if days > 0 {
+	if days > 1 {
 		q["date:gte"] = write_kw_time(time.Now().AddDate(0, 0, days*-1))
 	}
 
@@ -256,7 +263,12 @@ mail_loop:
 			} `json:"variables"`
 		}
 
-		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d", id), &r, Query{"mode": "compact", "with": "(variables, recipients)"})
+		err = s.Call(KiteRequest{
+			Action: "GET",
+			Path:   SetPath("/rest/mail/%d", id),
+			Params: SetParams(Query{"mode": "compact", "with": "(variables, recipients)"}),
+			Output: &r,
+		})
 		if err != nil {
 			nfo.Err(err)
 			continue
@@ -322,8 +334,11 @@ mail_loop:
 			Attachments []struct {
 				Withdrawn    bool `json:"withdrawn"`
 				OriginalFile struct {
-					ID int `json:"id"`
-					Modified string `json:"modified"`
+					ID       int         `json:"id"`
+					Modified string      `json:"modified"`
+					Mime     string      `json:"mime"`
+					Created  string      `json:"created"`
+					Links    []KiteLinks `json:"links"`
 				} `json:"originalFile"`
 				File struct {
 					Name        string `json:"name"`
@@ -339,7 +354,13 @@ mail_loop:
 			} `json:"data"`
 		}
 
-		err = s.Call("GET", fmt.Sprintf("/rest/mail/%d/attachments", id), &a, Query{"mode": "full_no_links", "orderBy": "originalFileId:asc", "with": "(frozenFile,originalFile)"})
+		err = s.Call(KiteRequest{
+			APIVer: 6,
+			Action: "GET",
+			Path:   SetPath("/rest/mail/%d/attachments", id),
+			Params: SetParams(Query{"mode": "full", "orderBy": "originalFileId:asc", "with": "(frozenFile,originalFile)"}),
+			Output: &a,
+		})
 		if err != nil {
 			nfo.Err(err)
 			continue
@@ -351,7 +372,10 @@ mail_loop:
 				Filename:    e.File.Name,
 				Filesize:    e.File.Size,
 				Fingerprint: e.File.Fingerprint,
-				Modified: 	 e.OriginalFile.Modified,
+				Modified:    e.OriginalFile.Modified,
+				Mime:        e.OriginalFile.Mime,
+				Created:     e.OriginalFile.Created,
+				Links:       e.OriginalFile.Links,
 			}
 
 			// Files not ready for download.
@@ -367,8 +391,7 @@ mail_loop:
 				file_attach.FileID = 0
 			} else if e.File.Blocked == "disallowed" {
 				nfo.Log("[%d] %s(%s) was quarantined by kiteworks.", id, e.File.Name, showSize(e.File.Size))
-				file_attach.Flag = file_quarantined
-				file_attach.FileID = 0
+				continue mail_loop
 			} else if e.File.Deleted {
 				nfo.Log("[%d] %s(%s) was deleted from kiteworks.", id, e.File.Name, showSize(e.File.Size))
 				file_attach.Flag = file_deleted
@@ -389,13 +412,16 @@ mail_loop:
 				continue
 			}
 
-			finfo := KiteData {
-					ID: f.FileID,
-					Size: f.Filesize,
-					MailID: id,
-					Name: f.Filename,
-					Fingerprint: f.Fingerprint,
-					Modified: f.Modified,
+			finfo := KiteData{
+				ID:          f.FileID,
+				Size:        f.Filesize,
+				MailID:      id,
+				Name:        f.Filename,
+				Fingerprint: f.Fingerprint,
+				Modified:    f.Modified,
+				Mime:        f.Mime,
+				Created:     f.Created,
+				Links:       f.Links,
 			}
 
 			DB.Unset("downloads", fid)
@@ -416,7 +442,7 @@ mail_loop:
 		}
 
 		// Save full email.
-		if strings.ToLower(Config.Get("recv_file:opts", "download_full_email")) == "yes" {
+		if Config.GetBool("recv_file:opts", "download_full_email") {
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_mail.txt", folder))
 			if err != nil {
@@ -436,7 +462,7 @@ mail_loop:
 		}
 
 		// Save Email body.
-		if strings.ToLower(Config.Get("recv_file:opts", "download_seperate_email_body")) == "yes" {
+		if Config.GetBool("recv_file:opts", "download_seperate_email_body") {
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_mailbody.txt", folder))
 			if err != nil {
@@ -450,7 +476,7 @@ mail_loop:
 		}
 
 		// Generate file manifest.
-		if strings.ToLower(Config.Get("recv_file:opts", "download_file_manifest")) == "yes" {
+		if Config.GetBool("recv_file:opts", "download_file_manifest") {
 			MkPath(folder)
 			f, err := Create(fmt.Sprintf("%s/kw_manifest.csv", folder))
 			if err != nil {
@@ -497,7 +523,8 @@ mail_loop:
 	}
 
 	if mail_cnt == 0 {
-		nfo.Log("Nothing found in inbox to download.")
+		nfo.Log("\n")
+		nfo.Log("Nothing new found in inbox to download.")
 		return nil
 	}
 

@@ -9,17 +9,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 const (
-	DEFAULT_CONF  = "kitebroker.cfg"
-	NAME          = "kitebroker"
-	VERSION       = "0.1.6"
-	KWAPI_VERSION = "11"
+	DEFAULT_CONF = "kitebroker.cfg"
+	NAME         = "kitebroker"
+	VERSION      = "0.1.8"
+	MAX_RETRY    = 3
 )
 
 var (
@@ -106,24 +106,29 @@ RedoSetup:
 	api_cfg_1 := string(encrypt([]byte(client_id), []byte(api_cfg_0)))
 	api_cfg_0 = api_cfg_0 + string(encrypt([]byte(client_secret), []byte(api_cfg_1+api_cfg_0)))
 
-	errChk(Config.Set("configuration", "api_cfg_0", api_cfg_0))
-	errChk(Config.Set("configuration", "api_cfg_1", api_cfg_1))
+	errChk(Config.Set("do_not_modify", "api_cfg_0", api_cfg_0))
+	errChk(Config.Set("do_not_modify", "api_cfg_1", api_cfg_1))
 
+	errChk(Config.Save("do_not_modify"))
 	errChk(Config.Save("configuration"))
 }
 
 // Loads kiteworks API client id and secret from config file.
 func loadAPIConfig(config_filename string) {
 
-	api_cfg_0 := Config.Get("configuration", "api_cfg_0")
-	api_cfg_1 := Config.Get("configuration", "api_cfg_1")
+	if !Config.Exists("do_not_modify") {
+		nfo.Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
+	}
+
+	api_cfg_0 := Config.Get("do_not_modify", "api_cfg_0")
+	api_cfg_1 := Config.Get("do_not_modify", "api_cfg_1")
 
 	if len(api_cfg_0) < 37 {
 		api_setup()
 		// Read configuration file.
 		errChk(Config.File(config_filename))
-		api_cfg_0 = Config.Get("configuration", "api_cfg_0")
-		api_cfg_1 = Config.Get("configuration", "api_cfg_1")
+		api_cfg_0 = Config.Get("do_not_modify", "api_cfg_0")
+		api_cfg_1 = Config.Get("do_not_modify", "api_cfg_1")
 	}
 
 	r_key := []byte(api_cfg_0[0:37])
@@ -142,7 +147,8 @@ func main() {
 	var err error
 
 	//nfo.HideTS()
-	nfo.Print("[ Accellion %s %s ]\n\n", NAME, VERSION)
+	nfo.Stdout("[ Accellion %s %s ]\n\n", NAME, VERSION)
+	nfo.SignalCallback(syscall.SIGINT, func() bool { nfo.Log("Application exit requested."); return true })
 
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ExitOnError)
@@ -150,11 +156,12 @@ func main() {
 	config_file := flags.String("config", DEFAULT_CONF, "Specify a configuration file.")
 	flags.Alias(&config_file, "config", "f")
 
-	reset := flags.Bool("reset", false, "Reconfigure client credentials.")
+	reset := flags.Bool("reset", false, "Clear client credentials.")
+	reset_api := flags.Bool("reset_api", false, "Clear server API configuraiton.")
 
 	flags.BoolVar(&snoop, "rest_snoop", false, "Snoop on API calls to the kiteworks appliance.")
 
-	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute*5), "Timeout for HTTP/S requests to kiteworks server.")
+	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute), "Timeout for HTTP/S requests to kiteworks server.")
 
 	debug := flags.Bool("debug", false, NONE)
 
@@ -162,7 +169,7 @@ func main() {
 
 	// Enable debug logging if --debug flag given.
 	if *debug {
-		nfo.SetLoggers(nfo.Std|nfo.DEBUG)
+		nfo.SetLoggers(nfo.STD | nfo.DEBUG)
 	}
 
 	// Read configuration file.
@@ -176,10 +183,6 @@ func main() {
 	default:
 		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
 	}
-
-	// Handle changes in config file key names.
-	migrateConfig("rec_file:opts", "download_email_body", "download_seperate_email_body")
-	migrateConfig("configuration", "kw_folder", "kw_folder_filter")
 
 	// Prepare our local base path.
 	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
@@ -202,22 +205,20 @@ func main() {
 		api_call_bank <- call_done
 	}
 
-	log_rotate, err := strconv.Atoi(Config.Get("configuration", "log_rotate"))
-	if err != nil {
-		nfo.Warn("Could not parse log_rotate, defaulting to log_rotate of 5.")
-		log_rotate = 10
+	log_rotate := uint(Config.GetUint("tweaks", "log_rotate"))
+	if log_rotate == 0 {
+		log_rotate = 5
 	}
 
-	log_size, err := strconv.Atoi(Config.Get("configuration", "log_size"))
-	if err != nil {
-		nfo.Warn("Could not parse log_size, defaulting to log_size of 10 Megabytes.")
-		log_size = 10
+	log_size := uint(Config.GetUint("tweaks", "log_size_mb"))
+	if log_size == 0 {
+		log_size = 20
 	}
 
 	_, b := filepath.Split(*config_file)
 	basename := strings.Split(b, ".")[0]
 
-	err = nfo.File(nfo.Std, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), uint(log_size), uint(log_rotate))
+	err = nfo.File(nfo.STD, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), log_size, log_rotate)
 	if err != nil {
 		nfo.Fatal(err)
 	}
@@ -227,23 +228,44 @@ func main() {
 
 	nfo.Defer(DB.Close)
 
-	// Load API Settings
-	loadAPIConfig(*config_file)
-
 	// Reset credentials, if requested.
 	if *reset {
-		nfo.Print("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n\n")
+		nfo.Stdout("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.")
+		nfo.Stdout("\n")
 		if confirm := getConfirm("Are you sure you want do this"); confirm {
 			errChk(DB.Truncate("tokens"))
 			errChk(DB.Unset("kitebroker", "s"))
 			Config.Unset("configuration", "account")
 			Config.Save("configuration")
-			nfo.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
+			nfo.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.")
 			nfo.Exit(0)
 		}
-		nfo.Print("Aborting, Access tokens not cleared.\n")
 		nfo.Exit(0)
 	}
+
+	if *reset_api {
+		nfo.Stdout("This will reset all API credentials and settings:")
+		nfo.Stdout("- All access tokens")
+		nfo.Stdout("- All credentials")
+		nfo.Stdout("- Client Application ID")
+		nfo.Stdout("- Client Secret Key")
+		nfo.Stdout("\n")
+		if confirm := getConfirm("Are you sure you want to do this"); confirm {
+			errChk(DB.Truncate("tokens"))
+			errChk(DB.Unset("kitebroker", "s"))
+			Config.Unset("configuration", "account")
+			Config.Unset("do_not_modify", "api_cfg_0")
+			Config.Unset("do_not_modify", "api_cfg_1")
+			Config.Unset("configuration", "server")
+			Config.Save("configuration")
+			nfo.Notice("API configuration cleared, account settings cleared, access tokens truncated, please run kitebroker without --reset to configure.")
+			nfo.Exit(0)
+		}
+		nfo.Exit(0)
+	}
+
+	// Load API Settings
+	loadAPIConfig(*config_file)
 
 	ShowLoader()
 
@@ -260,7 +282,7 @@ func main() {
 			}
 			DB.Unset("tokens", Config.Get("configuration", "account"))
 		}
-		if user.RetryToken(err) {
+		if user.ChkToken(err) {
 			_, err := user.MyUser()
 			if err == nil {
 				first_token_set = true
@@ -281,18 +303,11 @@ func main() {
 	)
 
 	// Setup continuous scan loop.
-	if strings.ToLower(Config.Get("configuration", "continuous_mode")) == "yes" {
+	if Config.GetBool("configuration", "continuous_mode") {
 		continuous = true
-		t, err := strconv.Atoi(Config.Get("configuration", "continuous_rate_secs"))
-		if err != nil {
-			nfo.Warn("Could not parse continous_rate, defaulting to 30 seconds.")
-			t = 30
-		}
-
+		t := Config.GetUint("configuration", "continuous_rate_secs")
 		ival = time.Duration(t) * time.Second
 	}
-
-	nfo.Defer(func() { nfo.Log("Application exit requested.  ") })
 
 	// Begin scan loop.
 	for {
