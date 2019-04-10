@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var ErrNotReady = fmt.Errorf("Export not ready.")
+
 // KiteBroker Flags
 const (
 	UPLOAD = 1 << iota
@@ -40,15 +42,19 @@ type FileRecord struct {
 	User      Session   `json:"user"`
 }
 
+const ChunkSizeMax = 68157440
+
 // Returns total number of chunks and last chunk size.
 func (s Session) getChunkInfo(sz int64) (chunk_size int64, total_chunks int, last_chunk int64) {
 
-	chunk_sz, err := strconv.Atoi(Config.Get("configuration", "upload_chunk_size"))
-	if err != nil {
-		nfo.Warn("Could not parse upload_chunk_size, defaulting to 32768.")
-		chunk_sz = 32768
+	chunk_size = Config.GetInt("tweaks", "chunk_size_mb")
+	chunk_size = chunk_size * 1024000
+
+	if chunk_size < 1024000 {
+		chunk_size = ChunkSizeMax
+	} else if chunk_size > ChunkSizeMax {
+		chunk_size = ChunkSizeMax
 	}
-	chunk_size = int64(chunk_sz * 1000)
 
 	if sz <= chunk_size {
 		return chunk_size, 1, sz
@@ -90,11 +96,12 @@ func showSize(bytes int64) string {
 // Provides average rate of transfer.
 func (t *TMonitor) showRate() string {
 
-	size := t.transfered - t.offset
-
-	if size == t.total_size && t.rate != "0.0bps" {
+	if t.completed {
 		return t.rate
 	}
+
+	transfered := atomic.LoadInt64(&t.transfered)
+	sz := float64(transfered-t.offset) / time.Since(t.start_time).Seconds()
 
 	names := []string{
 		"bps",
@@ -104,9 +111,8 @@ func (t *TMonitor) showRate() string {
 	}
 
 	suffix := 0
-	sz := float64(size) / time.Since(t.start_time).Seconds()
 
-	for sz >= (1000) && suffix < len(names)-1 {
+	for sz >= 1000 && suffix < len(names)-1 {
 		sz = sz / 1000
 		suffix++
 	}
@@ -116,12 +122,17 @@ func (t *TMonitor) showRate() string {
 	} else {
 		t.rate = "0.0bps"
 	}
+
+	if transfered+t.offset == t.total_size {
+		t.completed = true
+	}
+
 	return t.rate
 }
 
 // Produces progress bar for information on update.
 func (t *TMonitor) progressBar() string {
-	num := int((float64(t.transfered) / float64(t.total_size)) * 100)
+	num := int((float64(atomic.LoadInt64(&t.transfered)) / float64(t.total_size)) * 100)
 	if t.total_size == 0 {
 		num = 100
 	}
@@ -154,25 +165,25 @@ type TMonitor struct {
 	transfered int64
 	offset     int64
 	rate       string
+	completed  bool
 	start_time time.Time
 	last_shown time.Time
-	complete   bool
 }
 
 func (t *TMonitor) RecordTransfer(current_sz int) {
 	atomic.StoreInt64(&t.transfered, atomic.LoadInt64(&t.transfered)+int64(current_sz))
 }
 
-func (t *TMonitor) ShowTransfer() {
+func (t *TMonitor) ShowTransfer(log bool) {
 
 	transfered := atomic.LoadInt64(&t.transfered)
 
 	if t.total_size > -1 {
-		if transfered < t.total_size {
+		if transfered < t.total_size && !log {
 			nfo.Flash(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
-		} else if !t.complete {
+		}
+		if log {
 			nfo.Log(fmt.Sprintf("(%s) %s %s (%s/%s)", t.name, t.showRate(), t.progressBar(), showSize(transfered), showSize(t.total_size)))
-			t.complete = true
 		}
 	} else {
 		nfo.Flash(fmt.Sprintf("(%s) %s (%s)", t.name, t.showRate(), showSize(transfered)))
@@ -190,6 +201,7 @@ func Transfer(reader io.Reader, writer io.Writer, tm *TMonitor) (err error) {
 
 	buf := make([]byte, 4096)
 	var eof bool
+	defer tm.showRate()
 
 	for {
 		rb, err := reader.Read(buf)
@@ -198,15 +210,13 @@ func Transfer(reader io.Reader, writer io.Writer, tm *TMonitor) (err error) {
 		} else if err != nil {
 			return err
 		}
-		if rb > -1 {
-			tm.RecordTransfer(rb)
-		}
 		n := 0
 		for {
 			wb, err := writer.Write(buf[n:rb])
 			if err != nil {
 				return err
 			}
+			tm.RecordTransfer(wb)
 			n = n + wb
 			if n == rb {
 				break
@@ -228,8 +238,7 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 	}
 
 	skip_empty_files := func() bool {
-		t := strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders"))
-		if t == "yes" || t == "true" {
+		if Config.GetBool("folder_download:opts", "skip_empty_files") {
 			return true
 		} else {
 			return false
@@ -310,11 +319,10 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 		request_path = fmt.Sprintf("/rest/files/%d/content", kwdl.ID)
 	}
 
-
-	req, err := s.NewRequest("GET", request_path)
+	req, err := s.NewRequest("GET", request_path, 7)
 	if err != nil {
 		if new_file {
-			os.Remove(FullPath(fname+".incomplete"))
+			os.Remove(FullPath(fname + ".incomplete"))
 		}
 		return
 	}
@@ -328,7 +336,7 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 	resp, err := client.Do(req)
 	if err != nil && resp.StatusCode != 200 {
 		if new_file {
-			os.Remove(FullPath(fname+".incomplete"))
+			os.Remove(FullPath(fname + ".incomplete"))
 		}
 		return err
 	}
@@ -348,7 +356,7 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 
 	go func() {
 		for atomic.LoadUint32(&show_transfer) == 1 {
-			tm.ShowTransfer()
+			tm.ShowTransfer(false)
 			time.Sleep(time.Second)
 		}
 	}()
@@ -389,7 +397,7 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 
 renameFile:
 	atomic.StoreUint32(&show_transfer, 0)
-	tm.ShowTransfer()
+	tm.ShowTransfer(true)
 	ShowLoader()
 
 	// Close the file stream.
@@ -404,8 +412,15 @@ renameFile:
 
 	DB.Set("downloads", kwdl.ID, record)
 
-	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
-		if err := s.EraseFile(kwdl.ID); err != nil {
+	if Config.GetBool(task+":opts", "supplemental_metadata_info_file") {
+		if err := s.MetaData(fname, &kwdl); err != nil {
+			nfo.Err(err)
+		}
+	}
+
+	if Config.GetBool(task+":opts", "delete_source_files_on_complete") {
+		nfo.Log("Removing remote file %s from server.", strings.TrimPrefix(fname, Config.Get("configuration", "local_path")))
+		if err := s.DeleteFile(kwdl.ID); err != nil {
 			nfo.Err(err)
 		}
 	}
@@ -473,11 +488,8 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	return s.w_buff.Read(p)
 }
 
-func checkFile(local_file string, record *UploadRecord) (same bool) {
-	fstat, err := Stat(local_file)
-	if err != nil {
-		return false
-	}
+func checkFile(local_file FileInfo, record *UploadRecord) (same bool) {
+	fstat := local_file.info
 	if fstat.Size() != record.TotalSize || fstat.ModTime().UTC() != record.ModTime.UTC() {
 		return false
 	}
@@ -485,14 +497,12 @@ func checkFile(local_file string, record *UploadRecord) (same bool) {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s Session) Upload(local_file string, folder_id int) (file_id int, err error) {
-	fstat, err := Stat(local_file)
-	if err != nil {
-		return -1, err
-	}
+func (s Session) Upload(local_file FileInfo, folder_id int) (file_id int, err error) {
+
+	fstat := local_file.info
 
 	var record *UploadRecord
-	_, err = DB.Get("uploads", local_file, &record)
+	_, err = DB.Get("uploads", local_file.string, &record)
 	if err != nil {
 		return -1, err
 	}
@@ -500,7 +510,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	ChunkSize, TotalChunks, LastChunk := s.getChunkInfo(fstat.Size())
 
 	// Create a record in the database if one does not exist yet or does not appear to be the one we've uploaded.
-	if record == nil || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || record.ChunkSize != ChunkSize && record.Flag&DONE != DONE {
+	if record == nil || record.ModTime.UTC() != fstat.ModTime().UTC() || record.TotalSize != fstat.Size() || (record.ChunkSize != ChunkSize && record.Flag&DONE != DONE) {
 		if record != nil && record.Flag&UPLOAD == UPLOAD {
 			s.DeleteUpload(record.ID)
 		}
@@ -510,14 +520,14 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			CompletedChunks: 0,
 			ChunkSize:       ChunkSize,
 			TotalSize:       fstat.Size(),
-			ModTime:         fstat.ModTime(),
+			ModTime:         fstat.ModTime().UTC(),
 			Filename:        fstat.Name(),
 		}
 
 		if record.ID, record.URI, err = s.NewUpload(folder_id, fstat.Name(), record.ModTime); err != nil {
 			return -1, err
 		}
-		DB.Set("uploads", local_file, &record)
+		DB.Set("uploads", local_file.string, &record)
 	}
 
 	if record.Flag == DONE {
@@ -527,10 +537,10 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 	// Check if file is already uploaded on
 	fileSearch, _ := s.FindFile(folder_id, fstat.Name())
 	if len(fileSearch.Data) > 0 {
-		md5sum, _ := md5Sum(local_file)
+		md5sum, _ := md5Sum(local_file.string)
 		for _, kw_file := range fileSearch.Data {
 			if kw_file.Size == fstat.Size() && kw_file.Fingerprint == string(md5sum) {
-				if err := DB.Set("uploads", local_file, &FileRecord{
+				if err := DB.Set("uploads", local_file.string, &FileRecord{
 					Flag:      DONE,
 					TotalSize: kw_file.Size,
 					ModTime:   fstat.ModTime(),
@@ -544,11 +554,10 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		}
 	}
 
-	f, err := Open(local_file)
+	f, err := Open(local_file.string)
 	if err != nil {
 		return -1, err
 	}
-	defer f.Close()
 
 	var limit int64
 	var offset int64
@@ -567,14 +576,14 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 
 	HideLoader()
 
-	nfo.Log("Uploading %s(%s).", local_file, showSize(record.TotalSize))
+	nfo.Log("Uploading %s(%s).", local_file.string, showSize(record.TotalSize))
 
 	show_transfer := uint32(1)
 	defer atomic.StoreUint32(&show_transfer, 0)
 
 	go func() {
 		for atomic.LoadUint32(&show_transfer) == 1 {
-			tm.ShowTransfer()
+			tm.ShowTransfer(false)
 			time.Sleep(time.Second)
 		}
 	}()
@@ -593,13 +602,13 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			return -1, err
 		}
 
-		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", record.URI))
+		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", record.URI), 7)
 		if err != nil {
 			return -1, err
 		}
 
 		if snoop {
-			nfo.Flash("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks+1, TotalChunks)
+			nfo.Stdout("--> ACTION: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, record.CompletedChunks+1, TotalChunks)
 		}
 
 		w := multipart.NewWriter(w_buff)
@@ -610,6 +619,11 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			q := req.URL.Query()
 			q.Set("returnEntity", "true")
 			q.Set("mode", "full")
+			if snoop {
+				for k, v := range q {
+					nfo.Stdout("\\-> QUERY: %s VALUE: %s", k, v)
+				}
+			}
 			req.URL.RawQuery = q.Encode()
 			limit = LastChunk
 			err = w.WriteField("lastChunk", "1")
@@ -646,6 +660,10 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 			return -1, err
 		}
 
+		if snoop {
+			nfo.Stdout(w_buff.String())
+		}
+
 		post := &streamReadCloser{
 			limit,
 			0,
@@ -663,6 +681,13 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		client := s.NewClient()
 		resp, err := client.Do(req)
 		if err != nil {
+			if KiteError(err, ERR_ENTITY_PARENT_FOLDER_DELETED) {
+				s.DeleteUpload(record.ID)
+				DB.Unset("uploads", local_file.string)
+			}
+			if KiteError(err, ERR_REQUEST_METHOD_NOT_ALLOWED) {
+				DB.Unset("uploads", local_file.string)
+			}
 			return -1, err
 		}
 
@@ -672,7 +697,7 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 
 		record.CompletedChunks++
 		record.Transfered = record.Transfered + ChunkSize
-		if err := DB.Set("uploads", local_file, &record); err != nil {
+		if err := DB.Set("uploads", local_file.string, &record); err != nil {
 			return -1, err
 		}
 		if record.TotalSize == 0 {
@@ -682,12 +707,12 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 
 	if resp_data == nil {
 		s.DeleteUpload(record.ID)
-		DB.Unset("uploads", local_file)
+		DB.Unset("uploads", local_file.string)
 		nfo.Err("Unexpected result from server, rolling back upload.")
 		return -1, ErrNotReady
 	}
 
-	if err := DB.Set("uploads", local_file, &FileRecord{
+	if err := DB.Set("uploads", local_file.string, &FileRecord{
 		Flag:      DONE,
 		TotalSize: record.TotalSize,
 		ModTime:   record.ModTime,
@@ -697,15 +722,15 @@ func (s Session) Upload(local_file string, folder_id int) (file_id int, err erro
 		return resp_data.ID, err
 	}
 	atomic.StoreUint32(&show_transfer, 0)
-	tm.ShowTransfer()
-	nfo.Log("%s: Upload complete.", local_file)
-	if strings.ToLower(Config.Get("configuration", "delete_source_files_on_complete")) == "yes" {
-		nfo.Log("Remvoing local file %s.", local_file)
-		err = Remove(local_file)
+	tm.ShowTransfer(true)
+	ShowLoader()
+	nfo.Log("%s: Upload complete.", local_file.string)
+	if Config.GetBool(task+":opts", "delete_source_files_on_complete") {
+		nfo.Log("Remvoing local file %s.", local_file.string)
+		err = Remove(local_file.string)
 		if err == nil {
-			DB.Unset("uploads", local_file)
+			DB.Unset("uploads", local_file.string)
 		}
 	}
-	ShowLoader()
 	return resp_data.ID, nil
 }

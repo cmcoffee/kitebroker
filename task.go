@@ -5,22 +5,24 @@ import (
 	"github.com/cmcoffee/go-nfo"
 	"io/ioutil"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-var cleanup_working int32
-var task_time time.Time
-var users []string
+var (
+	cleanup_working int32
+	task_time       time.Time
+	users           []string
+	task            string
+)
 
 // main task handler.
 func TaskHandler() {
 	task_time = time.Now()
 
-	task := Config.Get("configuration", "task")
+	task = Config.Get("configuration", "task")
 
 	load_users := func(task string) (users []string) {
 		data, err := ioutil.ReadDir(Config.Get("configuration", "local_path"))
@@ -40,7 +42,7 @@ func TaskHandler() {
 		}
 
 		// target users will be email subdirectories found under local_path.
-		if task == "send_file" || task == "dli_export" {
+		if task == "send_file" {
 			str := users[:0]
 			for _, v := range users {
 				str = append(str, v)
@@ -75,11 +77,6 @@ func TaskHandler() {
 			jfunc = s.DownloadFolder
 		case "folder_upload":
 			jfunc = s.UploadFolder
-		case "dli_export":
-			prep = "of"
-			jfunc = s.DLIReport
-		case "csv_onboarding":
-			jfunc = s.CSVOnboard
 		default:
 			nfo.Err("- Error: Unrecognized or missing task of %s.\n", task)
 			return
@@ -90,14 +87,7 @@ func TaskHandler() {
 		var err error
 
 		ShowLoader()
-		for {
-			err = jfunc()
-			HideLoader()
-			if s.RetryToken(err) {
-				continue
-			}
-			break
-		}
+		err = jfunc()
 		HideLoader()
 		if err != nil {
 			nfo.Err(err)
@@ -112,16 +102,15 @@ func backgroundCleanup() {
 		return
 	}
 
-	secs, err := strconv.Atoi(Config.Get("configuration", "cleanup_time_secs"))
-	if err != nil {
-		nfo.Warn("Could not parse cleanup_time_secs, defaulting to 86400 seconds. (1 day)")
+	secs := Config.GetUint("tweaks", "db_cleanup_time_secs")
+	if secs == 0 {
 		secs = 86400
 	}
 
 	ival := time.Second * time.Duration(secs)
 
 	var last_cleanup time.Time
-	_, err = DB.Get("kitebroker", "last_cleanup", &last_cleanup)
+	_, err := DB.Get("kitebroker", "last_cleanup", &last_cleanup)
 	if err != nil {
 		errChk(err)
 	}
@@ -199,21 +188,17 @@ func IsDeleted(user Session, path string) bool {
 		Deleted bool `json:"deleted"`
 	}
 
-	var err error
-
-	for {
-		err = user.Call("GET", path, &M, Query{"mode": "compact", "with": "(deleted)"})
-		if user.RetryToken(err) {
-			continue
-		}
-		break
-	}
+	err := user.Call(KiteRequest{
+		Action: "GET",
+		Path:   path,
+		Params: SetParams(Query{"mode": "compact", "with": "(deleted)"}),
+		Output: &M,
+	})
 
 	if err != nil {
 		if KiteError(err, ERR_ENTITY_NOT_FOUND|ERR_ENTITY_DELETED_PERMANENTLY) {
 			return true
 		}
-		nfo.Debug(err)
 		return false
 	}
 	return M.Deleted
@@ -293,7 +278,7 @@ func (s Session) UploadFolder() (err error) {
 	show_no_files_found := true
 
 	// get folders which we have been told to handle on kw.
-	sync_folders := Config.MGet("configuration", "kw_folder_filter")
+	sync_folders := Config.MGet(task+":opts", "select_folders")
 	if len(sync_folders) == 1 && sync_folders[0] == NONE {
 		if err = MkDir(local_path); err != nil {
 			return err
@@ -323,14 +308,22 @@ func (s Session) UploadFolder() (err error) {
 		}
 
 		folders, files := scanPath(parent_folder)
-		nfo.Log("- %s (Total Folders: %d, Total Files: %d)", parent_folder, len(folders), len(files))
+		nfo.Log("- Folder: %s (Total Nested Folders: %d, Total Files: %d)", parent_folder, len(folders)-1, len(files))
 
-		if strings.ToLower(Config.Get("folder_upload:opts", "create_empty_folders")) == "yes" {
+		if Config.GetBool("folder_upload:opts", "create_empty_folders") {
 			for _, folder := range folders {
-				_, err = s.getKWDestination(folder, false)
+				_, err := s.getKWDestination(folder, false)
 				if err != nil {
 					nfo.Err("%s: Scan failure, %s.", folder, err)
-					continue
+					if KiteError(err, ERR_ACCESS_USER) {
+						continue
+					}
+					wipePath(folder)
+					_, err = s.getKWDestination(folder, true)
+					if err != nil {
+						nfo.Err(err)
+						continue
+					}
 				}
 			}
 		}
@@ -345,6 +338,7 @@ func (s Session) UploadFolder() (err error) {
 	}
 
 	if show_no_files_found {
+		nfo.Log("\n")
 		nfo.Log("No new files to upload.")
 	}
 
@@ -352,12 +346,11 @@ func (s Session) UploadFolder() (err error) {
 }
 
 // Processes files for uploading.
-func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
+func (s Session) pushFiles(files []FileInfo) (files_uploaded bool, err error) {
 	var record *UploadRecord
 
 	skip_zero_byte := func() bool {
-		t := strings.ToLower(Config.Get("folder_upload:opts", "skip_empty_files"))
-		if t == "yes" || t == "true" {
+		if Config.GetBool("folder_upload:opts", "skip_empty_files") {
 			return true
 		} else {
 			return false
@@ -366,10 +359,10 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 
 	for _, file := range files {
 		// Ignore incomplete files
-		if strings.HasSuffix(file, ".incomplete") {
+		if strings.HasSuffix(file.string, ".incomplete") {
 			continue
 		}
-		found, err := DB.Get("uploads", file, &record)
+		found, err := DB.Get("uploads", file.string, &record)
 		if err != nil {
 			return true, err
 		}
@@ -377,16 +370,12 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 		if found && checkFile(file, record) && record.Flag == DONE {
 			continue
 		} else {
-			if fstat, err := Stat(file); err != nil {
-				return true, err
-			} else {
-				if fstat.Size() == 0 && skip_zero_byte {
-					continue
-				}
+			if file.info.Size() == 0 && skip_zero_byte {
+				continue
 			}
 		}
 
-		path := splitLast(file, SLASH)[0]
+		path := splitLast(file.string, SLASH)[0]
 
 		if path == NONE {
 			continue
@@ -394,13 +383,25 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 
 		fid, err := s.getKWDestination(path, true)
 		if err != nil {
-			return true, err
+			if KiteError(err, ERR_ACCESS_USER) {
+				continue
+			}
+			wipePath(path)
+			fid, err = s.getKWDestination(path, true)
+			if err != nil || fid == 0 {
+				continue
+			}
 		}
 
 		if _, err := s.Upload(file, fid); err != nil {
 			if err != ErrUploaded && err != ErrNotReady {
 				files_uploaded = true
-				nfo.Err("%s: %s.", file, err)
+				if KiteError(err, ERR_ENTITY_PARENT_FOLDER_DELETED) {
+					DB.Unset("uploads", file)
+					DB.Unset("folders", path)
+				} else {
+					nfo.Err(err)
+				}
 			}
 		} else {
 			files_uploaded = true
@@ -409,7 +410,17 @@ func (s Session) pushFiles(files []string) (files_uploaded bool, err error) {
 	return
 }
 
-type set struct{}
+func wipePath(search_path string) {
+	split_path := strings.Split(search_path, SLASH)
+	split_len := len(split_path)
+	if split_len == 0 {
+		return
+	}
+	paths, _ := DB.ListKeys("folders", fmt.Sprintf("%s%%", split_path[0]))
+	for _, folder := range paths {
+		DB.Unset("folders", folder)
+	}
+}
 
 // Verifies kiteworks folder exists for file upload, creates folder if one does not exist.
 func (s Session) getKWDestination(search_path string, verify bool) (fid int, err error) {
@@ -433,7 +444,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 			fid = folder_id
 			finfo, err := s.FolderInfo(fid)
 			if err != nil || finfo.Deleted {
-				if KiteError(err, ERR_ENTITY_DELETED_PERMANENTLY) {
+				if KiteError(err, ERR_ENTITY_DELETED_PERMANENTLY) || KiteError(err, ERR_ENTITY_DELETED) || KiteError(err, ERR_ENTITY_PARENT_FOLDER_DELETED) || KiteError(err, ERR_ACCESS_USER) {
 					DB.Unset("folders", strings.Join(split_path[0:i], SLASH))
 				}
 				missing++
@@ -450,7 +461,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 	if fid == -1 {
 		// Search for folder initially.
 		no_search = true
-		fid, _ = s.FindFolder(split_path[0])
+		fid, _ = s.FindFolder(0, split_path[0])
 
 		// If we didn't find it, we're going to make a new folder.
 		if fid == -1 {
@@ -472,7 +483,7 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		new_path := strings.Join(split_path[0:i+1], SLASH)
 
 		if !no_search {
-			cid, err = s.FindChildFolder(fid, missing_folder)
+			cid, err = s.FindFolder(fid, missing_folder)
 		} else {
 			cid = fid
 			no_search = false
@@ -481,8 +492,12 @@ func (s Session) getKWDestination(search_path string, verify bool) (fid int, err
 		if cid == -1 {
 			nfo.Log("Creating kiteworks folder: %s", strings.TrimPrefix(new_path, string(s)+SLASH))
 			fid, err = s.CreateFolder(fid, missing_folder)
-			if err != nil {
-				return -1, err
+			if fid == 0 {
+				DB.Unset("folders", new_path)
+				if err == nil {
+					err = fmt.Errorf("Server indicates folder may of been changed.")
+				}
+				return -2, err
 			}
 		} else {
 			fid = cid
@@ -499,8 +514,9 @@ type download_task struct {
 
 type download_list struct {
 	mutex sync.Mutex
-	list []download_task
+	list  []download_task
 }
+
 func (d *download_list) AddFile(file download_task) {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
@@ -508,9 +524,12 @@ func (d *download_list) AddFile(file download_task) {
 }
 
 // DownloadFolder task.
-func (s Session) DownloadFolder() (err error) {
-	var files_found bool
-	var f_list download_list
+func (s Session) DownloadFolder() error {
+	var (
+		files_found bool
+		f_list      download_list
+		err         error
+	)
 
 	queue := make(chan (interface{}), 0)
 	defer func() { queue <- exit{} }()
@@ -524,7 +543,7 @@ func (s Session) DownloadFolder() (err error) {
 				files_found = true
 				if err := s.Download(msg.kw_file, msg.path); err != nil && err != ErrDownloaded {
 					nfo.Err("%s: %s.", fmt.Sprintf("%s/%s", msg.path, msg.kw_file.Name), err)
-				} 
+				}
 			case exit:
 				halt = true
 			}
@@ -536,7 +555,7 @@ func (s Session) DownloadFolder() (err error) {
 
 	// Establish which folders we will be downloading.
 	sync_map := make(map[string]int)
-	sync_folders := cleanSlice(Config.MGet("configuration", "kw_folder_filter"))
+	sync_folders := cleanSlice(Config.MGet(task+":opts", "select_folders"))
 
 	if len(sync_folders) == 0 {
 		kw_folders, err := s.GetFolders()
@@ -557,16 +576,16 @@ func (s Session) DownloadFolder() (err error) {
 		if fid, found := sync_map[kw_folder]; found {
 			folder_id = fid
 		} else {
-			folder_id, err = s.FindFolder(kw_folder)
+			folder_id, err = s.FindFolder(0, kw_folder)
 			if err != nil {
 				if len(users) == 1 {
 					nfo.Err(err)
 					files_found = true
 				}
+				err = nil
 				continue
 			}
 		}
-
 		if err := s.mapFolders(kw_folder, folder_id, &f_list); err != nil {
 			return err
 		}
@@ -581,10 +600,11 @@ func (s Session) DownloadFolder() (err error) {
 	}
 
 	if !files_found {
-		nfo.Log("\nNo new files found.")
+		nfo.Log("\n")
+		nfo.Log("No new files found.")
 	}
 
-	return
+	return nil
 }
 
 // Creates folders locally, add to to kw_folders.
@@ -610,11 +630,11 @@ func (s Session) mapFolders(path string, folder_id int, f_list *download_list) (
 		return err
 	}
 
-	nfo.Log("- %s (Nested Folders: %d Files: %d)", path, len(folders.Data), len(files.Data))
+	nfo.Log("- Folder: %s (Files: %d)", path, len(files.Data))
 
 	for _, folder := range folders.Data {
 		if !snoop {
-		vg.Add(1)
+			vg.Add(1)
 			go func(folder_name string, folder_id int, f_list *download_list) {
 				err := s.mapFolders(folder_name, folder_id, f_list)
 				if err != nil {

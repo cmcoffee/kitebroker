@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/cmcoffee/go-nfo"
 	"github.com/howeyc/gopass"
 	"io"
 	"io/ioutil"
@@ -22,7 +23,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"github.com/cmcoffee/go-nfo"
 )
 
 const (
@@ -67,7 +67,7 @@ func init() {
 // Move old key name to new keyname.
 func migrateConfig(section, old_key, new_key string) {
 	if result := Config.MGet(section, old_key); result[0] != NONE {
-		Config.Set(section, new_key, result[0:]...)
+		Config.Set(section, new_key, result)
 		Config.Unset(section, old_key)
 	}
 }
@@ -82,8 +82,13 @@ func HideLoader() {
 	atomic.CompareAndSwapInt32(&show_loader, 1, 0)
 }
 
+type FileInfo struct {
+	info os.FileInfo
+	string
+}
+
 // Scans parent_folder for all subfolders and files.
-func scanPath(parent_folder string) (folders []string, files []string) {
+func scanPath(parent_folder string) (folders []string, files []FileInfo) {
 	folders = []string{filepath.Clean(Config.Get("configuration", "local_path") + "/" + parent_folder)}
 	var n int
 
@@ -96,7 +101,7 @@ func scanPath(parent_folder string) (folders []string, files []string) {
 		return NONE
 	}
 
-	files = make([]string, 0)
+	files = make([]FileInfo, 0)
 
 	for {
 		folder := nextFolder()
@@ -115,7 +120,7 @@ func scanPath(parent_folder string) (folders []string, files []string) {
 				}
 				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
 			} else {
-				files = append(files, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
+				files = append(files, FileInfo{finfo, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name())})
 			}
 		}
 	}
@@ -124,7 +129,7 @@ func scanPath(parent_folder string) (folders []string, files []string) {
 		folders[n] = strings.TrimPrefix(folder, local_path+SLASH)
 	}
 	for n, file := range files {
-		files[n] = strings.TrimPrefix(file, local_path+SLASH)
+		files[n].string = strings.TrimPrefix(file.string, local_path+SLASH)
 	}
 
 	return folders, files
@@ -173,10 +178,10 @@ func get_passw(question string) string {
 
 	for {
 		fmt.Printf(question)
-		resp, err := gopass.GetPasswd()
+		resp, err := gopass.GetPasswdMasked()
 		if err != nil {
 			if err == gopass.ErrInterrupted {
-				os.Exit(1)
+				nfo.Exit(1)
 			}
 			fmt.Printf("Err: %s\n", err.Error())
 			continue
@@ -448,31 +453,27 @@ func compressFolder(input_folder, dest_file string) (err error) {
 
 	for _, file := range files {
 		nfo.Log("Flattening %s ...", file)
-		f, err := w.Create(file)
+		f, err := w.Create(file.string)
 		if err != nil {
 			return err
 		}
-		r, err := Open(file)
+		r, err := Open(file.string)
 		if err != nil {
 			return err
 		}
 
-		finfo, err := Stat(file)
-		if err != nil {
-			nfo.Err(err)
-			continue
-		}
-		tm := NewTMonitor("processing", finfo.Size())
+		tm := NewTMonitor("processing", file.info.Size())
 		show_transfer := uint32(1)
 
 		go func() {
 			for atomic.LoadUint32(&show_transfer) == 1 {
-				tm.ShowTransfer()
+				tm.ShowTransfer(false)
 				time.Sleep(time.Second)
 			}
 		}()
 		err = Transfer(r, f, tm)
 		atomic.StoreUint32(&show_transfer, 0)
+		tm.ShowTransfer(true)
 		if err != nil {
 			nfo.Err(err)
 			continue

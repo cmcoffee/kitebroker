@@ -37,9 +37,9 @@ var ErrDownloaded = fmt.Errorf("File is already downloaded.")
 
 // Converts kiteworks API errors to standard golang error message.
 func respError(resp *http.Response) (err error) {
-    if resp == nil {
-    	return
-    }
+	if resp == nil {
+		return
+	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
@@ -62,7 +62,7 @@ func respError(resp *http.Response) (err error) {
 	}
 
 	if snoop {
-		nfo.Print("<-- RESPONSE STATUS: %s", resp.Status)
+		nfo.Stdout("<-- RESPONSE STATUS: %s", resp.Status)
 	}
 
 	output, err := ioutil.ReadAll(body)
@@ -71,7 +71,7 @@ func respError(resp *http.Response) (err error) {
 	}
 
 	if snoop {
-		nfo.Print("\n")
+		nfo.Stdout("\n")
 	}
 
 	var kite_err *KiteErr
@@ -95,46 +95,29 @@ func respError(resp *http.Response) (err error) {
 		return e
 	}
 
-	return fmt.Errorf(resp.Status)
-}
-
-// RetryToken will attempt to get a new token when there is an error with the current token.
-func (s Session) RetryToken(err error) bool {
-	if KiteError(err, ERR_AUTH_PROFILE_CHANGED|ERR_AUTH_UNAUTHORIZED|ERR_INVALID_GRANT) {
-		var kauth *KiteAuth
-		DB.Get("tokens", s, &kauth)
-		if kauth != nil {
-			kauth.Expiry = 0
-			DB.CryptSet("tokens", s, &kauth)
-		}
-
-		_, err := s.GetToken()
-		if err == nil {
-			return true
-		} else {
-			DB.Unset("tokens", s) // Token is a lost cause, get rid of it.
-		}
-	}
-	return false
+	return fmt.Errorf("%s says \"%s.\"", Config.Get("configuration", "server"), resp.Status)
 }
 
 type KiteRequest struct {
+	APIVer int
 	Action string
-	Path string
-	Params  []interface{}
+	Path   string
+	Params []interface{}
 	Output interface{}
 }
 
-func (s Session) CKW(kw_req KiteRequest) (err error) {
+func (s Session) Call(kw_req KiteRequest) (err error) {
 
-	req, err := s.NewRequest(kw_req.Action, kw_req.Path)
+	req, err := s.NewRequest(kw_req.Action, kw_req.Path, kw_req.APIVer)
 	if err != nil {
 		return err
 	}
 
 	if snoop {
-		nfo.Print("\n--> ACTION: \"%s\" PATH: \"%s\"", strings.ToUpper(kw_req.Action), kw_req.Path)
+		nfo.Stdout("\n--> ACTION: \"%s\" PATH: \"%s\"", strings.ToUpper(kw_req.Action), kw_req.Path)
 	}
+
+	var body []byte
 
 	for _, in := range kw_req.Params {
 		switch i := in.(type) {
@@ -144,10 +127,10 @@ func (s Session) CKW(kw_req KiteRequest) (err error) {
 			for k, v := range i {
 				p.Add(k, fmt.Sprintf("%v", v))
 				if snoop {
-					nfo.Print("\\-> POST PARAM: \"%s\" VALUE: \"%s\"", k, p[k])
+					nfo.Stdout("\\-> POST PARAM: \"%s\" VALUE: \"%s\"", k, p[k])
 				}
 			}
-			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(p.Encode())))
+			body = []byte(p.Encode())
 		case PostJSON:
 			req.Header.Set("Content-Type", "application/json")
 			json, err := json.Marshal(i)
@@ -155,94 +138,76 @@ func (s Session) CKW(kw_req KiteRequest) (err error) {
 				return err
 			}
 			if snoop {
-				nfo.Print("\\-> POST JSON: %s", string(json))
+				nfo.Stdout("\\-> POST JSON: %s", string(json))
 			}
-			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(json)))
+			body = json
 		case Query:
 			q := req.URL.Query()
 			for k, v := range i {
 				q.Set(k, fmt.Sprintf("%v", v))
 				if snoop {
-					nfo.Print("\\-> QUERY: %s=%s", k, q[k])
+					nfo.Stdout("\\-> QUERY: %s=%s", k, q[k])
 				}
 			}
 			req.URL.RawQuery = q.Encode()
-		case io.ReadCloser:
-			req.Body = i
+		default:
+			return fmt.Errorf("kitebroker error, unknown request exception.")
 		}
 	}
-	client := s.NewClient()
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
+
+	var resp *http.Response
+
+	// Retry call on failures.
+	for i := 0; i < MAX_RETRY; i++ {
+		req.Body = ioutil.NopCloser(bytes.NewReader(body))
+		client := s.NewClient()
+		resp, err = client.Do(req)
+		if err != nil && KiteError(err, ERR_INTERNAL_SERVER_ERROR|TOKEN_ERR) {
+			if s.ChkToken(err) {
+				if err := s.SetToken(req); err != nil {
+					return err
+				}
+			}
+			time.Sleep(time.Second)
+			continue
+		} else if err != nil {
+			return err
+		}
+
+		err = s.DecodeJSON(resp, kw_req.Output)
+		if err != nil && KiteError(err, ERR_INTERNAL_SERVER_ERROR|TOKEN_ERR) {
+			nfo.Debug("(JSON) %s -> %s: %s (%d/%d)", s, kw_req.Path, err.Error(), i+1, MAX_RETRY)
+			if s.ChkToken(err) {
+				if err := s.SetToken(req); err != nil {
+					return err
+				}
+			}
+			time.Sleep(time.Second)
+			continue
+		} else {
+			break
+		}
 	}
 
-	return s.DecodeJSON(resp, kw_req.Output)
+	return err
 }
 
-// Wrapper around request and client to make simple requests for information to appliance.
-func (s Session) Call(action, path string, output interface{}, input ...interface{}) (err error) {
-
-	req, err := s.NewRequest(action, path)
+func (s Session) SetToken(req *http.Request) (err error) {
+	access_token, err := s.GetToken()
 	if err != nil {
 		return err
 	}
-
-	action = strings.ToUpper(action)
-
-	if snoop {
-		nfo.Print("\n--> ACTION: \"%s\" PATH: \"%s\"", action, path)
-	}
-
-	for _, in := range input {
-		switch i := in.(type) {
-		case PostFORM:
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			p := make(url.Values)
-			for k, v := range i {
-				p.Add(k, fmt.Sprintf("%v", v))
-				if snoop {
-					nfo.Print("\\-> POST PARAM: \"%s\" VALUE: \"%s\"", k, p[k])
-				}
-			}
-			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(p.Encode())))
-		case PostJSON:
-			req.Header.Set("Content-Type", "application/json")
-			json, err := json.Marshal(i)
-			if err != nil {
-				return err
-			}
-			if snoop {
-				nfo.Print("\\-> POST JSON: %s", string(json))
-			}
-			req.Body = ioutil.NopCloser(bytes.NewReader([]byte(json)))
-		case Query:
-			q := req.URL.Query()
-			for k, v := range i {
-				q.Set(k, fmt.Sprintf("%v", v))
-				if snoop {
-					nfo.Print("\\-> QUERY: %s=%s", k, q[k])
-				}
-			}
-			req.URL.RawQuery = q.Encode()
-		case io.ReadCloser:
-			req.Body = i
-		}
-	}
-
-	client := s.NewClient()
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("No Error?")
-	return s.DecodeJSON(resp, output)
+	req.Header.Set("Authorization", "Bearer "+access_token)
+	return
 }
 
 // Create new formed http request for appliance.
-func (s Session) NewRequest(action, path string) (req *http.Request, err error) {
+func (s Session) NewRequest(action, path string, api_ver int) (req *http.Request, err error) {
+
+	if api_ver == 0 {
+		api_ver = 11
+	}
+
 	req, err = http.NewRequest(action, fmt.Sprintf("https://%s%s", server, path), nil)
 	if err != nil {
 		return nil, err
@@ -250,15 +215,14 @@ func (s Session) NewRequest(action, path string) (req *http.Request, err error) 
 
 	req.URL.Host = server
 	req.URL.Scheme = "https"
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_ver))
 	req.Header.Set("User-Agent", fmt.Sprintf("%s-%s", NAME, VERSION))
 	req.Header.Set("Referer", "https://"+server+"/")
 
-	access_token, err := s.GetToken()
+	err = s.SetToken(req)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+access_token)
 
 	return req, nil
 }
@@ -267,6 +231,7 @@ type KCall struct {
 	*http.Client
 }
 
+// Perform request.
 func (c *KCall) Do(req *http.Request) (*http.Response, error) {
 	<-api_call_bank
 	defer func() { api_call_bank <- call_done }()
@@ -291,7 +256,7 @@ func (s Session) NewClient() *KCall {
 	}
 
 	// Setup proxy setting.
-	if proxy_host := Config.Get("configuration", "proxy"); proxy_host != NONE {
+	if proxy_host := Config.Get("configuration", "proxy_uri"); proxy_host != NONE {
 		proxyURL, err := url.Parse(proxy_host)
 		errChk(err)
 		transport.Proxy = http.ProxyURL(proxyURL)
@@ -304,22 +269,24 @@ func (s Session) NewClient() *KCall {
 func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error) {
 
 	defer resp.Body.Close()
-	defer func() {
-		if snoop {
-			nfo.Print("\n")
-		}
-	}()
 
 	var body io.Reader
 
 	if snoop {
-		body = io.TeeReader(resp.Body, os.Stderr)
+		if _, ok := output.(**KiteAuth); !ok {
+			body = io.TeeReader(resp.Body, os.Stderr)
+			defer func() {
+				nfo.Stdout("\n")
+			}()
+		} else {
+			body = resp.Body
+		}
 	} else {
 		body = resp.Body
 	}
 
 	if output == nil && snoop {
-		nfo.Print("<-- RESPONSE STATUS: %s", resp.Status)
+		nfo.Stdout("<-- RESPONSE STATUS: %s", resp.Status)
 		ioutil.ReadAll(body)
 		return nil
 	} else if output == nil {
@@ -327,13 +294,21 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 	}
 
 	if snoop {
-		nfo.Print("<-- RESPONSE STATUS: %s", resp.Status)
+		nfo.Stdout("<-- RESPONSE STATUS: %s", resp.Status)
 	}
 
 	dec := json.NewDecoder(body)
 	err = dec.Decode(output)
 	if err == io.EOF {
 		return nil
+	}
+	if err != nil {
+		if snoop {
+			ioutil.ReadAll(body)
+			err = fmt.Errorf("I cannot understand what %s is saying.", Config.Get("configuration", "server"))
+		} else {
+			err = fmt.Errorf("I cannot understand what %s is saying. (Try running %s --rest_snoop)", Config.Get("configuration", "server"), os.Args[0])
+		}
 	}
 	return
 }
@@ -342,6 +317,7 @@ func (s Session) DecodeJSON(resp *http.Response, output interface{}) (err error)
 type KiteUser struct {
 	ID         int         `json:"id"`
 	Active     bool        `json:"active"`
+	Suspended  bool        `json:"suspended"`
 	BaseDirID  int         `json:"basedirId"`
 	Deleted    bool        `json:"deleted"`
 	Email      string      `json:"email"`
@@ -397,7 +373,16 @@ type KiteArray struct {
 	} `json:"metadata"`
 }
 
+type KiteUserArray struct {
+	Users    []KiteUser `json:"data"`
+	Metadata struct {
+		Total  uint `json:"total"`
+		Offset int  `json:"offset"`
+	} `json:"metadata"`
+}
+
 var SetPath = fmt.Sprintf
+
 func SetParams(vars ...interface{}) (output []interface{}) {
 	for _, v := range vars {
 		output = append(output, v)
@@ -407,12 +392,12 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 
 // Get My User information.
 func (s Session) MyUser() (output KiteUser, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: "/rest/users/me",
+		Path:   "/rest/users/me",
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Returns Folder ID of the Account's My Folder.
@@ -444,7 +429,11 @@ func SelfLink(input *[]KiteLinks) string {
 }
 
 func (s Session) GetRoles() (roles KiteArray, err error) {
-	err = s.Call("GET", "/rest/roles", &roles)
+	err = s.Call(KiteRequest{
+		Action: "GET",
+		Path:   "/rest/roles",
+		Output: &roles,
+	})
 	if err != nil {
 		return
 	}
@@ -454,13 +443,13 @@ func (s Session) GetRoles() (roles KiteArray, err error) {
 
 // Pulls up all top level folders.
 func (s Session) GetFolders() (output KiteArray, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: "/rest/folders/top",
+		Path:   "/rest/folders/top",
 		Params: SetParams(Query{"deleted": false}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Find a user_id
@@ -471,14 +460,14 @@ func (s Session) FindUser(user_email string) (id int, err error) {
 		Users []KiteUser `json:"data"`
 	}
 
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: "/rest/users",
+		Path:   "/rest/users",
 		Params: SetParams(Query{"email": user_email, "mode": "compact"}),
 		Output: &info,
 	}
 
-	err = s.CKW(req)
+	err = s.Call(req)
 	if err != nil {
 		return -1, err
 	}
@@ -495,35 +484,22 @@ func (s Session) NewUser(user_email string, type_id int, verified, notify bool) 
 
 	var info KiteUser
 
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "POST",
-		Path: "/rest/users",
-		Params: SetParams(PostJSON{"email": user_email, "userTypeId": type_id, "verified": verified, "sendNotification":notify}, Query{"returnEntity":true}),
+		Path:   "/rest/users",
+		Params: SetParams(PostJSON{"email": user_email, "userTypeId": type_id, "verified": verified, "sendNotification": notify}, Query{"returnEntity": true}),
 		Output: &info,
 	}
 
-	if err = s.CKW(req); err != nil {
+	if err = s.Call(req); err != nil {
 		id = info.ID
 	}
 
 	return id, err
 }
 
-func (s Session) FindChildFolder(parent_folder int, child_folder string) (id int, err error) {
-	sub_folders, err := s.ListFolders(parent_folder)
-	if err != nil {
-		return -1, err
-	}
-	for _, folder := range sub_folders.Data {
-		if strings.ToLower(folder.Name) == strings.ToLower(child_folder) {
-			return folder.ID, nil
-		}
-	}
-	return -1, fmt.Errorf("%s: Child folder not found.", child_folder)
-}
-
 // Returns the folder id of folder, can be specified as TopFolder/Nested or TopFolder\Nested.
-func (s Session) FindFolder(remote_folder string) (id int, err error) {
+func (s Session) FindFolder(base_folder_id int, remote_folder string) (id int, err error) {
 
 	id = -1
 
@@ -540,12 +516,21 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 		return false
 	}
 
-	top_shared, err := s.GetFolders()
-	if err != nil {
-		return -1, err
+	var folders KiteArray
+
+	if base_folder_id < 1 {
+		folders, err = s.GetFolders()
+		if err != nil {
+			return
+		}
+	} else {
+		folders, err = s.ListFolders(base_folder_id)
+		if err != nil {
+			return
+		}
 	}
 
-	for _, e := range top_shared.Data {
+	for _, e := range folders.Data {
 		if strings.ToLower(e.Name) == strings.ToLower(folder_names[0]) {
 			id = e.ID
 			break
@@ -553,7 +538,7 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	}
 
 	if id < 0 {
-		return -1, fmt.Errorf("Couldn't find top level folder: %s", folder_names[0])
+		return -1, fmt.Errorf("Couldn't find folder: %s", folder_names[0])
 	}
 
 	for shift_name() {
@@ -579,17 +564,17 @@ func (s Session) FindFolder(remote_folder string) (id int, err error) {
 	return
 }
 
-func (s Session) ChangeFolder(folder_id int, body string) (error) {
+func (s Session) ChangeFolder(folder_id int, body string) error {
 	pj := make(PostJSON)
 	if err := json.Unmarshal([]byte(body), &pj); err != nil {
 		return err
 	}
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "PUT",
-		Path: SetPath("/rest/folders/%d", folder_id),
+		Path:   SetPath("/rest/folders/%d", folder_id),
 		Params: SetParams(pj),
 	}
-	return s.CKW(req)
+	return s.Call(req)
 }
 
 func (s Session) NewUpload(folder_id int, filename string, modtime time.Time) (int, string, error) {
@@ -600,156 +585,144 @@ func (s Session) NewUpload(folder_id int, filename string, modtime time.Time) (i
 
 	var o T
 
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "POST",
-		Path: SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
+		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
 		Params: SetParams(PostJSON{"filename": filename, "clientModified": write_kw_time(modtime)}, Query{"returnEntity": "true", "mode": "full"}),
 		Output: &o,
 	}
 
-	return o.ID, o.URI, s.CKW(req)
+	return o.ID, o.URI, s.Call(req)
 }
 
 func (s Session) DeleteUpload(upload_id int) error {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "DELETE",
-		Path: SetPath("/rest/uploads/%d", upload_id),
+		Path:   SetPath("/rest/uploads/%d", upload_id),
 	}
-	return s.CKW(req)
+	return s.Call(req)
 }
 
 func (s Session) AddUserToFolder(user_id int, folder_id int, role_id int, notify bool) (err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "POST",
-		Path: SetPath("/rest/folders/%d/members", folder_id),
+		Path:   SetPath("/rest/folders/%d/members", folder_id),
 		Params: SetParams(PostJSON{"roleId": role_id, "userIds": []int{user_id}, "notify": notify}, Query{"returnEntity": false}),
 	}
-	return s.CKW(req)
+	return s.Call(req)
 }
 
 func (s Session) AddEmailToFolder(email string, folder_id int, role_id int, notify bool, file_notifications bool) (err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "POST",
-		Path: SetPath("/rest/folders/%d/members", folder_id),
+		Path:   SetPath("/rest/folders/%d/members", folder_id),
 		Params: SetParams(PostJSON{"roleId": role_id, "emails": []string{email}, "notify": notify, "notifyFileAdded": file_notifications}, Query{"returnEntity": false}, Query{"updateIfExists": true, "partialSuccess": true}),
 	}
-	return s.CKW(req) 
+	return s.Call(req)
 }
 
 func (s Session) RemoveEmailFromFolder(email string, folder_id int, nested bool) (err error) {
 	user_id, err := s.FindUser(email)
-	if err != nil { return err }
-	req := KiteRequest {
+	if err != nil {
+		return err
+	}
+	req := KiteRequest{
 		Action: "DELETE",
-		Path: SetPath("/rest/folders/%d/members/%d", folder_id, user_id),
+		Path:   SetPath("/rest/folders/%d/members/%d", folder_id, user_id),
 		Params: SetParams(Query{"downgradeNested": nested}),
 	}
-	return s.CKW(req)
+	return s.Call(req)
 }
 
 // Get user information.
 func (s Session) UserInfo(user_id int) (output KiteUser, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: SetPath("/rest/users/%d", user_id),
+		Path:   SetPath("/rest/users/%d", user_id),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // List Folders.
 func (s Session) ListFolders(folder_id int) (output KiteArray, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
+		APIVer: 7,
 		Action: "GET",
-		Path: SetPath("/rest/folders/%d/folders", folder_id),
+		Path:   SetPath("/rest/folders/%d/folders", folder_id),
 		Params: SetParams(Query{"deleted": false}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // List Files.
 func (s Session) ListFiles(folder_id int) (output KiteArray, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
+		APIVer: 5,
 		Action: "GET",
-		Path: SetPath("/rest/folders/%d/files", folder_id),
+		Path:   SetPath("/rest/folders/%d/files", folder_id),
 		Params: SetParams(Query{"deleted": false}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Find Files.
 func (s Session) FindFile(folder_id int, filename string) (output KiteArray, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: SetPath("/rest/folders/%d/files", folder_id),
+		Path:   SetPath("/rest/folders/%d/files", folder_id),
 		Params: SetParams(Query{"deleted": false, "name": filename, "mode": "full"}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Get File Information
 func (s Session) FileInfo(file_id int) (output KiteData, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: SetPath("/rest/files/%d", file_id),
+		Path:   SetPath("/rest/files/%d", file_id),
 		Params: SetParams(Query{"deleted": false}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Returns Folder information.
 func (s Session) FolderInfo(folder_id int) (output KiteData, err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "GET",
-		Path: SetPath("/rest/folders/%d", folder_id),
-		Params: SetParams(Query{"mode": "full"}),
+		Path:   SetPath("/rest/folders/%d", folder_id),
+		Params: SetParams(Query{"mode": "full", "deleted": false}),
 		Output: &output,
 	}
-	return output, s.CKW(req)
+	return output, s.Call(req)
 }
 
 // Deletes file from system, can be recovered.
 func (s Session) DeleteFile(file_id int) (err error) {
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "DELETE",
-		Path: SetPath("/rest/files/%d", file_id),
+		Path:   SetPath("/rest/files/%d", file_id),
 	}
-	return s.CKW(req)
+	return s.Call(req)
 }
 
 // Create remote folder
 func (s Session) CreateFolder(parent_id int, name string) (folder_id int, err error) {
 	var data KiteData
 
-	req := KiteRequest {
+	req := KiteRequest{
 		Action: "POST",
-		Path: SetPath("/rest/folders/%d/folders", parent_id),
+		Path:   SetPath("/rest/folders/%d/folders", parent_id),
 		Params: SetParams(PostJSON{"name": name}, Query{"returnEntity": true}),
 		Output: &data,
 	}
 
-	err = s.CKW(req)
+	err = s.Call(req)
 	return data.ID, err
-}
-
-// Deletes file from system permanently.
-func (s Session) EraseFile(file_id int) (err error) {
-	req := KiteRequest {
-		Action: "DELETE",
-		Path: SetPath("/rest/files/%d", file_id),
-	}
-
-	err = s.CKW(req)
-	if err != nil {
-		return
-	}
-
-	req.Path = fmt.Sprintf("/rest/files/%d/action/permanent", file_id)
-	return s.CKW(req)
 }
 
 // Find sent files
@@ -762,12 +735,12 @@ func (s Session) FindMail(filter Query) (mail_id []int, err error) {
 
 	req := KiteRequest{
 		Action: "GET",
-		Path: "/rest/mail",
+		Path:   "/rest/mail",
 		Params: SetParams(filter),
 		Output: &m,
 	}
 
-	if err = s.CKW(req); err != nil {
+	if err = s.Call(req); err != nil {
 		return nil, err
 	}
 

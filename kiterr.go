@@ -12,6 +12,14 @@ const (
 	ERR_INVALID_GRANT
 	ERR_ENTITY_DELETED_PERMANENTLY
 	ERR_ENTITY_NOT_FOUND
+	ERR_ENTITY_DELETED
+	ERR_ENTITY_PARENT_FOLDER_DELETED
+	ERR_REQUEST_METHOD_NOT_ALLOWED
+	ERR_INTERNAL_SERVER_ERROR
+)
+
+const (
+	TOKEN_ERR = ERR_AUTH_PROFILE_CHANGED | ERR_INVALID_GRANT | ERR_AUTH_UNAUTHORIZED
 )
 
 type KError struct {
@@ -27,7 +35,7 @@ func (e KError) Error() string {
 		if e_len == 1 {
 			return e.message[i]
 		} else {
-			str = append(str, fmt.Sprintf("[%d] %s", i, e.message[i]))
+			str = append(str, fmt.Sprintf("[%d] %s\n", i, e.message[i]))
 		}
 	}
 	return strings.Join(str, "\n")
@@ -52,8 +60,18 @@ func (e *KError) AddError(code, message string) {
 		e.flag |= ERR_INVALID_GRANT
 	case "ERR_ENTITY_DELETED_PERMANENTLY":
 		e.flag |= ERR_ENTITY_DELETED_PERMANENTLY
+	case "ERR_ENTITY_DELETED":
+		e.flag |= ERR_ENTITY_DELETED
 	case "ERR_ENTITY_NOT_FOUND":
 		e.flag |= ERR_ENTITY_NOT_FOUND
+	case "ERR_ENTITY_PARENT_FOLDER_DELETED":
+		e.flag |= ERR_ENTITY_PARENT_FOLDER_DELETED
+	case "ERR_REQUEST_METHOD_NOT_ALLOWED":
+		e.flag |= ERR_REQUEST_METHOD_NOT_ALLOWED
+	default:
+		if strings.Contains(code, "ERR_INTERNAL_") {
+			e.flag |= ERR_INTERNAL_SERVER_ERROR
+		}
 	}
 	e.message = append(e.message, message)
 }

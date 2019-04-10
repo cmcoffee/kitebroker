@@ -40,7 +40,7 @@ func LoadCredentials() (username, password string, err error) {
 		return username, password, NoValidToken
 	}
 
-	nfo.Print("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
+	nfo.Stdout("\n*** %s Authentication ***\n\n", Config.Get("configuration", "server"))
 
 	username = get_input("Account: ")
 
@@ -49,11 +49,27 @@ func LoadCredentials() (username, password string, err error) {
 	switch auth_flow {
 	case SIGNATURE_AUTH:
 		DB.Truncate("tokens")
-		password = get_passw("Signature Secret: ")
+		for {
+			password = get_passw("Signature Secret: ")
+			password_vrfy := get_passw("  Confirm Secret: ")
+			if password != password_vrfy {
+				nfo.Stdout("Signatures don't match.")
+				continue
+			}
+			break
+		}
 		DB.CryptSet("kitebroker", "s", &password)
 		fmt.Println(NONE)
 	case PASSWORD_AUTH:
-		password = get_passw("Password: ")
+		for {
+			password = get_passw("Password: ")
+			password_vrfy := get_passw(" Confirm: ")
+			if password != password_vrfy {
+				nfo.Stdout("Passwords don't match.")
+				continue
+			}
+			break
+		}
 		fmt.Println(NONE)
 	}
 
@@ -62,6 +78,24 @@ func LoadCredentials() (username, password string, err error) {
 }
 
 var NoValidToken = fmt.Errorf("No valid authentication tokens available.")
+
+// RetryToken will attempt to get a new token when there is an error with the current token.
+func (s Session) ChkToken(err error) bool {
+	if KiteError(err, TOKEN_ERR) {
+		var kauth *KiteAuth
+		DB.Get("tokens", s, &kauth)
+		if kauth != nil {
+			kauth.Expiry = 0
+			DB.CryptSet("tokens", s, &kauth)
+		}
+
+		_, err := s.GetToken()
+		if err == nil {
+			return true
+		}
+	}
+	return false
+}
 
 // Call to appliance for Bearer token.
 func (s Session) GetToken() (access_token string, err error) {
@@ -77,7 +111,16 @@ func (s Session) GetToken() (access_token string, err error) {
 		return auth.AccessToken, nil
 	}
 
-	req, err := http.NewRequest("POST", fmt.Sprintf("https://%s/oauth/token", server), nil)
+	// Clear this token, we're either getting a new token or a refresh token.
+	DB.Unset("tokens", s)
+
+	attempts := 0
+
+RequestToken:
+
+	path := fmt.Sprintf("https://%s/oauth/token", server)
+
+	req, err := http.NewRequest("POST", path, nil)
 	if err != nil {
 		return NONE, err
 	}
@@ -85,7 +128,7 @@ func (s Session) GetToken() (access_token string, err error) {
 	header := make(http.Header)
 
 	header.Set("Content-Type", "application/x-www-form-urlencoded")
-	header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
+	//header.Set("X-Accellion-Version", fmt.Sprintf("%s", KWAPI_VERSION))
 	header.Set("User-Agent", fmt.Sprintf("%s(v%s)", NAME, VERSION))
 
 	req.Header = header
@@ -142,24 +185,45 @@ func (s Session) GetToken() (access_token string, err error) {
 		}
 	}
 
+	if snoop {
+		nfo.Stdout("\n--> ACTION: \"POST\" PATH: \"%s\"", path)
+		for k, v := range *postform {
+			if k == "grant_type" || k == "redirect_uri" || k == "scope" {
+				nfo.Stdout("\\-> POST PARAM: %s VALUE: %s", k, v)
+			} else {
+				nfo.Stdout("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
+			}
+		}
+	}
+
 	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
 
 	client := s.NewClient()
 
 	resp, err := client.Do(req)
 	if err != nil {
+		if KiteError(err, TOKEN_ERR) {
+			DB.Unset("tokens", s)
+			if auth_flow != SIGNATURE_AUTH {
+				nfo.Fatal(err)
+			} else {
+				found = false
+				attempts = attempts + 1
+				if attempts < 3 {
+					goto RequestToken
+				} else {
+					nfo.Fatal("%s: %s", s, err.Error())
+				}
+			}
+		}
 		return NONE, err
 	}
 
 	if err := s.DecodeJSON(resp, &auth); err != nil {
 		return NONE, err
 	}
-
-	if err != nil {
-		if err := DB.Unset("tokens", s); err != nil {
-			return NONE, err
-		}
-		return NONE, err
+	if snoop {
+		nfo.Stdout("{\"authorization_code\":\"[HIDDEN]\",\"expires_in\":%d,\"token_type\":\"%s\", \"scope\":\"%s\", \"refresh_token\":\"[HIDDEN]\"}\n", auth.Expiry, auth.Type, auth.Scope)
 	}
 
 	auth.Expiry = auth.Expiry + time.Now().Unix()
