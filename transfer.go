@@ -101,7 +101,7 @@ func (t *TMonitor) showRate() string {
 	}
 
 	transfered := atomic.LoadInt64(&t.transfered)
-	sz := float64(transfered-t.offset) / time.Since(t.start_time).Seconds()
+	sz := float64(transfered-t.offset) * 8 / time.Since(t.start_time).Seconds()
 
 	names := []string{
 		"bps",
@@ -118,7 +118,7 @@ func (t *TMonitor) showRate() string {
 	}
 
 	if sz != 0.0 {
-		t.rate = fmt.Sprintf("%.1f%s", sz*8, names[suffix])
+		t.rate = fmt.Sprintf("%.1f%s", sz, names[suffix])
 	} else {
 		t.rate = "0.0bps"
 	}
@@ -155,7 +155,6 @@ func NewTMonitor(title string, total_sz int64) *TMonitor {
 		offset:     0,
 		rate:       "0.0bps",
 		start_time: time.Now(),
-		last_shown: time.Now(),
 	}
 }
 
@@ -167,7 +166,6 @@ type TMonitor struct {
 	rate       string
 	completed  bool
 	start_time time.Time
-	last_shown time.Time
 }
 
 func (t *TMonitor) RecordTransfer(current_sz int) {
@@ -188,7 +186,6 @@ func (t *TMonitor) ShowTransfer(log bool) {
 	} else {
 		nfo.Flash(fmt.Sprintf("(%s) %s (%s)", t.name, t.showRate(), showSize(transfered)))
 	}
-	t.last_shown = time.Now()
 }
 
 func (t *TMonitor) Offset(current_sz int64) {
@@ -357,7 +354,7 @@ func (s Session) Download(kwdl KiteData, local_dest string) (err error) {
 	go func() {
 		for atomic.LoadUint32(&show_transfer) == 1 {
 			tm.ShowTransfer(false)
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 300)
 		}
 	}()
 
