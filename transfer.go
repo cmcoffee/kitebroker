@@ -101,7 +101,16 @@ func (t *TMonitor) showRate() string {
 	}
 
 	transfered := atomic.LoadInt64(&t.transfered)
-	sz := float64(transfered-t.offset) * 8 / time.Since(t.start_time).Seconds()
+	if transfered == 0 {
+		return t.rate
+	}
+
+    since := time.Since(t.start_time).Seconds()
+    if since < 0.1 {
+    	since = 0.1
+    }
+
+	sz := float64(transfered-t.offset) * 8 / since
 
 	names := []string{
 		"bps",
