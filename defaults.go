@@ -71,7 +71,7 @@ create_empty_folders = yes
 delete_source_files_on_complete = no
 
 # [tweaks]
-# db_cleanup_time_secs = 86400
+# db_cleanup_time_hours = 768
 # chunk_size_mb = 68
 # log_size_mb = 20
 # log_rotate = 5

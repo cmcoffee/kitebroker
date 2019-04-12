@@ -1,5 +1,10 @@
 # kitebroker: Automation Assistant for kiteworks.
 
+## (v0.1.9 - 04-12-2018)
+    * Changed cleanup routine time from seconds to hours, defaulting to 768 hours instead of every 24hours.
+    * Fixed issue with background cleanup creating too many goroutines.
+    * API simultaneous calls set to 5.
+
 ## (v0.1.8 - 04-09-2018)
     * Updated transfer calculation to be on written vs read.
     * Removed custom tasks.

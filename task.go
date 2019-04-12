@@ -102,12 +102,15 @@ func backgroundCleanup() {
 		return
 	}
 
-	secs := Config.GetUint("tweaks", "db_cleanup_time_secs")
-	if secs == 0 {
-		secs = 86400
+	hours := Config.GetInt("tweaks", "db_cleanup_time_hours")
+	if hours == 0 {
+		hours = 768
+	} else if hours == -1 {
+		nfo.Debug("Background cleanup disabled with db_cleanup_time_hours < 0.")
+		return
 	}
 
-	ival := time.Second * time.Duration(secs)
+	ival := time.Hour * time.Duration(hours)
 
 	var last_cleanup time.Time
 	_, err := DB.Get("kitebroker", "last_cleanup", &last_cleanup)
@@ -119,35 +122,29 @@ func backgroundCleanup() {
 		for {
 			var err error
 			if time.Since(last_cleanup) >= ival {
+				nfo.Debug("Background cleanup process initiatied...")
 				atomic.CompareAndSwapInt32(&cleanup_working, 0, 1)
-				switch Config.Get("configuration", "task") {
-				case "recv_file":
-					if err = cleanupRecv(); err != nil {
-						nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
-					}
-				case "folder_download":
-					if err = cleanupDownloads(); err != nil {
-						nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
-					}
-				case "folder_upload":
-					if err = cleanupLocal("uploads"); err != nil {
-						nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
-					}
-					if err = cleanupLocal("folders"); err != nil {
-						nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
-					}
+				if err = cleanupRecv(); err != nil {
+					nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+				}
+				if err = cleanupDownloads(); err != nil {
+					nfo.Debug(fmt.Sprintf("cleanup error: %s", err.Error()))
+				}
+				if err = cleanupLocal("uploads"); err != nil {
+					nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
+				}
+				if err = cleanupLocal("folders"); err != nil {
+					nfo.Debug(fmt.Sprintf("cleanup: %s", err.Error()))
 				}
 				atomic.CompareAndSwapInt32(&cleanup_working, 1, 0)
-				if err != nil {
-					nfo.Debug("cleanup process error: %s", err.Error())
-					time.Sleep(time.Minute)
-					continue
-				}
 				last_cleanup = time.Now()
 				if err := DB.Set("kitebroker", "last_cleanup", last_cleanup); err != nil {
 					errChk(fmt.Errorf("cleanup: %s", err.Error()))
 				}
 			}
+
+			nfo.Debug("Next cleanup is due in %v, background cleanup thread will resume then.", last_cleanup.Add(ival).Sub(time.Now()).Round(time.Second))
+
 			// Put thread to sleep until it's time to perform cleanup.
 			time.Sleep(last_cleanup.Add(ival).Sub(time.Now()))
 		}

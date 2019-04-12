@@ -18,8 +18,9 @@ import (
 const (
 	DEFAULT_CONF = "kitebroker.cfg"
 	NAME         = "kitebroker"
-	VERSION      = "0.1.8"
+	VERSION      = "0.1.9"
 	MAX_RETRY    = 3
+	MAX_CALLS    = 5
 )
 
 var (
@@ -194,7 +195,7 @@ func main() {
 	errChk(MkDir(Config.Get("configuration", "temp_path")))
 	errChk(MkDir(Config.Get("configuration", "log_path")))
 
-	max_connections := 3
+	max_connections := MAX_CALLS
 
 	if snoop {
 		max_connections = 1
@@ -258,6 +259,7 @@ func main() {
 			Config.Unset("do_not_modify", "api_cfg_1")
 			Config.Unset("configuration", "server")
 			Config.Save("configuration")
+			Config.Save("do_not_modify")
 			nfo.Notice("API configuration cleared, account settings cleared, access tokens truncated, please run kitebroker without --reset to configure.")
 			nfo.Exit(0)
 		}
@@ -309,9 +311,11 @@ func main() {
 		ival = time.Duration(t) * time.Second
 	}
 
+	// start backup cleanup process.
+	backgroundCleanup()
+
 	// Begin scan loop.
 	for {
-		backgroundCleanup()
 		start := time.Now().Round(time.Second)
 		TaskHandler()
 		if continuous {
@@ -335,6 +339,7 @@ func main() {
 				for {
 					time.Sleep(100 * time.Millisecond)
 					if atomic.LoadInt32(&cleanup_working) == 0 {
+						nfo.Log("Cleanup process complete!")
 						break
 					}
 				}
