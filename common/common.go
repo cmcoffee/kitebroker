@@ -19,8 +19,11 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
+type Session struct {
+	*kwlib.KWSession
+}
 type Passport struct {
-	User kwlib.KWSession
+	User Session
 	DB   *kwlib.Database
 }
 

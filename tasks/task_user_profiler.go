@@ -16,7 +16,7 @@ type UserProfilerTask struct {
 	new_profile_id int
 	old_profile_id int
 	dli_email      string
-	dli_admin      *KWSession
+	dli_admin      *Session
 	user_emails    string
 	filter         string
 	unverified     bool
@@ -63,7 +63,7 @@ func (T *UserProfilerTask) Main(pass *Passport) (err error) {
 	}
 
 	if T.dli_admin == nil {
-		T.dli_admin, err = passport.User.KWAPI.SigAuth(T.dli_email)
+		T.dli_admin.KWSession, err = passport.User.KWAPI.SigAuth(T.dli_email)
 		if err != nil {
 			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
 		}
