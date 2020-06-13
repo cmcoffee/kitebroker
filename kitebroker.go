@@ -2,332 +2,178 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-cfg"
-	"github.com/cmcoffee/go-eflag"
-	"github.com/cmcoffee/go-fin"
-	"github.com/cmcoffee/go-kvlite"
-	"github.com/cmcoffee/go-logger"
-	"net"
+	. "github.com/cmcoffee/go-kwlib"
+	"github.com/cmcoffee/go-snuglib/cfg"
+	"github.com/cmcoffee/go-snuglib/eflag"
+	"github.com/cmcoffee/go-snuglib/nfo"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"sync/atomic"
+	"syscall"
 	"time"
 )
 
 const (
-	DEFAULT_CONF  = "kitebroker.cfg"
-	NAME          = "kitebroker"
-	VERSION       = "0.1.4"
-	KWAPI_VERSION = "7"
+	NAME    = "kitebroker"
+	VERSION = "1.0.0a-ng"
 )
 
-var (
-	Config          cfg.Store
-	DB              *kvlite.Store
-	chunk_size      int
-	timeout         time.Duration
-	snoop           bool
-	server          string
-	client_id       string
-	client_secret   string
-	auth_flow       uint
-	retry_count     int
-	local_path      string
-	first_token_set bool
-)
-
-// Authentication Mechnism Constants
 const (
 	SIGNATURE_AUTH = iota
 	PASSWORD_AUTH
 )
 
-// Opens local database
-func open_database(db_file string) {
+// Global Variables
+var global struct {
+	cfg cfg.Store
+	db  *Database
+	//menu menu
+	auth_mode int
+	user      KWSession
+	kw        *KWAPI
+	freq      time.Duration
+	root      string
+	setup     bool
+	snoop     bool
+}
 
-	// Provides us the mac address of the first interface.
-	get_mac_addr := func() []byte {
-		ifaces, err := net.Interfaces()
-		errChk(err)
+var (
+	FormatPath = filepath.FromSlash
+	GetPath    = filepath.ToSlash
+)
 
-		for _, v := range ifaces {
-			if len(v.HardwareAddr) == 0 {
-				continue
-			}
-			return v.HardwareAddr
-		}
-		return nil
+func init() {
+	nfo.SignalCallback(syscall.SIGINT, func() bool { Log("Application interrupt received. (shutting down)"); return true })
+
+	exec, err := os.Executable()
+	Critical(err)
+
+	global.root, err = filepath.Abs(filepath.Dir(exec))
+	Critical(err)
+
+	global.root = GetPath(global.root)
+}
+
+func load_config(config_file string) (err error) {
+	if err := load_config_defaults(); err != nil {
+		global.auth_mode = PASSWORD_AUTH
+		return err
 	}
-
-	var err error
-
-	// Open kitebroker sqlite database.
-	DB, err = kvlite.Open(db_file, get_mac_addr())
+	err = global.cfg.File(config_file)
 	if err != nil {
-		if err == kvlite.ErrBadPadlock {
-			db, err := kvlite.FastOpen(db_file, NONE)
-			errChk(err)
-			errChk(db.CryptReset())
-			errChk(db.Close())
-			DB, err = kvlite.Open(db_file, get_mac_addr())
-			errChk(err)
-		}
-		errChk(err)
+		global.auth_mode = PASSWORD_AUTH
+		return err
 	}
-}
-
-// Performs configuration.
-func api_setup() {
-
-	var server string
-
-	fmt.Println("- kiteworks Secure API Configuration -\n")
-
-RedoSetup:
-	if Config.Get("configuration", "server") == NONE {
-		server = strings.TrimPrefix(strings.ToLower(get_input("kiteworks Server: ")), "https://")
+	switch strings.ToLower(global.cfg.Get("configuration", "auth_flow")) {
+	case "signature":
+		global.auth_mode = SIGNATURE_AUTH
+	case "password":
+		global.auth_mode = PASSWORD_AUTH
+	default:
+		global.auth_mode = PASSWORD_AUTH
+		return fmt.Errorf("Unknown auth_flow setting in %s: %s", config_file, global.cfg.Get("configuration", "auth_flow"))
 	}
-	client_id := get_input("Client Application ID: ")
-	client_secret := get_input("Client Secret Key: ")
-	fmt.Println(NONE)
-
-	for confirm := getConfirm("Confirm API settings"); confirm == false; {
-		goto RedoSetup
-	}
-
-	fmt.Println(NONE)
-
-	if server != NONE {
-		Config.Set("configuration", "server", server)
-	}
-
-	api_cfg_0 := string(randBytes(37))
-	api_cfg_1 := string(encrypt([]byte(client_id), []byte(api_cfg_0)))
-	api_cfg_0 = api_cfg_0 + string(encrypt([]byte(client_secret), []byte(api_cfg_1+api_cfg_0)))
-
-	errChk(Config.Set("configuration", "api_cfg_0", api_cfg_0))
-	errChk(Config.Set("configuration", "api_cfg_1", api_cfg_1))
-
-	errChk(Config.Save("configuration"))
-}
-
-// Loads kiteworks API client id and secret from config file.
-func loadAPIConfig(config_filename string) {
-
-	api_cfg_0 := Config.Get("configuration", "api_cfg_0")
-	api_cfg_1 := Config.Get("configuration", "api_cfg_1")
-
-	if len(api_cfg_0) < 37 {
-		api_setup()
-		// Read configuration file.
-		errChk(Config.File(config_filename))
-		api_cfg_0 = Config.Get("configuration", "api_cfg_0")
-		api_cfg_1 = Config.Get("configuration", "api_cfg_1")
-	}
-
-	r_key := []byte(api_cfg_0[0:37])
-	cs_e := []byte(api_cfg_0[37:])
-	s_key := []byte(api_cfg_1 + api_cfg_0[0:37])
-
-	client_id = string(decrypt([]byte(api_cfg_1), r_key))
-	client_secret = string(decrypt(cs_e, s_key))
-	server = Config.Get("configuration", "server")
+	return nil
 }
 
 func main() {
-	fin.SetErrorLogger(logger.Err)
-	defer fin.Exit(0)
-	logger.Notify(fin.Collector)
+	HideTS()
+	defer Exit(0)
+	defer PleaseWait.Hide()
 
-	var err error
+	config_file := FormatPath(fmt.Sprintf("%s/%s.cfg", global.root, NAME))
 
-	logger.Put("[ Accellion %s %s ]\n\n", NAME, VERSION)
+	if cwd, err := os.Getwd(); err == nil {
+		local_conf := FormatPath(fmt.Sprintf("%s/%s.cfg", cwd, NAME))
+		if _, err := os.Stat(local_conf); err == nil {
+			config_file = FormatPath(local_conf)
+		}
+	}
 
 	// Initial modifier flags and flag aliases.
-	flags := eflag.NewFlagSet(os.Args[0], eflag.ExitOnError)
+	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
+	flags.StringVar(&config_file, "conf", config_file, fmt.Sprintf("%s configuration file.", NAME))
+	flags.Alias(&config_file, "conf", "C")
+	flags.BoolVar(&global.setup, "setup", false, "kiteworks API Configuration.")
+	task_files := flags.Array("task", "<task_file.tsk>", "Task file for request.")
+	flags.Alias(&task_files, "task", "T")
+	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
+	flags.Alias(&global.freq, "repeat", "R")
+	flags.Footer = " "
 
-	config_file := flags.String("config", DEFAULT_CONF, "Specify a configuration file.")
-	flags.Alias(&config_file, "config", "f")
+	flags.BoolVar(&global.snoop, "snoop", false, "Snoop on API calls to the kiteworks appliance.")
 
-	reset := flags.Bool("reset", false, "Reconfigure client credentials.")
+	f_err := flags.Parse(os.Args[1:])
 
-	flags.BoolVar(&snoop, "rest_snoop", false, "Snoop on API calls to the kiteworks appliance.")
+	// We need to do a quick look to see what commands we display for --help
 
-	flags.DurationVar(&timeout, "https_timeout", time.Duration(time.Minute*5), "Timeout for HTTP/S requests to kiteworks server.")
+	err := load_config(config_file)
 
-	debug := flags.Bool("debug", false, NONE)
-
-	flags.Parse(os.Args[1:])
-
-	// Enable debug logging if --debug flag given.
-	if *debug {
-		logger.DebugLogging = true
+	if f_err != nil {
+		if f_err != eflag.ErrHelp {
+			Stderr(f_err)
+			Stderr(NONE)
+		}
+		flags.Usage()
+		tasks.Show()
+		return
 	}
 
-	// Read configuration file.
-	errChk(Config.File(*config_file))
-
-	switch strings.ToLower(Config.Get("configuration", "auth_mode")) {
-	case "signature":
-		auth_flow = SIGNATURE_AUTH
-	case "password":
-		auth_flow = PASSWORD_AUTH
-	default:
-		errChk(fmt.Errorf("Unknown auth setting: %s", Config.Get("configuration", "auth_mode")))
-	}
-
-	// Handle changes in config file key names.
-	migrateConfig("rec_file:opts", "download_email_body", "download_seperate_email_body")
-	migrateConfig("configuration", "kw_folder", "kw_folder_filter")
-
-	// Prepare our local base path.
-	local_path = filepath.Clean(Config.Get("configuration", "local_path"))
-	local_path = strings.TrimSuffix(local_path, ".")
-	local_path = strings.TrimSuffix(local_path, SLASH)
-
-	// Make our paths if they don't exist.
-	errChk(MkDir(Config.Get("configuration", "local_path")))
-	errChk(MkDir(Config.Get("configuration", "temp_path")))
-	errChk(MkDir(Config.Get("configuration", "log_path")))
-
-	max_connections := 3
-
-	if snoop {
-		max_connections = 1
-	}
-
-	api_call_bank = make(chan struct{}, max_connections)
-	for i := 0; i < max_connections; i++ {
-		api_call_bank <- call_done
-	}
-
-	log_rotate, err := strconv.Atoi(Config.Get("configuration", "log_rotate"))
+	// Now we will go crtical on the config file not loading.
 	if err != nil {
-		logger.Warn("Could not parse log_rotate, defaulting to log_rotate of 5.")
-		log_rotate = 10
+		Critical(err)
 	}
 
-	log_size, err := strconv.Atoi(Config.Get("configuration", "log_size"))
-	if err != nil {
-		logger.Warn("Could not parse log_size, defaulting to log_size of 10240 kilobytes.")
-		log_size = 10240
+	if global.setup {
+		init_kw_api()
+		return
 	}
 
-	_, b := filepath.Split(*config_file)
-	basename := strings.Split(b, ".")[0]
+	var task_args [][]string
 
-	err = logger.File(logger.ALL, filepath.Clean(fmt.Sprintf("%s/%s.log", Config.Get("configuration", "log_path"), basename)), int64(log_size)*1024, log_rotate)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	// Open datastore
-	open_database(basename + ".db")
-
-	fin.Defer(DB.Close)
-
-	// Load API Settings
-	loadAPIConfig(*config_file)
-
-	// Reset credentials, if requested.
-	if *reset {
-		logger.Put("This will remove any and all access tokens, credentials will need to be re-entered on next run of kitebroker.\n\n")
-		if confirm := getConfirm("Are you sure you want do this"); confirm {
-			errChk(DB.Truncate("tokens"))
-			errChk(DB.Unset("kitebroker", "s"))
-			Config.Unset("configuration", "account")
-			Config.Save("configuration")
-			logger.Notice("Access tokens truncated, including access credentials, please run kitebroker without --reset to set server credentials.\n")
-			fin.Exit(0)
-		}
-		logger.Put("Aborting, Access tokens not cleared.\n")
-		fin.Exit(0)
-	}
-
-	ShowLoader()
-
-	// Get first token.
-	user := Session(Config.Get("configuration", "account"))
-
-	_, err = user.MyUser()
-	if err == nil {
-		first_token_set = true
-	} else {
-		if KiteError(err, ERR_INVALID_GRANT) {
-			if auth_flow != SIGNATURE_AUTH {
-				logger.Err(err)
-			}
-			DB.Unset("tokens", Config.Get("configuration", "account"))
-		}
-		if user.RetryToken(err) {
-			_, err := user.MyUser()
-			if err == nil {
-				first_token_set = true
-			}
-		}
-	}
-
-	if !first_token_set {
-		logger.Fatal(err)
-	}
-
-	HideLoader()
-
-	var (
-		ival       time.Duration
-		continuous bool
-		ctime      time.Duration
-	)
-
-	// Setup continuous scan loop.
-	if strings.ToLower(Config.Get("configuration", "continuous_mode")) == "yes" {
-		continuous = true
-		t, err := strconv.Atoi(Config.Get("configuration", "continuous_rate_secs"))
-		if err != nil {
-			logger.Warn("Could not parse continous_rate, defaulting to 30 seconds.")
-			t = 30
-		}
-
-		ival = time.Duration(t) * time.Second
-	}
-
-	fin.Defer(func() { logger.Log("Application exit requested.") })
-
-	// Begin scan loop.
-	for {
-		backgroundCleanup()
-		start := time.Now().Round(time.Second)
-		TaskHandler()
-		if continuous {
-			for time.Now().Sub(start) < ival {
-				ctime = time.Duration(ival - time.Now().Round(time.Second).Sub(start))
-				logger.Put(fmt.Sprintf("* Rescan will occur in %s", ctime.String()))
-				if ctime > time.Second {
-					time.Sleep(time.Duration(time.Second))
-				} else {
-					time.Sleep(ctime)
-					break
-				}
-			}
-			logger.Log("Restarting scan cycle ... (%s has elapsed since last run.)\n", time.Now().Round(time.Second).Sub(start).String())
-			logger.Log("\n")
-			continue
-		} else {
-			if atomic.LoadInt32(&cleanup_working) == 1 {
-				logger.Log("Waiting on cleanup process to complete...")
-				ShowLoader()
-				for {
-					time.Sleep(100 * time.Millisecond)
-					if atomic.LoadInt32(&cleanup_working) == 0 {
-						break
+	// Read and process task files.
+	for _, f := range *task_files {
+		var task_file cfg.Store
+		Critical(task_file.File(f))
+		for _, s := range task_file.Sections() {
+			var args []string
+			args = append(args, s)
+			for _, k := range task_file.Keys(s) {
+				for _, v := range task_file.MGet(s, k) {
+					if !strings.Contains(v, " ") && !strings.Contains(v, ",") {
+						switch strings.ToLower(v) {
+						case "yes":
+							v = "true"
+						case "no":
+							v = "false"
+						}
+						args = append(args, fmt.Sprintf("--%s=%s", k, v))
+					} else {
+						args = append(args, fmt.Sprintf("--%s=\"%s\"", k, v))
 					}
 				}
-				HideLoader()
 			}
-			logger.Log("Non-continuous total task time: %s.\n", time.Now().Round(time.Second).Sub(start).String())
-			break
+			args = append(args, f)
+			task_args = append(task_args, args)
+		}
+	}
+
+	// Read and process CLI arguments.
+	if args := flags.Args(); len(args) > 0 {
+		args = append(args, "cli")
+		task_args = append(task_args, args)
+	}
+
+	if err := tasks.Select(task_args); err != nil {
+		if err != eflag.ErrHelp {
+			Stderr(err)
+		}
+		flags.Usage()
+		tasks.Show()
+		if err == eflag.ErrHelp {
+			return
+		} else {
+			Exit(1)
 		}
 	}
 }
