@@ -103,6 +103,7 @@ func (T *UserProfilerTask) Main(pass *Passport) (err error) {
 	}
 
 	ProgressBar.New("users", user_count)
+	defer ProgressBar.Done()
 
 	var wg sync.WaitGroup
 	limiter := make(chan struct{}, 50)
