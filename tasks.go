@@ -9,5 +9,5 @@ import (
 )
 
 func init() {
-	tasks.RegisterAdmin("user_profiler", "Change user profile based on last activity date.", new(UserProfilerTask))
+	jobs.RegisterAdmin("user_profiler", "Change user profile based on last activity date.", new(UserProfilerTask))
 }

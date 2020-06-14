@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var passport *Passport
+var passport Passport
 
 type UserProfilerTask struct {
 	cut_off_days   int
@@ -53,8 +53,7 @@ func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
 }
 
 // Main function
-func (T *UserProfilerTask) Main(pass *Passport) (err error) {
-
+func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	passport = pass
 
 	if T.dli_email == NONE {

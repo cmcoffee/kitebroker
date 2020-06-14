@@ -92,13 +92,10 @@ func main() {
 
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
-	flags.StringVar(&config_file, "conf", config_file, fmt.Sprintf("%s configuration file.", NAME))
-	flags.Alias(&config_file, "conf", "C")
+	flags.StringVar(&config_file, "config", config_file, fmt.Sprintf("%s configuration file.", NAME))
 	flags.BoolVar(&global.setup, "setup", false, "kiteworks API Configuration.")
-	task_files := flags.Array("task", "<task_file.tsk>", "Task file for request.")
-	flags.Alias(&task_files, "task", "T")
+	task_files := flags.Array("file", "<task_file.tsk>", "Task file for request.\n\t(use multiple --file args for multi-task)")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
-	flags.Alias(&global.freq, "repeat", "R")
 	flags.Footer = " "
 
 	flags.BoolVar(&global.snoop, "snoop", false, "Snoop on API calls to the kiteworks appliance.")
@@ -115,7 +112,7 @@ func main() {
 			Stderr(NONE)
 		}
 		flags.Usage()
-		tasks.Show()
+		jobs.Show()
 		return
 	}
 
@@ -164,12 +161,12 @@ func main() {
 		task_args = append(task_args, args)
 	}
 
-	if err := tasks.Select(task_args); err != nil {
+	if err := jobs.Select(task_args); err != nil {
 		if err != eflag.ErrHelp {
 			Stderr(err)
 		}
 		flags.Usage()
-		tasks.Show()
+		jobs.Show()
 		if err == eflag.ErrHelp {
 			return
 		} else {

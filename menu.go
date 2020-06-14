@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var tasks menu
+var jobs menu
 
 // Menu for tasks.
 type menu struct {
@@ -66,9 +66,8 @@ func (m *menu) Register(name, desc string, task common.Task) {
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
-	my_entry.flags.BoolVar(&global.snoop, "snoop", false, "")
-	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, "How often to repeat task, 0s = single run.")
-	my_entry.flags.Alias(&global.freq, "repeat", "R")
+	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
+	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 }
 
 // Read menu items.
@@ -178,7 +177,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				new_name := fmt.Sprintf("%s:%d", x.name, i)
 				new_task := x.task.New()
 				m.mutex.RUnlock()
-				tasks.Register(new_name, x.desc, new_task)
+				jobs.Register(new_name, x.desc, new_task)
 				m.mutex.RLock()
 				input[n][0] = new_name
 				init(args)
@@ -215,7 +214,7 @@ func (m *menu) Select(input [][]string) (err error) {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
 					start := time.Now().Round(time.Second)
-					if err := x.task.Main(&common.Passport{User: common.Session{&global.user}, DB: global.db}); err != nil {
+					if err := x.task.Main(common.Passport{User: common.Session{&global.user}, DB: common.NewDS(name, global.db)}); err != nil {
 						Err(err)
 					}
 					if source == "cli" {
