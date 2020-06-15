@@ -28,7 +28,7 @@ type Session struct {
 }
 type Passport struct {
 	User Session
-	DB   *DS
+	DB   TStore
 }
 
 // Task Interface
@@ -39,59 +39,68 @@ type Task interface {
 }
 
 
-// DS is a table within the datastore.
-type DS struct {
+// TStore is a table within the datastore.
+type TStore struct {
 	prefix string
 	db *kwlib.Database
 }
 
 // Handoff DB for tasks.
-func NewDS(prefix string, db *kwlib.Database) *DS {
-	return &DS{
+func NewTStore(prefix string, db *kwlib.Database) TStore {
+	return TStore{
 		prefix: fmt.Sprintf("%s:", prefix),
 		db: db,
 	}
 }
 
-func (d DS) apply_prefix(table string) string {
+// applies prefix of table to calls.
+func (d TStore) apply_prefix(table string) string {
 	return fmt.Sprintf("%s%s", d.prefix, table)
 }
 
+// Applies additional prefix to table.
+func (d TStore) Sub(prefix string) TStore {
+	return TStore{
+		prefix: fmt.Sprintf("%s%s:", d.prefix, prefix),
+		db: d.db,
+	}
+}
+
 // DB Wrappers to perform fatal error checks on each call.
-func (d DS) Drop(table string) {
+func (d TStore) Drop(table string) {
 	d.db.Drop(d.apply_prefix(table))
 }
 
 // Encrypt value to go-kvlie, fatal on error.
-func (d DS) CryptSet(table, key string, value interface{}) {
+func (d TStore) CryptSet(table, key string, value interface{}) {
 	d.db.CryptSet(d.apply_prefix(table), key, value)
 }
 
 // Save value to go-kvlite.
-func (d DS) Set(table, key string, value interface{}) {
+func (d TStore) Set(table, key string, value interface{}) {
 	d.db.Set(d.apply_prefix(table), key, value)
 }
 
 // Retrieve value from go-kvlite.
-func (d DS) Get(table, key string, output interface{}) bool {
+func (d TStore) Get(table, key string, output interface{}) bool {
 	found := d.db.Get(d.apply_prefix(table), key, output)
 	return found
 }
 
 // List keys in go-kvlite.
-func (d DS) Keys(table string) []string {
+func (d TStore) Keys(table string) []string {
 	keylist := d.db.Keys(d.apply_prefix(table))
 	return keylist
 }
 
 // Count keys in table.
-func (d DS) CountKeys(table string) int {
+func (d TStore) CountKeys(table string) int {
 	count := d.db.CountKeys(d.apply_prefix(table))
 	return count
 }
 
 // List Tables in DB
-func (d DS) Tables() []string {
+func (d TStore) Tables() []string {
 	var tables []string
 
 	for _, t := range d.db.Tables() {
@@ -103,7 +112,13 @@ func (d DS) Tables() []string {
 }
 
 // Delete value from go-kvlite.
-func (d DS) Unset(table, key string) {
+func (d TStore) Unset(table, key string) {
 	d.db.Unset(d.apply_prefix(table), key)
 }
+
+// Drill in to specific table.
+func (d TStore) Table(table string) kwlib.Table {
+	return d.db.Table(d.apply_prefix(table))
+}
+
 

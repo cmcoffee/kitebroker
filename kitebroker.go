@@ -27,7 +27,6 @@ const (
 var global struct {
 	cfg cfg.Store
 	db  *Database
-	//menu menu
 	auth_mode int
 	user      KWSession
 	kw        *KWAPI

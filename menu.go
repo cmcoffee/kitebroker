@@ -214,7 +214,7 @@ func (m *menu) Select(input [][]string) (err error) {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
 					start := time.Now().Round(time.Second)
-					if err := x.task.Main(common.Passport{User: common.Session{&global.user}, DB: common.NewDS(name, global.db)}); err != nil {
+					if err := x.task.Main(common.Passport{User: common.Session{&global.user}, DB: common.NewTStore(name, global.db)}); err != nil {
 						Err(err)
 					}
 					if source == "cli" {
