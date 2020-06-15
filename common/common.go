@@ -22,13 +22,24 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
-
+// Session wrapper for KWSession.
 type Session struct {
 	*kwlib.KWSession
 }
+
+// Creates passport to send to task module.
+func NewPassport(task_name string, user Session, db *kwlib.Database) Passport {
+	return Passport{
+		user,
+		&TStore{
+		fmt.Sprintf("%s:", task_name),
+		db},
+	}
+}
+
 type Passport struct {
-	User Session
-	DB   TStore
+	Session
+	*TStore
 }
 
 // Task Interface
@@ -43,14 +54,6 @@ type Task interface {
 type TStore struct {
 	prefix string
 	db *kwlib.Database
-}
-
-// Handoff DB for tasks.
-func NewTStore(prefix string, db *kwlib.Database) TStore {
-	return TStore{
-		prefix: fmt.Sprintf("%s:", prefix),
-		db: db,
-	}
 }
 
 // applies prefix of table to calls.

@@ -57,15 +57,16 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	passport = pass
 
 	if T.dli_email == NONE {
-		T.dli_email = passport.User.Username
-		T.dli_admin = &passport.User
+		T.dli_email = passport.Session.Username
+		T.dli_admin = &passport.Session
 	}
 
 	if T.dli_admin == nil {
-		T.dli_admin.KWSession, err = passport.User.KWAPI.SigAuth(T.dli_email)
+		dli_admin_session, err := passport.SigAuth(T.dli_email)
 		if err != nil {
 			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
-		}
+		} 
+		T.dli_admin = &Session{dli_admin_session}
 	}
 	day := time.Duration(time.Hour * 24)
 	date := time.Now().Add((day * time.Duration(T.cut_off_days)) * -1)
@@ -80,13 +81,13 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	var users []KiteUser
 
 	if T.user_emails == NONE {
-		user_count, err = passport.User.GetUserCount(params)
+		user_count, err = passport.GetUserCount(params)
 		if err != nil {
 			return err
 		}
 	} else {
 		for _, email := range strings.Split(T.user_emails, ",") {
-			user_getter := passport.User.GetUsers(params, Query{"email": strings.ToLower(email)})
+			user_getter := passport.GetUsers(params, Query{"email": strings.ToLower(email)})
 			u, err := user_getter.Next()
 			if err != nil {
 				Err(err)
@@ -109,7 +110,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 
 	var tested bool
 
-	user_getter := passport.User.GetUsers(params, Query{"email:contains": T.filter})
+	user_getter := passport.GetUsers(params, Query{"email:contains": T.filter})
 
 	for {
 		if T.user_emails == NONE {
@@ -168,7 +169,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 
 // Changes the profile.
 func (T *UserProfilerTask) change_profile(user_id int) (err error) {
-	return passport.User.Call(APIRequest{
+	return passport.Call(APIRequest{
 		Method: "PUT",
 		Path:   SetPath("/rest/admin/profiles/%d/users", T.new_profile_id),
 		Params: SetParams(Query{"id:in": user_id}),
