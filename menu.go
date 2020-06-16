@@ -200,7 +200,7 @@ func (m *menu) Select(input [][]string) (err error) {
 	// Main task loop.
 	for {
 		ResetErrorCount()
-		tasks_loop_start := time.Now().Round(time.Second)
+		tasks_loop_start := time.Now().Round(time.Millisecond)
 		task_count := len(input) - 1
 		for i, args := range input {
 			m.mutex.RLock()
@@ -235,15 +235,14 @@ func (m *menu) Select(input [][]string) (err error) {
 
 		PleaseWait.Hide()
 		Log(NONE)
-		if task_count >= 1 {
-			Log("############### Task Cycle Summary ###############")
-			Log("   Start Time: %v", tasks_loop_start.Round(time.Second))
-			Log("    Tasks Ran: %d", task_count + 1)
-			Log("   Time Taken: %v", time.Now().Sub(tasks_loop_start).Round(time.Second))
-			Log("     Error(s): %d", ErrorCount())
-			Log("##################################################")
-			Log("\n")
-		}
+		Log("################## Task Summary ##################")
+		Log("      Started: %v", tasks_loop_start.Round(time.Millisecond))
+		Log("     Finished: %v", time.Now().Round(time.Millisecond))
+		Log("        Tasks: %d", task_count + 1)
+		Log("      Runtime: %v", time.Now().Sub(tasks_loop_start).Round(time.Second))
+		Log("     Error(s): %d", ErrorCount())
+		Log("##################################################")
+
 		// Stop here if this is non-continous.
 		if global.freq == 0 {
 			return nil
@@ -251,9 +250,10 @@ func (m *menu) Select(input [][]string) (err error) {
 
 		// Task Loop
 		if ctime := time.Now().Add(time.Duration(tasks_loop_start.Round(time.Second).Sub(time.Now().Round(time.Second)) + global.freq)).Round(time.Second); ctime.Unix() > time.Now().Round(time.Second).Unix() && ctime.Sub(time.Now().Round(time.Second)) >= time.Second {
+			Log(NONE)
 			Log("Next task cycle will begin at %s.", ctime)
 			for time.Now().Sub(tasks_loop_start) < global.freq {
-				ctime := time.Duration(global.freq - time.Now().Round(time.Second).Sub(tasks_loop_start))
+				ctime := time.Duration(global.freq - time.Now().Round(time.Second).Sub(tasks_loop_start)).Round(time.Second)
 				Flash("* Task cycle will restart in %s.", ctime.String())
 				if ctime > time.Second {
 					time.Sleep(time.Duration(time.Second))
@@ -263,7 +263,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				}
 			}
 		}
-		Log("Restarting task cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start))
+		Log("Restarting task cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start).Round(time.Second))
 		Log(NONE)
 	}
 	return nil
