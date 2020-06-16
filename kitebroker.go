@@ -92,7 +92,7 @@ func main() {
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
 	flags.StringVar(&config_file, "config", config_file, fmt.Sprintf("%s configuration file.", NAME))
-	flags.BoolVar(&global.setup, "setup", false, "kiteworks API Configuration.")
+	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
 	task_files := flags.Array("file", "<task_file.tsk>", "Task file for request.\n\t(use multiple --file args for multi-task)")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
 	flags.Footer = " "
@@ -120,8 +120,9 @@ func main() {
 		Critical(err)
 	}
 
-	if global.setup {
-		init_kw_api()
+	if *setup {
+		init_database()
+		config_api(true)
 		return
 	}
 

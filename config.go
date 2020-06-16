@@ -10,6 +10,9 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"strings"
 	"time"
+	"text/tabwriter"
+	"bytes"
+	"strconv"
 )
 
 // Loads kiteworks API client id and secret from config file.
@@ -17,96 +20,44 @@ func init_kw_api() {
 	if global.kw != nil {
 		return
 	}
-	global.kw = new(KWAPI)
 
 	// Initilize database
 	init_database()
-
-	global.kw.AgentString = fmt.Sprintf("%s/%s", NAME, VERSION)
-	global.kw.Snoop = global.snoop
-	if global.snoop {
-		global.kw.SetLimiter(1)
-	} else {
-		global.kw.SetLimiter(5)
-	}
-	global.kw.TokenStore = KVLiteStore(global.db)
-	global.kw.RedirectURI = global.cfg.Get("configuration", "redirect_uri")
-	global.kw.ProxyURI = global.cfg.Get("configuration", "proxy_uri")
-	global.kw.VerifySSL = global.cfg.GetBool("configuration", "ssl_verify")
-	global.kw.ConnectTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "connect_timeout_secs"))
-	global.kw.RequestTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "request_timeout_secs"))
-	global.kw.MaxChunkSize = (global.cfg.GetInt("configuration", "chunk_size_mb") * 1024) * 1024
-	global.kw.Retries = 3
 
 	if !global.cfg.Exists("do_not_modify") {
 		Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
 	}
 
-	api_cfg_0 := global.cfg.Get("do_not_modify", "api_cfg_0")
-	api_cfg_1 := global.cfg.Get("do_not_modify", "api_cfg_1")
-
-	if len(api_cfg_0) < 34 {
-		config_api()
-		return
-	}
-
-	r_key := []byte(api_cfg_0[0:34])
-	cs_e := []byte(api_cfg_0[34:])
-	s_key := []byte(api_cfg_1 + api_cfg_0[0:34])
-
-	global.kw.Server = global.cfg.Get("configuration", "server")
-	global.kw.ApplicationID = string(decrypt([]byte(api_cfg_1), r_key))
-	global.kw.ClientSecret(string(decrypt(cs_e, s_key)))
-
+	config_api(false)
 	init_kw_auth()
 	init_logging()
 	global.user = global.kw.Session(global.cfg.Get("configuration", "account"))
 }
 
-// Configure API settings
-func config_api() {
-	var (
-		client_id     string
-		client_secret string
-	)
-
-	Stdout("--- kiteworks API Configuration ---\n\n")
-
-	for {
-		global.kw.Server = strings.TrimPrefix(strings.ToLower(GetInput("kiteworks Server: ")), "https://")
-		global.cfg.Set("configuration", "server", global.kw.Server)
-		client_id = GetInput("Client Application ID: ")
-		client_secret = GetInput("Client Secret Key: ")
-
-		if global.auth_mode == SIGNATURE_AUTH {
-			set_signature()
-		}
-
-		Stdout(NONE)
-
-		if confirm := GetConfirm("Confirm API Settings"); confirm {
-			break
-		}
-		Stdout(NONE)
-	}
-
-	Stdout(NONE)
-
+// Sets app_id and app_secret.
+func set_api_configs(client_id, client_secret string) {
 	api_cfg_0 := string(RandBytes(34))
 	api_cfg_1 := string(encrypt([]byte(client_id), []byte(api_cfg_0)))
 	api_cfg_0 = api_cfg_0 + string(encrypt([]byte(client_secret), []byte(api_cfg_1+api_cfg_0)))
 
 	Critical(global.cfg.Set("do_not_modify", "api_cfg_0", api_cfg_0))
 	Critical(global.cfg.Set("do_not_modify", "api_cfg_1", api_cfg_1))
+}
 
-	Critical(global.cfg.Save("do_not_modify"))
-	Critical(global.cfg.Save("configuration"))
+// Loads app_id and app_secret
+func load_api_configs() (app_id, app_secret string) {
+	api_cfg_0 := global.cfg.Get("do_not_modify", "api_cfg_0")
+	api_cfg_1 := global.cfg.Get("do_not_modify", "api_cfg_1")
 
-	global.kw.ApplicationID = client_id
-	global.kw.ClientSecret(client_secret)
+	if len(api_cfg_0) < 34 {
+		return NONE, NONE
+	}
 
-	init_kw_auth()
-	init_logging()
+	r_key := []byte(api_cfg_0[0:34])
+	cs_e := []byte(api_cfg_0[34:])
+	s_key := []byte(api_cfg_1 + api_cfg_0[0:34])
+
+	return string(decrypt([]byte(api_cfg_1), r_key)), string(decrypt(cs_e, s_key))
 }
 
 // Load defaults
@@ -137,7 +88,7 @@ api_cfg_0 =
 api_cfg_1 =
 		`)
 }
-
+/*
 // Loads signature for signature authentication
 func load_signature() bool {
 	if global.auth_mode != SIGNATURE_AUTH {
@@ -151,35 +102,20 @@ func load_signature() bool {
 	}
 	global.kw.Signature(sig)
 	return true
-}
-
-// Configure signature if it's not configured as of yet.
-func set_signature() {
-	sig := GetInput("Signature Secret: ")
-	global.db.CryptSet("kitebroker", "signature", &sig)
-	global.kw.Signature(sig)
-}
+}*/
 
 // Configure user account for auth token.
 func init_kw_auth() {
-	sig_status := load_signature()
-	if global.setup {
-		global.cfg.Unset("configuration", "account")
-	}
-
-	if global.kw.Server == NONE || !sig_status {
-		Stdout("--- kiteworks API Configuration ---\n\n")
-		for global.kw.Server == NONE {
-			global.kw.Server = strings.TrimPrefix(strings.ToLower(GetInput("kiteworks Server: ")), "https://")
-		}
-		if !sig_status {
-			set_signature()
-		}
-	}
+	config_api(false)
 	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
 	username := global.cfg.Get("configuration", "account")
-	user, err := global.kw.Authenticate(username)
-	Critical(err)
+	user, err := global.kw.AuthLoop(username)
+	if err != nil {
+		Err(err)
+		Log("\n")
+		config_api(true)
+		return
+	}
 	global.cfg.Set("configuration", "account", string(user.Username))
 	Critical(global.cfg.Save("configuration"))
 }
@@ -193,6 +129,7 @@ func init_database() {
 	Critical(err)
 }
 
+// Initialize Logging.
 func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/log/%s.log", global.root, NAME)), 10, 10)
 	Critical(err)
@@ -242,4 +179,386 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	cipher.NewCFBDecrypter(block, key[0:block.BlockSize()]).XORKeyStream(decoded, decoded)
 
 	return
+}
+
+// Presents string, uses astricks if private.
+func show_var(input string, mask bool) string {
+		hide_value := func(input string) string {
+			var str []rune
+			for _ = range input {
+				str = append(str, '*')
+			}
+			return string(str)
+		}
+
+		if input == NONE {
+			return "*** UNCONFIGURED ***"
+		} else {
+			if !mask {
+				return input
+			} else {
+				return hide_value(input)
+			}
+		}
+}
+
+type config_value interface {
+	set() bool
+	is_set() bool
+	show() string
+	get() interface{}
+}
+
+
+// Configuration String
+type config_string struct {
+	desc string
+	help string
+	value string
+	mask bool
+}
+
+func (c *config_string) is_set() bool {
+	if c.value == NONE {
+		return false
+	} else {
+		return true
+	}
+}
+
+func (c *config_string) show() string {
+	return fmt.Sprintf("%s:\t%s", c.desc, show_var(c.value, c.mask))
+}
+
+func (c *config_string) set() bool {
+	var input string
+	if c.help != NONE {
+		input = GetInput(fmt.Sprintf("\n%s\n--> %s: ", c.help, c.desc))
+	} else {
+		input = GetInput(fmt.Sprintf("\n--> %s: ", c.desc))
+	}
+	if input != NONE {
+		c.value = input
+		Stdout("\n")
+		return true
+	}
+	Stdout("\n")
+	return false 
+}
+
+func (c *config_string) get() interface{} {
+	return c.value
+}
+
+
+// Configuration Bool
+type config_bool struct {
+	desc string
+	value bool
+}
+
+func (c *config_bool) is_set() bool {
+	return true
+}
+
+func (c *config_bool) show() string {
+	var value_str string
+	if c.value {
+		value_str = "yes"
+	} else {
+		value_str = "no"
+	}
+	return fmt.Sprintf("%s:\t%v", c.desc, value_str)
+}
+
+func (c *config_bool) set() bool {
+	if c.value {
+		c.value = false
+	} else {
+		c.value = true
+	}
+	return true
+}
+
+func (c *config_bool) get() interface{} {
+	return c.value
+}
+
+// Proxy Configuration
+type config_proxy struct {
+	desc string
+	value string
+}
+
+func (c *config_proxy) is_set() bool {
+	if c.value == NONE {
+		return false
+	} else {
+		return true
+	}
+}
+
+func (c *config_proxy) set() bool {
+	v := c.value
+	c.value = GetInput(fmt.Sprintf(`
+# Format of proxy server should be: https://proxy.server.com:3127
+# Leave blank for direct connection/no proxy.
+--> %s: `, c.desc))
+		Stdout("\n")
+	if c.value != v {
+		return true
+	} else {
+		return false
+	}
+}
+
+func (c *config_proxy) get() interface{} {
+	return c.value
+}
+
+func (c *config_proxy) show() string {
+	if c.value == NONE {
+		return fmt.Sprintf("%s:\t(Direct Connection/No Proxy)", c.desc)
+	} else {
+		return fmt.Sprintf("%s:\t%s", c.desc, c.value)
+	}
+}
+
+// Configuration Area
+func config_api(setup bool) {
+	app_id, app_secret := load_api_configs()
+	var sig string
+
+	global.db.Get("kitebroker", "signature", &sig)
+
+	// Variables for config menu.
+	account := &config_string{"User Account", NONE, global.cfg.Get("configuration", "account"), false}
+	server := &config_string{"kiteworks Host", "# Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", global.cfg.Get("configuration", "server"), false}
+	ssl_verify := &config_bool{"Verify SSL", global.cfg.GetBool("configuration", "ssl_verify")}
+	redirect_uri := &config_string{"Redirect URI", NONE, global.cfg.Get("configuration", "redirect_uri"), false}
+	client_app_id := &config_string{"Client Application ID", NONE, app_id, false}
+	client_app_secret := &config_string{"Client Application Secret", NONE, app_secret, true}
+	signature := &config_string{"Signature Secret", NONE, sig, true}
+	proxy := &config_proxy{"Proxy Server", global.cfg.Get("configuration", "proxy_uri")}
+
+	const (
+		show_redirect = 1 << iota
+		show_app_id
+		show_app_secret
+	)
+
+	const show_all = show_redirect|show_app_id|show_app_secret
+
+	var display BitFlag
+
+	// Checks if API is fully configured.
+	api_is_ready := func() bool {
+		if account.is_set() && server.is_set() && redirect_uri.is_set() && client_app_id.is_set() && client_app_secret.is_set() {
+			if global.auth_mode == SIGNATURE_AUTH {
+				if signature.is_set() {
+					return true
+				}
+			} else {
+				return true
+			}
+		} 
+		return false
+	}
+
+	var changed bool
+
+	// Tests the API configuration.
+	load_api := func(testing bool) (passed bool) {
+		changed = false
+		if testing {
+			Log("\n")
+		}
+		if global.kw == nil {
+			global.kw = new(KWAPI)
+		}
+		global.kw.AgentString = fmt.Sprintf("%s/%s", NAME, VERSION)
+		global.kw.Snoop = global.snoop
+		if global.snoop {
+			global.kw.SetLimiter(1)
+		} else {
+			global.kw.SetLimiter(5)
+		}
+
+		global.kw.TokenStore = KVLiteStore(global.db)
+		global.kw.RedirectURI = redirect_uri.get().(string)
+		global.kw.ProxyURI = proxy.get().(string)
+		global.kw.VerifySSL = ssl_verify.get().(bool)
+		global.kw.ConnectTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "connect_timeout_secs"))
+		global.kw.RequestTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "request_timeout_secs"))
+		global.kw.MaxChunkSize = (global.cfg.GetInt("configuration", "chunk_size_mb") * 1024) * 1024
+		global.kw.Retries = 3	
+
+		if !global.cfg.Exists("do_not_modify") {
+			Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
+		}
+		
+		global.kw.Server = server.get().(string)
+		global.kw.ApplicationID = client_app_id.get().(string)
+		global.kw.ClientSecret(client_app_secret.get().(string))
+
+		if global.auth_mode == SIGNATURE_AUTH {
+			global.kw.Signature(signature.get().(string))
+		}
+		if testing {
+			global.kw.TokenStore.Delete(strings.ToLower(account.get().(string)))
+
+			var err error
+			Flash("[%s]: Authenticating, please wait...", global.kw.Server)
+			_, err = global.kw.Authenticate(account.get().(string))
+			if err != nil {
+				Stdout("\n")
+				Err("%s\n", err.Error())
+				display.Set(show_all)
+				return false
+			}
+			err = global.kw.Session(account.get().(string)).Call(APIRequest{
+				Method: "GET",
+				Path: "/rest/users/me",
+				Output: nil,
+			})
+			if err != nil {
+				Err(err)
+				display.Set(show_all)
+				return false
+			}
+			Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)
+			return true
+		}
+		return true
+	}
+
+	// If using signature auth, show all items.
+	if global.auth_mode == SIGNATURE_AUTH {
+		display = show_all
+	}
+
+	// Not a setup, just load the configuration.
+	if !setup {
+		if api_is_ready() {
+			load_api(false)
+			return
+		}
+	}
+
+	var text_buffer bytes.Buffer
+	text := tabwriter.NewWriter(&text_buffer, 1, 8, 1, ' ', 0)
+	fmt.Fprintf(text, "--- kiteworks API configuration ---\n\n")
+
+	// Present configuration dialog.
+	for {
+		server.value = strings.TrimPrefix(strings.ToLower(server.get().(string)), "https://")
+
+		configuration := make(map[int]config_value)
+		var num int
+
+		register := func(input config_value) {
+			configuration[num] = input
+			num++
+		}
+
+		register(account)
+		register(server)
+
+		if !client_app_id.is_set() || display.Has(show_app_id) {
+			register(client_app_id)
+		}
+
+		if !client_app_secret.is_set() || display.Has(show_app_secret) {
+			register(client_app_secret)
+		}
+
+		if global.auth_mode == SIGNATURE_AUTH {
+			register(signature)
+		}
+
+		if !redirect_uri.is_set() || display.Has(show_redirect) {
+			register(redirect_uri)
+		}
+
+		register(ssl_verify)
+		register(proxy)
+
+		for i := 0; i < num; i++ {
+			fmt.Fprintf(text, "[%d] %s\n", i+1, configuration[i].show())
+		}
+		fmt.Fprintf(text, "\n[0] Test Current API Configuration.\n")
+		fmt.Fprintf(text, "\n(selection or 'q' to save & exit): ")
+		text.Flush()
+		val := GetInput(text_buffer.String())
+		text_buffer.Reset()
+
+		// Handle input, direct appropriately.
+		if strings.ToLower(val) == "q" {
+			if changed {
+				if GetConfirm("\nWould you like validate settings with a quick test?") {
+					if !load_api(true) {
+						PressEnter("(press enter to continue)")
+						Log("\n")
+						continue
+					}
+				}
+			}
+			Critical(global.cfg.Set("configuration", "account", strings.ToLower(account.get().(string))))
+			Critical(global.cfg.Set("configuration", "server", server.get().(string)))
+			Critical(global.cfg.Set("configuration", "proxy_uri", strings.ToLower(proxy.get().(string))))
+			Critical(global.cfg.Set("configuration", "redirect_uri", strings.ToLower(redirect_uri.get().(string))))
+			if global.auth_mode == SIGNATURE_AUTH {
+				sig := signature.get().(string)
+				global.db.CryptSet("kitebroker", "signature", &sig)
+			}
+			ssl_check := ssl_verify.get().(bool)
+			if ssl_check {
+				Critical(global.cfg.Set("configuration", "ssl_verify", "yes"))
+			} else {
+				Critical(global.cfg.Set("configuration", "ssl_verify", "no"))
+			}
+			app_id = client_app_id.get().(string)
+			app_secret := client_app_secret.get().(string)
+			set_api_configs(app_id, app_secret)
+
+			Critical(global.cfg.Save())
+
+			// If everything is not set, exit application, otherwise continue.
+			if !api_is_ready() {
+				Exit(0)
+			} else {
+				load_api(false)
+			}
+			return
+		} else {
+			sel, err := strconv.Atoi(val)
+			if err != nil {
+				Stdout("\n")
+				Err("Unrecognized selection: '%v'\n\n", val)
+				continue
+			}
+
+			// Find corresponding config_value and run it.
+			if v, ok := configuration[sel-1]; !ok {
+				if sel == 0 {
+					if api_is_ready() {
+						load_api(true)
+						PressEnter("(press enter to continue)")
+						Stdout("\n")
+					} else {
+						Stdout("\n")
+						Err("API is missing some required configuration, please revisit '*** UNCONFIGURED ***' settings.")
+						PressEnter("(press enter to continue)")
+						Stdout("\n")
+					}
+					continue
+				}
+				Stdout("\n")
+				Err("Unrecongized selection: '%d'\n\n", sel)
+			} else {
+				changed = v.set()
+			}
+		}
+	}
+
 }

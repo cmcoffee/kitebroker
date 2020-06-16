@@ -199,6 +199,7 @@ func (m *menu) Select(input [][]string) (err error) {
 
 	// Main task loop.
 	for {
+		ResetErrorCount()
 		tasks_loop_start := time.Now().Round(time.Second)
 		task_count := len(input) - 1
 		for i, args := range input {
@@ -208,6 +209,8 @@ func (m *menu) Select(input [][]string) (err error) {
 					nfo.PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]
 					source := args[len(args)-1]
+					pre_errors := ErrorCount()
+
 					if source == "cli" {
 						Log("<-- task '%s' started. -->", name)
 					} else {
@@ -218,9 +221,9 @@ func (m *menu) Select(input [][]string) (err error) {
 						Err(err)
 					}
 					if source == "cli" {
-						Log("<-- task '%s' took %s to complete. -->", name, time.Now().Sub(start).Round(time.Second))
+						Log("<-- task '%s' took %s to complete, %d error(s). -->", name, time.Now().Sub(start).Round(time.Second), ErrorCount() - pre_errors)
 					} else {
-						Log("<-- task '%s' (%s) took %s to complete. -->", name, source, time.Now().Sub(start).Round(time.Second))
+						Log("<-- task '%s' (%s) took %s to complete, %d error(s). -->", name, source, time.Now().Sub(start).Round(time.Second), ErrorCount() - pre_errors)
 					}
 					if i < task_count {
 						Log(NONE)
@@ -232,8 +235,15 @@ func (m *menu) Select(input [][]string) (err error) {
 
 		PleaseWait.Hide()
 		Log(NONE)
-		Log("Total task time: %s.", time.Now().Sub(tasks_loop_start).Round(time.Second))
-
+		if task_count >= 1 {
+			Log("############### Task Cycle Summary ###############")
+			Log("   Start Time: %v", tasks_loop_start.Round(time.Second))
+			Log("    Tasks Ran: %d", task_count + 1)
+			Log("   Time Taken: %v", time.Now().Sub(tasks_loop_start).Round(time.Second))
+			Log("     Error(s): %d", ErrorCount())
+			Log("##################################################")
+			Log("\n")
+		}
 		// Stop here if this is non-continous.
 		if global.freq == 0 {
 			return nil

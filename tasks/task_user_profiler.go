@@ -62,7 +62,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	}
 
 	if T.dli_admin == nil {
-		dli_admin_session, err := passport.SigAuth(T.dli_email)
+		dli_admin_session, err := passport.Authenticate(T.dli_email)
 		if err != nil {
 			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
 		} 
