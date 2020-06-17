@@ -1,13 +1,13 @@
 package common
 
 import (
-	. "github.com/cmcoffee/go-kwlib"
 	"errors"
 	"fmt"
+	. "github.com/cmcoffee/go-kwlib"
+	"io"
 	"reflect"
 	"strings"
 	"time"
-	"io"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")

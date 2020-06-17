@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
@@ -8,11 +9,10 @@ import (
 	"fmt"
 	. "github.com/cmcoffee/go-kwlib"
 	"github.com/cmcoffee/go-snuglib/nfo"
-	"strings"
-	"time"
-	"text/tabwriter"
-	"bytes"
 	"strconv"
+	"strings"
+	"text/tabwriter"
+	"time"
 )
 
 // Loads kiteworks API client id and secret from config file.
@@ -88,6 +88,7 @@ api_cfg_0 =
 api_cfg_1 =
 		`)
 }
+
 /*
 // Loads signature for signature authentication
 func load_signature() bool {
@@ -183,23 +184,23 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 
 // Presents string, uses astricks if private.
 func show_var(input string, mask bool) string {
-		hide_value := func(input string) string {
-			var str []rune
-			for _ = range input {
-				str = append(str, '*')
-			}
-			return string(str)
+	hide_value := func(input string) string {
+		var str []rune
+		for _ = range input {
+			str = append(str, '*')
 		}
+		return string(str)
+	}
 
-		if input == NONE {
-			return "*** UNCONFIGURED ***"
+	if input == NONE {
+		return "*** UNCONFIGURED ***"
+	} else {
+		if !mask {
+			return input
 		} else {
-			if !mask {
-				return input
-			} else {
-				return hide_value(input)
-			}
+			return hide_value(input)
 		}
+	}
 }
 
 type config_value interface {
@@ -209,13 +210,12 @@ type config_value interface {
 	get() interface{}
 }
 
-
 // Configuration String
 type config_string struct {
-	desc string
-	help string
+	desc  string
+	help  string
 	value string
-	mask bool
+	mask  bool
 }
 
 func (c *config_string) is_set() bool {
@@ -243,17 +243,16 @@ func (c *config_string) set() bool {
 		return true
 	}
 	Stdout("\n")
-	return false 
+	return false
 }
 
 func (c *config_string) get() interface{} {
 	return c.value
 }
 
-
 // Configuration Bool
 type config_bool struct {
-	desc string
+	desc  string
 	value bool
 }
 
@@ -286,7 +285,7 @@ func (c *config_bool) get() interface{} {
 
 // Proxy Configuration
 type config_proxy struct {
-	desc string
+	desc  string
 	value string
 }
 
@@ -304,7 +303,7 @@ func (c *config_proxy) set() bool {
 # Format of proxy server should be: https://proxy.server.com:3127
 # Leave blank for direct connection/no proxy.
 --> %s: `, c.desc))
-		Stdout("\n")
+	Stdout("\n")
 	if c.value != v {
 		return true
 	} else {
@@ -347,7 +346,7 @@ func config_api(setup bool) {
 		show_app_secret
 	)
 
-	const show_all = show_redirect|show_app_id|show_app_secret
+	const show_all = show_redirect | show_app_id | show_app_secret
 
 	var display BitFlag
 
@@ -361,7 +360,7 @@ func config_api(setup bool) {
 			} else {
 				return true
 			}
-		} 
+		}
 		return false
 	}
 
@@ -391,12 +390,12 @@ func config_api(setup bool) {
 		global.kw.ConnectTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "connect_timeout_secs"))
 		global.kw.RequestTimeout = time.Second * time.Duration(global.cfg.GetInt("configuration", "request_timeout_secs"))
 		global.kw.MaxChunkSize = (global.cfg.GetInt("configuration", "chunk_size_mb") * 1024) * 1024
-		global.kw.Retries = 3	
+		global.kw.Retries = 3
 
 		if !global.cfg.Exists("do_not_modify") {
 			Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
 		}
-		
+
 		global.kw.Server = server.get().(string)
 		global.kw.ApplicationID = client_app_id.get().(string)
 		global.kw.ClientSecret(client_app_secret.get().(string))
@@ -418,7 +417,7 @@ func config_api(setup bool) {
 			}
 			err = global.kw.Session(account.get().(string)).Call(APIRequest{
 				Method: "GET",
-				Path: "/rest/users/me",
+				Path:   "/rest/users/me",
 				Output: nil,
 			})
 			if err != nil {

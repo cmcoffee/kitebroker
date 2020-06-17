@@ -21,6 +21,8 @@ type UserProfilerTask struct {
 	filter         string
 	unverified     bool
 	deactivated    bool
+	user_changed   Tally
+	user_count     Tally
 }
 
 func (T *UserProfilerTask) New() Task {
@@ -55,6 +57,9 @@ func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
 // Main function
 func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	passport = pass
+
+	T.user_count = passport.Tally("Analyzed Users")
+	T.user_changed = pass.Tally("Modified Users")
 
 	if T.dli_email == NONE {
 		T.dli_email = passport.Session.Username
@@ -102,6 +107,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 		}
 	}
 
+	T.user_count.Add(int64(user_count))
 	ProgressBar.New("users", user_count)
 	defer ProgressBar.Done()
 
@@ -151,6 +157,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 					if err := T.change_profile(user.ID); err != nil {
 						Err("%s: %s", user.Email, err.Error())
 					} else {
+						T.user_changed.Add(1)
 						Log("%s: profile updated to profile id %d.", user.Email, T.new_profile_id)
 					}
 				} else {

@@ -1,11 +1,11 @@
-
 package common
 
 import (
+	"fmt"
 	"github.com/cmcoffee/go-kwlib"
 	"github.com/cmcoffee/go-snuglib/eflag"
-	"fmt"
 	"strings"
+	"time"
 )
 
 // Menu item flags
@@ -28,16 +28,25 @@ type Session struct {
 }
 
 // Creates passport to send to task module.
-func NewPassport(task_name string, user Session, db *kwlib.Database) Passport {
+func NewPassport(task_name string, source string, user Session, db *kwlib.Database) Passport {
 	return Passport{
+		&TaskReport{
+			task_name,
+			source,
+			time.Now().Round(time.Millisecond),
+			0,
+			make([]string, 0),
+			make([]*int64, 0),
+		},
 		user,
 		&TStore{
-		fmt.Sprintf("%s:", task_name),
-		db},
+			fmt.Sprintf("%s:", task_name),
+			db},
 	}
 }
 
 type Passport struct {
+	*TaskReport
 	Session
 	*TStore
 }
@@ -49,11 +58,10 @@ type Task interface {
 	New() Task
 }
 
-
 // TStore is a table within the datastore.
 type TStore struct {
 	prefix string
-	db *kwlib.Database
+	db     *kwlib.Database
 }
 
 // applies prefix of table to calls.
@@ -65,7 +73,7 @@ func (d TStore) apply_prefix(table string) string {
 func (d TStore) Sub(prefix string) TStore {
 	return TStore{
 		prefix: fmt.Sprintf("%s%s:", d.prefix, prefix),
-		db: d.db,
+		db:     d.db,
 	}
 }
 
@@ -123,5 +131,3 @@ func (d TStore) Unset(table, key string) {
 func (d TStore) Table(table string) kwlib.Table {
 	return d.db.Table(d.apply_prefix(table))
 }
-
-

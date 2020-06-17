@@ -210,20 +210,20 @@ func (m *menu) Select(input [][]string) (err error) {
 					name := strings.Split(x.name, ":")[0]
 					source := args[len(args)-1]
 					pre_errors := ErrorCount()
-
 					if source == "cli" {
 						Log("<-- task '%s' started. -->", name)
 					} else {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
-					start := time.Now().Round(time.Second)
-					if err := x.task.Main(common.NewPassport(name, common.Session{&global.user}, global.db)); err != nil {
+					passport := common.NewPassport(name, source, common.Session{&global.user}, global.db)
+					if err := x.task.Main(passport); err != nil {
 						Err(err)
 					}
+					passport.Summary(ErrorCount() - pre_errors)
 					if source == "cli" {
-						Log("<-- task '%s' took %s to complete, %d error(s). -->", name, time.Now().Sub(start).Round(time.Second), ErrorCount() - pre_errors)
+						Log("<-- task '%s' stopped. -->", name)
 					} else {
-						Log("<-- task '%s' (%s) took %s to complete, %d error(s). -->", name, source, time.Now().Sub(start).Round(time.Second), ErrorCount() - pre_errors)
+						Log("<-- task '%s' (%s) stopped. -->", name, source)
 					}
 					if i < task_count {
 						Log(NONE)
@@ -234,14 +234,6 @@ func (m *menu) Select(input [][]string) (err error) {
 		}
 
 		PleaseWait.Hide()
-		Log(NONE)
-		Log("################## Task Summary ##################")
-		Log("      Started: %v", tasks_loop_start.Round(time.Millisecond))
-		Log("     Finished: %v", time.Now().Round(time.Millisecond))
-		Log("        Tasks: %d", task_count + 1)
-		Log("      Runtime: %v", time.Now().Sub(tasks_loop_start).Round(time.Second))
-		Log("     Error(s): %d", ErrorCount())
-		Log("##################################################")
 
 		// Stop here if this is non-continous.
 		if global.freq == 0 {

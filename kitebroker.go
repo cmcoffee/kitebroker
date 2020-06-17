@@ -25,8 +25,8 @@ const (
 
 // Global Variables
 var global struct {
-	cfg cfg.Store
-	db  *Database
+	cfg       cfg.Store
+	db        *Database
 	auth_mode int
 	user      KWSession
 	kw        *KWAPI
