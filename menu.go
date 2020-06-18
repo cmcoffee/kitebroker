@@ -2,10 +2,9 @@ package main
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/kitebroker/common"
+	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"sort"
 	"strings"
@@ -37,12 +36,12 @@ type menu_elem struct {
 	desc   string
 	admin  bool
 	parsed bool
-	task   common.Task
-	flags  *common.FlagSet
+	task   Task
+	flags  *FlagSet
 }
 
 // Registers an admin task.
-func (m *menu) RegisterAdmin(name, desc string, task common.Task) {
+func (m *menu) RegisterAdmin(name, desc string, task Task) {
 	m.Register(name, desc, task)
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -50,13 +49,13 @@ func (m *menu) RegisterAdmin(name, desc string, task common.Task) {
 }
 
 // Registers a task with the task menu.
-func (m *menu) Register(name, desc string, task common.Task) {
+func (m *menu) Register(name, desc string, task Task) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &common.FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
 
 	m.entries[name] = &menu_elem{
 		name:  name,
@@ -66,7 +65,7 @@ func (m *menu) Register(name, desc string, task common.Task) {
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
-	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
+	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 }
 
@@ -194,7 +193,7 @@ func (m *menu) Select(input [][]string) (err error) {
 
 	init_kw_api()
 	ShowTS()
-	Log("### %s %s ###", NAME, VERSION)
+	Log("### %s %s ###", APPNAME, VERSION)
 	Log(NONE)
 
 	// Main task loop.
@@ -215,7 +214,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					} else {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
-					passport := common.NewPassport(name, source, common.Session{&global.user}, global.db)
+					passport := NewPassport(name, source, global.user, global.db)
 					if err := x.task.Main(passport); err != nil {
 						Err(err)
 					}

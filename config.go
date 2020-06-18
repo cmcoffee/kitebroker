@@ -7,12 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
+	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
+	"os"
 )
 
 // Loads kiteworks API client id and secret from config file.
@@ -125,16 +126,17 @@ func init_kw_auth() {
 func init_database() {
 	var err error
 
-	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", global.root, NAME))
+	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", global.root, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 }
 
 // Initialize Logging.
 func init_logging() {
-	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/log/%s.log", global.root, NAME)), 10, 10)
+	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/log/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
 	nfo.SetFile(nfo.ALL, file)
+	nfo.SetOutput(nfo.DEBUG, os.Stdout)
 }
 
 // Perform sha256.Sum256 against input byte string.
@@ -219,11 +221,7 @@ type config_string struct {
 }
 
 func (c *config_string) is_set() bool {
-	if c.value == NONE {
-		return false
-	} else {
-		return true
-	}
+	return c.value != NONE 
 }
 
 func (c *config_string) show() string {
@@ -271,11 +269,7 @@ func (c *config_bool) show() string {
 }
 
 func (c *config_bool) set() bool {
-	if c.value {
-		c.value = false
-	} else {
-		c.value = true
-	}
+	c.value = c.value == false
 	return true
 }
 
@@ -290,11 +284,7 @@ type config_proxy struct {
 }
 
 func (c *config_proxy) is_set() bool {
-	if c.value == NONE {
-		return false
-	} else {
-		return true
-	}
+	return c.value != NONE
 }
 
 func (c *config_proxy) set() bool {
@@ -304,11 +294,7 @@ func (c *config_proxy) set() bool {
 # Leave blank for direct connection/no proxy.
 --> %s: `, c.desc))
 	Stdout("\n")
-	if c.value != v {
-		return true
-	} else {
-		return false
-	}
+	return c.value != v
 }
 
 func (c *config_proxy) get() interface{} {
@@ -375,12 +361,14 @@ func config_api(setup bool) {
 		if global.kw == nil {
 			global.kw = new(KWAPI)
 		}
-		global.kw.AgentString = fmt.Sprintf("%s/%s", NAME, VERSION)
-		global.kw.Snoop = global.snoop
-		if global.snoop {
+		global.kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
+		global.kw.Debug = global.debug
+		if global.debug {
 			global.kw.SetLimiter(1)
+			global.kw.SetTransferLimiter(1)
 		} else {
 			global.kw.SetLimiter(5)
+			global.kw.SetTransferLimiter(int(global.cfg.GetInt("configuration", "max_file_transfers")))
 		}
 
 		global.kw.TokenStore = KVLiteStore(global.db)

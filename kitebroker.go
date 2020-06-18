@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
+	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/go-snuglib/cfg"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	NAME    = "kitebroker"
+	APPNAME = "kitebroker"
 	VERSION = "1.0.0a-ng"
 )
 
@@ -33,7 +33,7 @@ var global struct {
 	freq      time.Duration
 	root      string
 	setup     bool
-	snoop     bool
+	debug     bool
 }
 
 var (
@@ -80,10 +80,10 @@ func main() {
 	defer Exit(0)
 	defer PleaseWait.Hide()
 
-	config_file := FormatPath(fmt.Sprintf("%s/%s.cfg", global.root, NAME))
+	config_file := FormatPath(fmt.Sprintf("%s/%s.cfg", global.root, APPNAME))
 
 	if cwd, err := os.Getwd(); err == nil {
-		local_conf := FormatPath(fmt.Sprintf("%s/%s.cfg", cwd, NAME))
+		local_conf := FormatPath(fmt.Sprintf("%s/%s.cfg", cwd, APPNAME))
 		if _, err := os.Stat(local_conf); err == nil {
 			config_file = FormatPath(local_conf)
 		}
@@ -91,13 +91,13 @@ func main() {
 
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
-	flags.StringVar(&config_file, "config", config_file, fmt.Sprintf("%s configuration file.", NAME))
+	flags.StringVar(&config_file, "conf", config_file, fmt.Sprintf("%s configuration file.", APPNAME))
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
-	task_files := flags.Array("file", "<task_file.tsk>", "Task file for request.\n\t(use multiple --file args for multi-task)")
+	task_files := flags.Array("task", "<task_file.tsk>", "Task file for request.\n\t  (use multiple --task args for multi-task)")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
 	flags.Footer = " "
 
-	flags.BoolVar(&global.snoop, "snoop", false, "Snoop on API calls to the kiteworks appliance.")
+	flags.BoolVar(&global.debug, "debug", false, NONE)
 
 	f_err := flags.Parse(os.Args[1:])
 

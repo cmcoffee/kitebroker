@@ -2,8 +2,7 @@ package tasks
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
-	. "github.com/cmcoffee/kitebroker/common"
+	. "github.com/cmcoffee/kitebroker/core"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +15,8 @@ type UserProfilerTask struct {
 	new_profile_id int
 	old_profile_id int
 	dli_email      string
-	dli_admin      *Session
-	user_emails    string
+	dli_admin      *KWSession
+	user_emails    []string
 	filter         string
 	unverified     bool
 	deactivated    bool
@@ -35,7 +34,7 @@ func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
 	flag.IntVar(&T.cut_off_days, "older_than", 90, "Number of days since last activity.")
 	flag.IntVar(&T.new_profile_id, "new_profile_id", 0, "Profile ID for users to be migrated to.")
 	flag.IntVar(&T.old_profile_id, "old_profile_id", 0, "Profile ID of users to match against.")
-	flag.StringVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check, multiple entries seperated by comma.")
+	flag.SplitVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check, multiple entries seperated by comma.")
 	flag.BoolVar(&T.deactivated, "deactivated", false, "Filter out accounts that are deactivated.")
 	flag.BoolVar(&T.unverified, "unverified", false, "Filter out accounts that are unverfied.")
 	flag.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
@@ -62,8 +61,8 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	T.user_changed = pass.Tally("Modified Users")
 
 	if T.dli_email == NONE {
-		T.dli_email = passport.Session.Username
-		T.dli_admin = &passport.Session
+		T.dli_email = passport.KWSession.Username
+		T.dli_admin = &passport.KWSession
 	}
 
 	if T.dli_admin == nil {
@@ -71,7 +70,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 		if err != nil {
 			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
 		} 
-		T.dli_admin = &Session{dli_admin_session}
+		T.dli_admin = dli_admin_session
 	}
 	day := time.Duration(time.Hour * 24)
 	date := time.Now().Add((day * time.Duration(T.cut_off_days)) * -1)
@@ -85,26 +84,9 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	var user_count int
 	var users []KiteUser
 
-	if T.user_emails == NONE {
-		user_count, err = passport.GetUserCount(params)
-		if err != nil {
-			return err
-		}
-	} else {
-		for _, email := range strings.Split(T.user_emails, ",") {
-			user_getter := passport.GetUsers(params, Query{"email": strings.ToLower(email)})
-			u, err := user_getter.Next()
-			if err != nil {
-				Err(err)
-				continue
-			}
-			if len(u) == 0 {
-				Log("[%s]: User not found matching critera or does not meet critera.", email)
-				continue
-			}
-			users = append(users, u[0:]...)
-			user_count = user_count + len(u)
-		}
+	user_count, err = passport.GetUserCount(T.user_emails, params)
+	if err != nil {
+		return err
 	}
 
 	T.user_count.Add(int64(user_count))
@@ -116,14 +98,12 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 
 	var tested bool
 
-	user_getter := passport.GetUsers(params, Query{"email:contains": T.filter})
+	user_getter := passport.GetUsers(T.user_emails, params, Query{"email:contains": T.filter})
 
 	for {
-		if T.user_emails == NONE {
-			users, err = user_getter.Next()
-			if err != nil {
-				return err
-			}
+		users, err = user_getter.Next()
+		if err != nil {
+			return err
 		}
 		if len(users) == 0 {
 			break
@@ -161,7 +141,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 						Log("%s: profile updated to profile id %d.", user.Email, T.new_profile_id)
 					}
 				} else {
-					if T.user_emails != NONE {
+					if T.user_emails != nil && T.user_emails[0] != NONE {
 						Log("%s: Last active time is newer than cut-off date: %v", user.Email, last_active_time.In(time.Local))
 					}
 				}

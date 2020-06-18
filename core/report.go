@@ -1,9 +1,8 @@
-package common
+package core
 
 import (
 	"bytes"
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
 	"strings"
 	"sync/atomic"
 	"text/tabwriter"

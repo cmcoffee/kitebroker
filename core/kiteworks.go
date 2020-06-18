@@ -1,9 +1,8 @@
-package common
+package core
 
 import (
 	"errors"
 	"fmt"
-	. "github.com/cmcoffee/go-kwlib"
 	"io"
 	"reflect"
 	"strings"
@@ -71,7 +70,7 @@ type KitePermission struct {
 }
 
 // Find item in folder, using folder path, if folder_id > 0, start search there.
-func (s Session) Find(folder_id int, path string, params ...interface{}) (result KiteObject, err error) {
+func (s KWSession) Find(folder_id int, path string, params ...interface{}) (result KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
@@ -124,14 +123,14 @@ func (s Session) Find(folder_id int, path string, params ...interface{}) (result
 
 /*
 // Drills down specific folder and returns all results.
-func (s Session) CrawlFolder(folder_id int, params...interface{}) (results []KiteObject, err error) {
+func (s KWSession) CrawlFolder(folder_id int, params...interface{}) (results []KiteObject, err error) {
 	if len(params) == 0 {
 
 	}
 }*/
 
 // Get list of all top folders
-func (s Session) TopFolders(params ...interface{}) (folders []KiteObject, err error) {
+func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
@@ -146,7 +145,7 @@ func (s Session) TopFolders(params ...interface{}) (folders []KiteObject, err er
 }
 
 // Returns all items with listed folder_id.
-func (s Session) FolderContents(folder_id int, params ...interface{}) (children []KiteObject, err error) {
+func (s KWSession) FolderContents(folder_id int, params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
@@ -178,7 +177,7 @@ type KiteUser struct {
 }
 
 // Retrieve my user info.
-func (s Session) MyUser() (user KiteUser, err error) {
+func (s KWSession) MyUser() (user KiteUser, err error) {
 	err = s.Call(APIRequest{
 		Method: "GET",
 		Path:   "/rest/users/me",
@@ -188,11 +187,25 @@ func (s Session) MyUser() (user KiteUser, err error) {
 }
 
 // Get total count of users.
-func (s Session) GetUserCount(params ...interface{}) (users int, err error) {
+func (s KWSession) GetUserCount(emails []string, params ...interface{}) (users int, err error) {
 	var user []struct{}
+	if emails != nil && emails[0] != NONE {
+		for _, u := range emails {
+			err = s.DataCall(APIRequest{
+			Method: "GET",
+			Path:   "/rest/admin/users",
+			Params: SetParams(Query{"email": u}, params),
+			Output: &user}, -1, 1000)
+			if err != nil {
+				return
+			}
+			users = len(user) + users
+		}
+		return
+	}
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/admin/users"),
+		Path:   "/rest/admin/users",
 		Params: SetParams(params),
 		Output: &user}, -1, 1000)
 	return len(user), err
@@ -202,15 +215,18 @@ func (s Session) GetUserCount(params ...interface{}) (users int, err error) {
 type GetUsers struct {
 	offset  int
 	filter  Query
+	emails  []string
 	params  []interface{}
-	session *Session
+	session *KWSession
+	completed bool
 }
 
 // Admin EAPI endpoint to pull all users matching parameters.
-func (s Session) GetUsers(params ...interface{}) *GetUsers {
+func (s KWSession) GetUsers(emails []string, params ...interface{}) *GetUsers {
 	var T GetUsers
 	T.filter = make(Query)
 	T.offset = 0
+	T.emails = emails
 
 	// First extract the query from request.
 	params = SetParams(params)
@@ -253,11 +269,19 @@ func (s Session) GetUsers(params ...interface{}) *GetUsers {
 
 // Return a set of users to process.
 func (T *GetUsers) Next() (users []KiteUser, err error) {
+	if T.emails != nil && T.emails[0] != NONE {
+		if !T.completed {
+			T.completed = true
+			return T.findEmails()
+		} else {
+			return []KiteUser{}, nil
+		}
+	}
 	for {
 		var raw_users []KiteUser
 		err = T.session.DataCall(APIRequest{
 			Method: "GET",
-			Path:   SetPath("/rest/admin/users"),
+			Path:   "/rest/admin/users",
 			Params: T.params,
 			Output: &raw_users}, T.offset, 1000)
 		if err != nil {
@@ -278,7 +302,31 @@ func (T *GetUsers) Next() (users []KiteUser, err error) {
 			break
 		}
 	}
+	return
+}
 
+func (T *GetUsers) findEmails() (users []KiteUser, err error) {
+	for _, u := range T.emails {
+		var raw_users []KiteUser
+		err = T.session.DataCall(APIRequest{
+			Method: "GET",
+			Path:   "/rest/admin/users",
+			Params: SetParams(Query{"email": u}, T.params),
+			Output: &raw_users}, -1, 1000)
+		if err != nil {
+			Err("%s: %s", u, err.Error())
+			continue
+		}
+		filtered_users, err := T.filterUsers(raw_users)
+		if err != nil {
+			return nil, err
+		}
+		if len(filtered_users) > 0 {
+			users = append(users, filtered_users[0:]...)
+			continue
+		}
+		Err("%s: User not found, or did not meet specified criteria", u)
+	}
 	return
 }
 
@@ -332,7 +380,7 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 }
 
 // Downloads a file to a specific path
-func (s Session) FileDownload(file *KiteObject) (io.ReadSeeker, error) {
+func (s KWSession) FileDownload(file *KiteObject) (io.ReadSeeker, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
