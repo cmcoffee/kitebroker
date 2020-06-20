@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"io"
 	"reflect"
 	"strings"
 	"time"
@@ -29,10 +28,14 @@ type KiteObject struct {
 	ParentID        int            `json:"parentId"`
 	UserID          int            `json:"userId"`
 	Permalink       string         `json:"permalink"`
+	Secure          bool           `json:"secure"`
 	Locked          int            `json:"locked"`
 	Fingerprint     string         `json:"fingerprint"`
 	Size            int64          `json:"size"`
 	Mime            string         `json:"mime"`
+	AVStatus        string         `json:"avStatus"`
+	DLPStatus       string         `json:"dlpStatus"`
+	AdminQuarantineStatus string   `json:"adminQuarantineStatus`
 	Quarantined     bool           `json:"quarantined"`
 	DLPLocked       bool           `json:"dlpLocked"`
 	FileLifetime    int            `json:"fileLifetime"`
@@ -69,8 +72,18 @@ type KitePermission struct {
 	Disabled   bool   `json:"disabled"`
 }
 
+func (s KWSession) FileInfo(file_id int, params ...interface{}) (result KiteObject, err error) {
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path: SetPath("/rest/files/%d", file_id),
+		Params: SetParams(params),
+		Output: &result,
+	})
+	return
+}
+
 // Find item in folder, using folder path, if folder_id > 0, start search there.
-func (s KWSession) Find(folder_id int, path string, params ...interface{}) (result KiteObject, err error) {
+func (s KWSession) FindFolder(folder_id int, path string, params ...interface{}) (result KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
@@ -156,6 +169,19 @@ func (s KWSession) FolderContents(folder_id int, params ...interface{}) (childre
 		Params: SetParams(params, Query{"with": "(path)"}),
 	}, -1, 1000)
 
+	return
+}
+
+func (s KWSession) FolderInfo(folder_id int, params...interface{}) (output KiteObject, err error) {
+	if params == nil {
+		params = SetParams(Query{"deleted": false})
+	}
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path: SetPath("/rest/folders/%d", folder_id),
+		Params: SetParams(params, Query{"mode": "full", "with": "(currentUserRole, fileLifetime, path)"}),
+		Output: &output,
+	})
 	return
 }
 
@@ -380,7 +406,7 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 }
 
 // Downloads a file to a specific path
-func (s KWSession) FileDownload(file *KiteObject) (io.ReadSeeker, error) {
+func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
 	}

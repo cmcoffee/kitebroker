@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-var passport Passport
-
 type UserProfilerTask struct {
 	cut_off_days   int
 	new_profile_id int
@@ -54,19 +52,19 @@ func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
 }
 
 // Main function
-func (T *UserProfilerTask) Main(pass Passport) (err error) {
-	passport = pass
+func (T *UserProfilerTask) Main(passport Passport) (err error) {
+	xo = passport
 
-	T.user_count = passport.Tally("Analyzed Users")
-	T.user_changed = pass.Tally("Modified Users")
+	T.user_count = xo.Tally("Analyzed Users")
+	T.user_changed = xo.Tally("Modified Users")
 
 	if T.dli_email == NONE {
-		T.dli_email = passport.KWSession.Username
-		T.dli_admin = &passport.KWSession
+		T.dli_email = xo.KWSession.Username
+		T.dli_admin = &xo.KWSession
 	}
 
 	if T.dli_admin == nil {
-		dli_admin_session, err := passport.Authenticate(T.dli_email)
+		dli_admin_session, err := xo.Authenticate(T.dli_email)
 		if err != nil {
 			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
 		} 
@@ -84,7 +82,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 	var user_count int
 	var users []KiteUser
 
-	user_count, err = passport.GetUserCount(T.user_emails, params)
+	user_count, err = xo.GetUserCount(T.user_emails, params)
 	if err != nil {
 		return err
 	}
@@ -98,7 +96,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 
 	var tested bool
 
-	user_getter := passport.GetUsers(T.user_emails, params, Query{"email:contains": T.filter})
+	user_getter := xo.GetUsers(T.user_emails, params, Query{"email:contains": T.filter})
 
 	for {
 		users, err = user_getter.Next()
@@ -156,7 +154,7 @@ func (T *UserProfilerTask) Main(pass Passport) (err error) {
 
 // Changes the profile.
 func (T *UserProfilerTask) change_profile(user_id int) (err error) {
-	return passport.Call(APIRequest{
+	return xo.Call(APIRequest{
 		Method: "PUT",
 		Path:   SetPath("/rest/admin/profiles/%d/users", T.new_profile_id),
 		Params: SetParams(Query{"id:in": user_id}),

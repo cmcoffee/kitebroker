@@ -2,10 +2,10 @@ package main
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/go-snuglib/cfg"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
+	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,7 +78,6 @@ func load_config(config_file string) (err error) {
 func main() {
 	HideTS()
 	defer Exit(0)
-	defer PleaseWait.Hide()
 
 	config_file := FormatPath(fmt.Sprintf("%s/%s.cfg", global.root, APPNAME))
 

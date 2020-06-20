@@ -55,6 +55,13 @@ func (K *KWAPI) SetTransferLimiter(max_transfers int) {
 	}
 }
 
+func (K *KWAPI) GetTransferLimit() int {
+	if K.trans_limiter != nil {
+		return cap(K.trans_limiter)
+	}
+	return 1
+}
+
 // Tests TokenStore, creates one if missing.
 func (K *KWAPI) testTokenStore() {
 	if K.TokenStore == nil {

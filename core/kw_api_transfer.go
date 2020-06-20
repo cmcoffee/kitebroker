@@ -91,7 +91,7 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 
 func (W *web_downloader) Close() error {
 	if W.trans_limiter != nil {
-		*W.trans_limiter <- struct{}{}
+		<-*W.trans_limiter
 	}
 	return W.resp.Body.Close()
 }
@@ -107,6 +107,9 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 
 // Perform External Download from a remote request.
 func (S *KWSession) Download(req *http.Request) ReadSeekCloser {
+	if S.trans_limiter != nil {
+		S.trans_limiter<-struct{}{}
+	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
 	if S.AgentString == NONE {
@@ -220,8 +223,8 @@ func (S *KWSession) NewVersion(file_id int, filename string, file_size int64) (i
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (int, error) {
 	if s.trans_limiter != nil {
-		<-s.trans_limiter
-		defer func() { s.trans_limiter<-struct{}{} }()
+		s.trans_limiter<-struct{}{}
+		defer func() { <-s.trans_limiter }()
 	}
 
 	type upload_data struct {

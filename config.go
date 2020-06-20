@@ -7,13 +7,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/go-snuglib/nfo"
+	. "github.com/cmcoffee/kitebroker/core"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
-	"os"
 )
 
 // Loads kiteworks API client id and secret from config file.
@@ -221,7 +221,7 @@ type config_string struct {
 }
 
 func (c *config_string) is_set() bool {
-	return c.value != NONE 
+	return c.value != NONE
 }
 
 func (c *config_string) show() string {
@@ -400,7 +400,6 @@ func config_api(setup bool) {
 			if err != nil {
 				Stdout("\n")
 				Err("%s\n", err.Error())
-				display.Set(show_all)
 				return false
 			}
 			err = global.kw.Session(account.get().(string)).Call(APIRequest{
@@ -410,7 +409,6 @@ func config_api(setup bool) {
 			})
 			if err != nil {
 				Err(err)
-				display.Set(show_all)
 				return false
 			}
 			Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)

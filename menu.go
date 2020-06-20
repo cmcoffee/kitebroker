@@ -215,10 +215,14 @@ func (m *menu) Select(input [][]string) (err error) {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
 					passport := NewPassport(name, source, global.user, global.db)
+					report := Defer(func() error {
+						passport.Summary(ErrorCount() - pre_errors)
+						return nil
+					})
 					if err := x.task.Main(passport); err != nil {
 						Err(err)
 					}
-					passport.Summary(ErrorCount() - pre_errors)
+					report()
 					if source == "cli" {
 						Log("<-- task '%s' stopped. -->", name)
 					} else {

@@ -42,9 +42,7 @@ func NewPassport(task_name string, source string, user KWSession, db *Database) 
 			task_name,
 			source,
 			time.Now().Round(time.Millisecond),
-			0,
-			make([]string, 0),
-			make([]*int64, 0),
+			make([]*Tally, 0),
 		},
 		user,
 		&TStore{
@@ -80,7 +78,7 @@ func (d TStore) apply_prefix(table string) string {
 // Applies additional prefix to table.
 func (d TStore) Sub(prefix string) TStore {
 	return TStore{
-		prefix: fmt.Sprintf("%s%s:", d.prefix, prefix),
+		prefix: fmt.Sprintf("%s%s.", d.prefix, prefix),
 		db:     d.db,
 	}
 }
@@ -88,7 +86,7 @@ func (d TStore) Sub(prefix string) TStore {
 // Spins off a new shared table.
 func (d TStore) Shared(table string) TStore {
 	return TStore {
-		prefix: fmt.Sprintf("-shared:%s:", table),
+		prefix: fmt.Sprintf("-shared.%s.", table),
 		db:    d.db,
 	}
 }
@@ -184,6 +182,7 @@ var (
 type (
 	ReadSeekCloser = nfo.ReadSeekCloser
 	BitFlag        = bitflag.BitFlag
+	Loader         = nfo.Loader
 )
 
 // Enable Debug Logging Output
@@ -220,6 +219,12 @@ type Database struct {
 
 type Table struct {
 	table kvlite.Table
+}
+
+func (t Table) Get(key string, value interface{}) (bool) {
+	found, err := t.table.Get(key, value)
+	Critical(err)
+	return found
 }
 
 func (t Table) Set(key string, value interface{}) {
@@ -379,7 +384,8 @@ type FileInfo struct {
 
 // Scans parent_folder for all subfolders and files.
 func ScanPath(parent_folder string) (folders []string, files []FileInfo) {
-	folders = []string{filepath.Clean(parent_folder)}
+	parent_folder, _ = filepath.Abs(parent_folder)
+	folders = []string{parent_folder}
 
 	var n int
 	nextFolder := func() (output string) {
@@ -534,11 +540,11 @@ func MkDir(name ...string) (err error) {
 	for _, path := range name {
 		subs := strings.Split(path, string(os.PathSeparator))
 		for i := 0; i < len(subs); i++ {
-			p := strings.Join(subs[0:i], string(os.PathSeparator))
+			p := strings.Join(subs[0:i+1], string(os.PathSeparator))
 			if p == "" {
 				p = "."
 			}
-			_, err = os.Stat(p)
+			f, err := os.Stat(p)
 			if err != nil {
 				if os.IsNotExist(err) {
 					err = os.Mkdir(p, 0766)
@@ -548,6 +554,9 @@ func MkDir(name ...string) (err error) {
 				} else {
 					return err
 				}
+			}
+			if f != nil && !f.IsDir() {
+				return fmt.Errorf("mkdir: %s: file exists", f.Name())
 			}
 		}
 	}
@@ -579,6 +588,16 @@ func DateString(input time.Time) string {
 	return fmt.Sprintf("%s-%s-%s", pad(due_time.Year()), pad(int(due_time.Month())), pad(due_time.Day()))
 }
 
+func CombinePath(name...string) string {
+	if name == nil {
+		return NONE
+	} 
+	if len(name) < 2 {
+		return name[0]
+	}
+	return fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH))
+}
+
 // Provides human readable file sizes.
 func HumanSize(bytes int64) string {
 
@@ -598,5 +617,9 @@ func HumanSize(bytes int64) string {
 	}
 
 	return fmt.Sprintf("%.1f%s", size, names[suffix])
+}
+
+func Rename(oldpath, newpath string) error {
+	return os.Rename(oldpath, newpath)
 }
 
