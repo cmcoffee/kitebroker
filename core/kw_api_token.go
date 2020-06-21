@@ -57,12 +57,12 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 	var report_success bool
 
 	if K.secrets.signature_key == nil {
-		Stdout("--- %s authentication ---\n\n", K.Server)
+		Stdout("### %s authentication ###\n\n", K.Server)
 		for {
 			if username == NONE {
-				username = strings.ToLower(GetInput("-> username: "))
+				username = strings.ToLower(GetInput("-> login e-mail: "))
 			} else {
-				Stdout("-> username: %s", username)
+				Stdout("-> user: %s", username)
 			}
 			report_success = true
 			password := GetSecret("-> password: ")

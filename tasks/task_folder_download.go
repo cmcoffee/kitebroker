@@ -344,7 +344,7 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		dst.Close()
 		os.Remove(tmp_file_name)
 		if file.AdminQuarantineStatus != "allowed" {
-			Warn("%s/%s: Cannot be downloaded, file is under administrator quarantine.", path, file.Name)
+			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", path, file.Name)
 			return nil
 		}
 		if file.AVStatus != "allowed" {
