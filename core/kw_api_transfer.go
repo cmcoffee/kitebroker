@@ -108,7 +108,7 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 // Perform External Download from a remote request.
 func (S *KWSession) Download(req *http.Request) ReadSeekCloser {
 	if S.trans_limiter != nil {
-		S.trans_limiter<-struct{}{}
+		S.trans_limiter <- struct{}{}
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
@@ -192,11 +192,11 @@ func (S *KWSession) NewUpload(folder_id int, filename string, file_size int64) (
 	}
 
 	if err := S.Call(APIRequest{
-		APIVer: 5,
-		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
-		Params: SetParams(PostJSON{"filename": filename, "totalSize": file_size, "totalChunks": S.Chunks(file_size)}, Query{"returnEntity": true}),
-		Output: &upload,
+		Version: 5,
+		Method:  "POST",
+		Path:    SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
+		Params:  SetParams(PostJSON{"filename": filename, "totalSize": file_size, "totalChunks": S.Chunks(file_size)}, Query{"returnEntity": true}),
+		Output:  &upload,
 	}); err != nil {
 		return -1, err
 	}
@@ -223,7 +223,7 @@ func (S *KWSession) NewVersion(file_id int, filename string, file_size int64) (i
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (int, error) {
 	if s.trans_limiter != nil {
-		s.trans_limiter<-struct{}{}
+		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
 	}
 

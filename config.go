@@ -1,23 +1,25 @@
 package main
 
 import (
-	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/options"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
-	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
 )
 
 // Wrapper for config items stored in database
 type dbConfig Database
+
+func Config(input *Database) dbConfig {
+	return dbConfig(*input)
+}
 
 func (d dbConfig) user() (account string) {
 	global.db.Get("kitebroker", "account", &account)
@@ -76,7 +78,6 @@ func (d dbConfig) chunk_size_mb() (max int) {
 	return
 }
 
-
 // Loads kiteworks API client id and secret from config file.
 func init_kw_api() {
 	if global.kw != nil {
@@ -91,9 +92,19 @@ func init_kw_api() {
 	}
 
 	config_api(false)
-	init_kw_auth()
+
+	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
+	username := dbConfig(*global.db).user()
+	user, err := global.kw.AuthLoop(username)
+	if err != nil {
+		Err(err)
+		Log("\n")
+		config_api(true)
+		return
+	}
+	dbConfig(*global.db).set_user(string(user.Username))
+
 	init_logging()
-	global.user = global.kw.Session(dbConfig(*global.db).user())
 }
 
 // Sets app_id and app_secret.
@@ -141,37 +152,6 @@ ssl_verify = yes
 api_cfg_0 =
 api_cfg_1 =
 		`)
-}
-
-/*
-// Loads signature for signature authentication
-func load_signature() bool {
-	if global.auth_mode != SIGNATURE_AUTH {
-		return true
-	}
-
-	var sig string
-	global.db.Get("kitebroker", "signature", &sig)
-	if sig == NONE {
-		return false
-	}
-	global.kw.Signature(sig)
-	return true
-}*/
-
-// Configure user account for auth token.
-func init_kw_auth() {
-	config_api(false)
-	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
-	username := dbConfig(*global.db).user()
-	user, err := global.kw.AuthLoop(username)
-	if err != nil {
-		Err(err)
-		Log("\n")
-		config_api(true)
-		return
-	}
-	dbConfig(*global.db).set_user(string(user.Username))
 }
 
 // Opens database where config file is located.
@@ -236,479 +216,197 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	return
 }
 
-// Presents string, uses astricks if private.
-func show_var(input string, mask bool) string {
-	hide_value := func(input string) string {
-		var str []rune
-		for _ = range input {
-			str = append(str, '*')
-		}
-		return string(str)
-	}
-
-	if input == NONE {
-		return "*** UNCONFIGURED ***"
-	} else {
-		if !mask {
-			return input
-		} else {
-			return hide_value(input)
-		}
-	}
-}
-
-type config_value interface {
-	set() bool
-	is_set() bool
-	show() string
-	get() interface{}
-}
-
-// Configuration String
-type config_string struct {
-	desc  string
-	help  string
-	value string
-	mask  bool
-}
-
-func (c *config_string) is_set() bool {
-	return c.value != NONE
-}
-
-func (c *config_string) show() string {
-	return fmt.Sprintf("%s:\t%s", c.desc, show_var(c.value, c.mask))
-}
-
-func (c *config_string) set() bool {
-	var input string
-	if c.help != NONE {
-		input = GetInput(fmt.Sprintf("\n# %s\n--> %s: ", c.help, c.desc))
-	} else {
-		input = GetInput(fmt.Sprintf("\n--> %s: ", c.desc))
-	}
-	if input != NONE {
-		c.value = input
-		Stdout("\n")
-		return true
-	}
-	Stdout("\n")
-	return false
-}
-
-func (c *config_string) get() interface{} {
-	return c.value
-}
-
-// Configuration Bool
-type config_bool struct {
-	desc  string
-	value bool
-}
-
-func (c *config_bool) is_set() bool {
-	return true
-}
-
-func (c *config_bool) show() string {
-	var value_str string
-	if c.value {
-		value_str = "yes"
-	} else {
-		value_str = "no"
-	}
-	return fmt.Sprintf("%s:\t%v", c.desc, value_str)
-}
-
-func (c *config_bool) set() bool {
-	c.value = c.value == false
-	Log("\n")
-	return true
-}
-
-func (c *config_bool) get() interface{} {
-	return c.value
-}
-
 // Proxy Configuration
-type config_proxy struct {
+type proxyValue struct {
 	desc  string
 	value string
 }
 
-func (c *config_proxy) is_set() bool {
-	return c.value != NONE
-}
-
-func (c *config_proxy) set() bool {
+func (c *proxyValue) Set() bool {
 	v := c.value
 	c.value = GetInput(fmt.Sprintf(`
 # Format of proxy server should be: https://proxy.server.com:3127
 # Leave blank for direct connection/no proxy.
 --> %s: `, c.desc))
-	Stdout("\n")
 	return c.value != v
 }
 
-func (c *config_proxy) get() interface{} {
+func (c *proxyValue) Get() interface{} {
 	return c.value
 }
 
-func (c *config_proxy) show() string {
-	if c.value == NONE {
+func (c *proxyValue) String() string {
+	if IsBlank(c.value) {
 		return fmt.Sprintf("%s:\t(Direct Connection/No Proxy)", c.desc)
 	} else {
 		return fmt.Sprintf("%s:\t%s", c.desc, c.value)
 	}
 }
 
+// Configuration Menu for API Settings
+func config_api(configure_api bool) {
+	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
+	client_app_id, client_app_secret := load_api_configs()
+	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
+	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
 
-// Configuration Area
-func config_api(setup bool) {
-	app_id, app_secret := load_api_configs()
-	var sig string
+	var signature string
+	global.db.Get("kitebroker", "signature", &signature)
 
-	global.db.Get("kitebroker", "signature", &sig)
+	account := setup.String("User Account", dbConfig(*global.db).user(), "Please provide e-mail address of user account.", false)
+	server := setup.String("kiteworks Host", global.cfg.Get("configuration", "server"), "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", false)
 
-	// Variables for config menu.
-	account := &config_string{"User Account", "Please provide e-mail address of user account.", dbConfig(*global.db).user(), false}
-	server := &config_string{"kiteworks Host", "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", global.cfg.Get("configuration", "server"), false}
-	ssl_verify := &config_bool{"Verify SSL", global.cfg.GetBool("configuration", "ssl_verify")}
-	redirect_uri := &config_string{"Redirect URI", NONE, global.cfg.Get("configuration", "redirect_uri"), false}
-	client_app_id := &config_string{"Client Application ID", NONE, app_id, false}
-	client_app_secret := &config_string{"Client Application Secret", NONE, app_secret, true}
-	signature := &config_string{"Signature Secret", NONE, sig, true}
-	proxy := &config_proxy{"Proxy Server", global.cfg.Get("configuration", "proxy_uri")}
-
-	const (
-		show_redirect = 1 << iota
-		show_app_id
-		show_app_secret
-	)
-
-	const show_all = show_redirect | show_app_id | show_app_secret
-
-	var display BitFlag
-
-	// Checks if API is fully configured.
-	api_is_ready := func() bool {
-		if server.is_set() && redirect_uri.is_set() && client_app_id.is_set() && client_app_secret.is_set() {
-			if global.auth_mode == SIGNATURE_AUTH {
-				if signature.is_set() {
-					return true
-				}
-			} else {
-				return true
-			}
-		}
-		return false
+	if IsBlank(client_app_id) || IsBlank(client_app_secret) || global.auth_mode == SIGNATURE_AUTH {
+		setup.StringVar(&client_app_id, "Client Application ID", client_app_id, NONE, false)
+		setup.StringVar(&client_app_secret, "Client Secret Key", client_app_secret, NONE, true)
 	}
 
-	var changed bool
+	if global.auth_mode == SIGNATURE_AUTH {
+		setup.StringVar(&signature, "Signature Secret", signature, NONE, true)
+	}
 
-	// Loads & Tests the API configuration.
-	load_api := func(testing bool) (passed bool) {
-		changed = false
-		if testing {
-			Log("\n")
+	if IsBlank(redirect_uri) || global.auth_mode == SIGNATURE_AUTH {
+		setup.StringVar(&redirect_uri, "Redirect URI", redirect_uri, "Redirect URI should simply match setting in kiteworks admin, default: https://kitebroker", false)
+	}
+
+	ssl_verify := setup.Bool("Verify SSL", global.cfg.GetBool("configuration", "ssl_verify"))
+	proxy := proxyValue{"Proxy Server", proxy_uri}
+	setup.Register(&proxy)
+
+	advanced := options.NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
+	connect_timeout_secs := advanced.Int("Connection timeout seconds", Config(global.db).connect_timeout_secs(), "Default Value: 12", 0, 600)
+	request_timeout_secs := advanced.Int("Request timeout seconds", Config(global.db).request_timeout_secs(), "Default Value: 60", 0, 600)
+	max_file_transfer := advanced.Int("Maximum file transfers", Config(global.db).max_file_transfer(), "Default Value: 3", 1, 5)
+	chunk_size_mb := advanced.Int("Chunk size in megabytes", Config(global.db).chunk_size_mb(), "Default Value: 68", 1, 68)
+
+	setup.Options("Advanced", advanced, false)
+
+	pause := func() {
+		PressEnter("(press enter to continue)")
+	}
+
+	//Saves current coneciguration.
+	save_config := func() {
+		Critical(global.cfg.Set("configuration", "redirect_uri", redirect_uri))
+		Critical(global.cfg.Set("configuration", "proxy_uri", proxy.Get().(string)))
+		Critical(global.cfg.Set("configuration", "server", strings.TrimPrefix(strings.ToLower(*server), "https://")))
+		Critical(global.cfg.Set("configuration", "ssl_verify", *ssl_verify))
+		set_api_configs(client_app_id, client_app_secret)
+		Critical(global.cfg.Save())
+		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
+			global.db.Set("kitebroker", "signature", &signature)
 		}
-		if global.kw == nil {
-			global.kw = new(KWAPI)
+		Config(global.db).set_user(*account)
+		Config(global.db).set_connect_timeout_secs(*connect_timeout_secs)
+		Config(global.db).set_request_timeout_secs(*request_timeout_secs)
+		Config(global.db).set_max_file_transfer(*max_file_transfer)
+		Config(global.db).set_chunk_size_mb(*chunk_size_mb)
+
+	}
+
+	// Loads API Configuration
+	load_api := func() bool {
+		if IsBlank(*server) || IsBlank(redirect_uri) || IsBlank(*account) || IsBlank(client_app_id) || IsBlank(client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) {
+			return false
 		}
-		global.kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
-		global.kw.Debug = global.debug
-		if global.debug {
-			global.kw.SetLimiter(1)
-			global.kw.SetTransferLimiter(1)
-		} else {
-			global.kw.SetLimiter(5)
-			global.kw.SetTransferLimiter(dbConfig(*global.db).max_file_transfer())
-		}
-
-		global.kw.TokenStore = KVLiteStore(global.db)
-		global.kw.RedirectURI = redirect_uri.get().(string)
-		global.kw.ProxyURI = proxy.get().(string)
-		global.kw.VerifySSL = ssl_verify.get().(bool)
-		global.kw.ConnectTimeout = time.Second * time.Duration(dbConfig(*global.db).connect_timeout_secs())
-		global.kw.RequestTimeout = time.Second * time.Duration(dbConfig(*global.db).request_timeout_secs())
-		global.kw.MaxChunkSize = (int64(dbConfig(*global.db).chunk_size_mb() * 1024)) * 1024
-		global.kw.Retries = 3
-
-		if !global.cfg.Exists("do_not_modify") {
-			Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
-		}
-
-		global.kw.Server = server.get().(string)
-		global.kw.ApplicationID = client_app_id.get().(string)
-		global.kw.ClientSecret(client_app_secret.get().(string))
-
+		kw := new(KWAPI)
+		kw.Server = strings.TrimPrefix(strings.ToLower(*server), "https://")
 		if global.auth_mode == SIGNATURE_AUTH {
-			global.kw.Signature(signature.get().(string))
+			kw.Signature(signature)
 		}
+		kw.TokenStore = KVLiteStore(global.db)
+		kw.RedirectURI = redirect_uri
+		kw.ProxyURI = proxy.Get().(string)
+		kw.VerifySSL = *ssl_verify
+		kw.ApplicationID = client_app_id
+		kw.ClientSecret(client_app_secret)
+		kw.ConnectTimeout = time.Second * time.Duration(*connect_timeout_secs)
+		kw.RequestTimeout = time.Second * time.Duration(*request_timeout_secs)
+		kw.MaxChunkSize = (int64(*chunk_size_mb) * 1024) * 1024
+		kw.Retries = 3
 
-		// Test of API Settings
-		if testing {
-			global.kw.TokenStore.Delete(strings.ToLower(account.get().(string)))
-
-			var err error
-			Flash("[%s]: Authenticating, please wait...", global.kw.Server)
-			_, err = global.kw.Authenticate(account.get().(string))
-			if err != nil {
-				Stdout("\n")
-				Err("%s\n", err.Error())
-				return false
-			}
-			err = global.kw.Session(account.get().(string)).Call(APIRequest{
-				Method: "GET",
-				Path:   "/rest/users/me",
-				Output: nil,
-			})
-			if err != nil {
-				Err(err)
-				return false
-			}
-			Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)
-			return true
+		if global.debug {
+			kw.Debug = true
+			kw.SetLimiter(1)
+			kw.SetTransferLimiter(1)
+		} else {
+			kw.SetLimiter(5)
+			kw.SetTransferLimiter(*max_file_transfer)
 		}
+		global.kw = kw
+		global.user = global.kw.Session(*account)
 		return true
 	}
 
-	// If using signature auth, show all items.
-	if global.auth_mode == SIGNATURE_AUTH {
-		display = show_all
+	var tested bool
+
+	test_api := func() bool {
+		if !load_api() {
+			Err("API is missing some required configuration, please revisit '*** UNCONFIGURED ***' settings.")
+			pause()
+			return false
+		}
+
+		global.kw.TokenStore.Delete(*account)
+
+		var err error
+		Flash("[%s]: Authenticating, please wait...", global.kw.Server)
+		_, err = global.kw.Authenticate(*account)
+		if err != nil {
+			Stdout("[ERROR] %s\n", err.Error())
+			pause()
+			return false
+		}
+		err = global.kw.Session(*account).Call(APIRequest{
+			Method: "GET",
+			Path:   "/rest/users/me",
+			Output: nil,
+		})
+		if err != nil {
+			Stdout("[ERROR] %s", err.Error())
+			pause()
+			return false
+		}
+		tested = true
+		Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)
+		pause()
+		return true
 	}
 
-	// Not a setup, just load the configuration.
-	if !setup {
-		if api_is_ready() {
-			load_api(false)
-			return
-		}
-	}
+	setup.Func("Test Current API Configuration.", test_api)
 
-	var text_buffer bytes.Buffer
-	text := tabwriter.NewWriter(&text_buffer, 1, 8, 1, ' ', 0)
-	fmt.Fprintf(text, "--- kiteworks API configuration ---\n\n")
-
-	// Present configuration dialog.
-	for {
-		server.value = strings.TrimPrefix(strings.ToLower(server.get().(string)), "https://")
-
-		configuration := make(map[int]config_value)
-		var num int
-
-		register := func(input config_value) {
-			configuration[num] = input
-			num++
-		}
-
-		register(account)
-		register(server)
-
-		if !client_app_id.is_set() || display.Has(show_app_id) {
-			register(client_app_id)
-		}
-
-		if !client_app_secret.is_set() || display.Has(show_app_secret) {
-			register(client_app_secret)
-		}
-
-		if global.auth_mode == SIGNATURE_AUTH {
-			register(signature)
-		}
-
-		if !redirect_uri.is_set() || display.Has(show_redirect) {
-			register(redirect_uri)
-		}
-
-		register(ssl_verify)
-		register(proxy)
-
-		for i := 0; i < num; i++ {
-			fmt.Fprintf(text, "[%d] %s\n", i+1, configuration[i].show())
-		}
-		fmt.Fprintf(text, "[%d] Advanced", num+1)
-		fmt.Fprintf(text, "\n\n[0] Test Current API Configuration.\n")
-		fmt.Fprintf(text, "\n(selection or 'q' to save & exit): ")
-		text.Flush()
-		val := GetInput(text_buffer.String())
-		text_buffer.Reset()
-
-		// Handle input, direct appropriately.
-		if strings.ToLower(val) == "q" {
-			if changed {
-				if GetConfirm("\nWould you like validate settings with a quick test?") {
-					if !load_api(true) {
-						PressEnter("(press enter to continue)")
-						Log("\n")
+	// Display configuraiton menu
+	enter_setup := func() {
+		for {
+			tested = false
+			if setup.Select(true) {
+				*server = strings.TrimPrefix(strings.ToLower(*server), "https://")
+				if load_api() && !tested && GetConfirm("\nWould you like validate changes with a quick test?") {
+					Stdout("\n")
+					if test_api() {
+						save_config()
+						break
+					} else {
 						continue
 					}
+				} else {
+					save_config()
+					break
 				}
 			}
-			dbConfig(*global.db).set_user(strings.ToLower(account.get().(string)))
-			Critical(global.cfg.Set("configuration", "server", server.get().(string)))
-			Critical(global.cfg.Set("configuration", "proxy_uri", strings.ToLower(proxy.get().(string))))
-			Critical(global.cfg.Set("configuration", "redirect_uri", strings.ToLower(redirect_uri.get().(string))))
-			if global.auth_mode == SIGNATURE_AUTH {
-				sig := signature.get().(string)
-				global.db.CryptSet("kitebroker", "signature", &sig)
-			}
-			ssl_check := ssl_verify.get().(bool)
-			if ssl_check {
-				Critical(global.cfg.Set("configuration", "ssl_verify", "yes"))
-			} else {
-				Critical(global.cfg.Set("configuration", "ssl_verify", "no"))
-			}
-			app_id = client_app_id.get().(string)
-			app_secret := client_app_secret.get().(string)
-			set_api_configs(app_id, app_secret)
-
-			Critical(global.cfg.Save())
-
-			// If everything is not set, exit application, otherwise continue.
-			if !api_is_ready() {
-				Exit(0)
-			} else {
-				load_api(false)
-			}
-			return
-		} else {
-			sel, err := strconv.Atoi(val)
-			if err != nil {
-				Stdout("\n")
-				Err("Unrecognized selection: '%v'\n\n", val)
-				continue
-			}
-
-			if sel == num+1 {
-				config_api_advanced()
-				load_api(false)
-				fmt.Fprintf(text, "--- kiteworks API configuration ---\n\n")
-				continue
-			}
-
-			// Find corresponding config_value and run it.
-			if v, ok := configuration[sel-1]; !ok {
-				if sel == 0 {
-					if api_is_ready() {
-						load_api(true)
-						PressEnter("(press enter to continue)")
-						Stdout("\n")
-					} else {
-						Stdout("\n")
-						Err("API is missing some required configuration, please revisit '*** UNCONFIGURED ***' settings.")
-						PressEnter("(press enter to continue)")
-						Stdout("\n")
-					}
-					continue
-				}
-				Stdout("\n")
-				Err("Unrecongized selection: '%d'\n\n", sel)
-			} else {
-				changed = v.set()
-			}
+			break
 		}
 	}
 
-}
-
-// Configuration Bool
-type config_int struct {
-	desc  string
-	value int
-	min   int
-	max   int
-	default_value int
-}
-
-func (c *config_int) is_set() bool {
-	return true
-}
-
-func (c *config_int) get() interface{} {
-	return c.value
-}
-
-func (c *config_int) show() string {
-	return fmt.Sprintf("%s:\t%d", c.desc, c.value)
-}
-
-func (c *config_int) set() bool {
-	for {
-		input := GetInput(fmt.Sprintf("\n# Default Value: %d\n--> %s (%d-%d): ", c.default_value, c.desc, c.min, c.max))
-		if input != NONE {
-			val, err := strconv.Atoi(input)
-			if err != nil {
-				Err(err)
-				continue
-			}	
-			if val > c.max || val < c.min {
-				Err(fmt.Errorf("Input is outside of acceptable range between %d and %d.", c.min, c.max))
-				continue
+	if !configure_api {
+		if !load_api() {
+			enter_setup()
+			if !load_api() {
+				Exit(1)
 			}
-			c.value = val
-			Stdout("\n")
-			return true
 		}
-		Stdout("\n")
-		return false
-	}
-}
-
-// Advanced area of the configuration.
-func config_api_advanced() (changed bool) {
-	var text_buffer bytes.Buffer
-	text := tabwriter.NewWriter(&text_buffer, 1, 8, 1, ' ', 0)
-	fmt.Fprintf(text, "\n")
-
-	max_file_transfer := &config_int{"Maximum file transfers", dbConfig(*global.db).max_file_transfer(), 1, 5, 3}
-	connect_timeout_secs := &config_int{"Connection timeout seconds", dbConfig(*global.db).connect_timeout_secs(), 0, 600, 12}
-	request_timeout_secs := &config_int{"Request timeout seconds", dbConfig(*global.db).request_timeout_secs(), 0, 600, 60}
-	chunksize := &config_int{"Upload chunksize megabytes", dbConfig(*global.db).chunk_size_mb(), 1, 68, 68}
-	for {
-		configuration := make(map[int]config_value)
-		var num int
-
-		register := func(input config_value) {
-			configuration[num] = input
-			num++
-		}
-
-		register(connect_timeout_secs)
-		register(request_timeout_secs)
-		register(max_file_transfer)
-		register(chunksize)
-
-		for i := 0; i < num; i++ {
-			fmt.Fprintf(text, "[%d] %s\n", i+1, configuration[i].show())
-		}
-
-		fmt.Fprintf(text, "\n(selection or 'q' to save & return to previous): ")
-		text.Flush()
-		val := GetInput(text_buffer.String())
-		text_buffer.Reset()
-		if strings.ToLower(val) == "q" {
-			dbConfig(*global.db).set_max_file_transfer(max_file_transfer.get().(int))
-			dbConfig(*global.db).set_request_timeout_secs(request_timeout_secs.get().(int))
-			dbConfig(*global.db).set_connect_timeout_secs(connect_timeout_secs.get().(int))
-			dbConfig(*global.db).set_chunk_size_mb(chunksize.get().(int))
-			Log("\n")
-			return	
-		}
-
-		sel, err := strconv.Atoi(val)
-		if err != nil {
-			Stdout("\n")
-			Err("Unrecognized selection: '%v'\n\n", val)
-			continue
-		}
-
-		// Find corresponding config_value and run it.
-		if v, ok := configuration[sel-1]; !ok {
-			Stdout("\n")
-			Err("Unrecongized selection: '%d'\n\n", sel)
-		} else {
-			changed = v.set()
-		}
+	} else {
+		enter_setup()
+		return
 	}
 }

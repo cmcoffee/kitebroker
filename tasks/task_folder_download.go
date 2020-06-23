@@ -1,36 +1,35 @@
 package tasks
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
-	"sync"
 	"fmt"
-	"path/filepath"
-	"os"
+	. "github.com/cmcoffee/kitebroker/core"
 	"io"
-	"time"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 )
 
 var xo Passport
 
 type FolderDownloadTask struct {
 	input struct {
-		src []string
-		dst string
+		src        []string
+		dst        string
 		redownload bool
 	}
-	loader *Loader
-	crawl_wg sync.WaitGroup
-	dwnld_wg sync.WaitGroup
-	folders map[int]string
-	limiter chan struct{}
+	loader       *Loader
+	crawl_wg     sync.WaitGroup
+	dwnld_wg     sync.WaitGroup
+	folders      map[int]string
+	limiter      chan struct{}
 	folder_count Tally
-	file_count Tally
-	transfered Tally
-	files Table
-	downloads Table
-	dwnld_chan chan *download
-
+	file_count   Tally
+	transfered   Tally
+	files        Table
+	downloads    Table
+	dwnld_chan   chan *download
 }
 
 type download struct {
@@ -66,6 +65,11 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 
 	T.files = xo.Sub(xo.Username).Table("files")
 	T.downloads = xo.Sub(xo.Username).Table("downloads")
+
+	var into_root bool
+	if !strings.HasSuffix(T.input.dst, SLASH) && len(T.input.src) == 1 {
+		into_root = true
+	}
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
 	if err != nil {
@@ -106,12 +110,6 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 		}
 	}
 
-
-	var into_root bool
-	if !strings.HasSuffix(T.input.dst, SLASH) && len(T.input.src) == 1 {
-			into_root = true
-	}
-
 	err = MkDir(T.input.dst)
 	if err != nil {
 		return err
@@ -129,21 +127,21 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 				break
 			}
 			T.dwnld_wg.Add(1)
-			limiter<-struct{}{}
-			go func (m *download) {
+			limiter <- struct{}{}
+			go func(m *download) {
 				defer T.dwnld_wg.Done()
 				if err := T.ProcessFile(m.path, m.file); err != nil {
 					Err("%s: %v", m.file.Name, err)
 				}
 				<-limiter
-			}(m)	
+			}(m)
 		}
 	}()
 
 	for i, _ := range folders {
 		T.folder_count.Add(1)
 		T.crawl_wg.Add(1)
-		T.limiter<-struct{}{}
+		T.limiter <- struct{}{}
 
 		if into_root {
 			folders[i].Name = NONE
@@ -161,7 +159,7 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 	T.crawl_wg.Wait()
 
 	// Shutdown downloader.
-	T.dwnld_chan<-nil
+	T.dwnld_chan <- nil
 	T.dwnld_wg.Wait()
 
 	return nil
@@ -176,31 +174,31 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 	var folders []child
 	folders = append(folders, child{local_path, folder})
 
-	var n int 
+	var n int
 	var next []child
 
 	for {
-		if len(folders) < n + 1 {
+		if len(folders) < n+1 {
 			folders = folders[0:0]
 			if len(next) > 0 {
 				for i, o := range next {
 					select {
-						case T.limiter<-struct{}{}:
-							T.crawl_wg.Add(1)
-							go func(path string, obj *KiteObject) {
-								if err := T.ProcessFolder(path, obj); err != nil {
-									Err(fmt.Sprintf("%s: %s", o.KiteObject.Path, err.Error()))
-								}
-								<-T.limiter
-								T.crawl_wg.Done()
-							}(o.path, o.KiteObject)
-						default:
-							folders = append(folders, next[i])
+					case T.limiter <- struct{}{}:
+						T.crawl_wg.Add(1)
+						go func(path string, obj *KiteObject) {
+							if err := T.ProcessFolder(path, obj); err != nil {
+								Err(fmt.Sprintf("%s: %s", o.KiteObject.Path, err.Error()))
+							}
+							<-T.limiter
+							T.crawl_wg.Done()
+						}(o.path, o.KiteObject)
+					default:
+						folders = append(folders, next[i])
 					}
 				}
 				next = next[0:0]
 				n = 0
-				if len(folders) == 0 { 
+				if len(folders) == 0 {
 					break
 				}
 			} else {
@@ -239,14 +237,14 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 			}
 			for i := 0; i < len(objs); i++ {
 				switch objs[i].Type {
-					case "d":
-						next = append(next, child{CombinePath(obj.path, obj.Name), &objs[i]})
-					case "f":
-						T.dwnld_chan<-&download{CombinePath(obj.path, obj.Name), &objs[i]}
+				case "d":
+					next = append(next, child{CombinePath(obj.path, obj.Name), &objs[i]})
+				case "f":
+					T.dwnld_chan <- &download{CombinePath(obj.path, obj.Name), &objs[i]}
 				}
 			}
 		case "f":
-			T.dwnld_chan<-&download{obj.path, obj.KiteObject}
+			T.dwnld_chan <- &download{obj.path, obj.KiteObject}
 		}
 		n++
 	}
@@ -281,7 +279,7 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 	mark_complete := func() {
 		flag.Set(complete)
 		T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
-		T.files.Set(CombinePath(file.Path,file.Name), &file)
+		T.files.Set(CombinePath(file.Path, file.Name), &file)
 	}
 
 	dstat, err := os.Stat(file_name)
@@ -301,8 +299,8 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 				}
 			}
 		}
-	} 
- 
+	}
+
 	f, err := xo.FileDownload(file)
 	if err != nil {
 		return err
@@ -336,7 +334,7 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		if err != nil {
 			return err
 		}
-	} 
+	}
 
 	num, err := io.Copy(dst, f)
 	if err != nil {
@@ -344,24 +342,24 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		dst.Close()
 		os.Remove(tmp_file_name)
 		if file.AdminQuarantineStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", path, file.Name)
+			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(path, SLASH), file.Name)
 			return nil
 		}
 		if file.AVStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", path, file.Name, file.AVStatus)
+			Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(path, SLASH), file.Name, file.AVStatus)
 			return nil
 		}
 		if file.DLPStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", path, file.Name, file.DLPStatus)
+			Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(path, SLASH), file.Name, file.DLPStatus)
 			return nil
 		}
 		return err
-	} 
+	}
 	T.transfered.Add(num)
 	f.Close()
 	dst.Close()
 
-	err = Rename(tmp_file_name, file_name) 
+	err = Rename(tmp_file_name, file_name)
 	if err != nil {
 		return err
 	}
@@ -369,7 +367,7 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 	flag.Set(complete)
 	T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
 
-	err  = os.Chtimes(file_name, time.Now(), mtime)
+	err = os.Chtimes(file_name, time.Now(), mtime)
 	if err == nil {
 		mark_complete()
 	}

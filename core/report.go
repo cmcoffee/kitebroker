@@ -10,10 +10,10 @@ import (
 )
 
 type TaskReport struct {
-	name        string
-	file        string
-	start_time  time.Time
-	tallys      []*Tally
+	name       string
+	file       string
+	start_time time.Time
+	tallys     []*Tally
 }
 
 func (t *TaskReport) Summary(errors uint32) {
@@ -45,12 +45,12 @@ func (t *TaskReport) Summary(errors uint32) {
 }
 
 type Tally struct {
-	name  string
-	count *int64
+	name   string
+	count  *int64
 	Format func(val int64) string
 }
 
-func (r *TaskReport) Tally(name string, format...func(val int64) string) (new_tally Tally) {
+func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
 	new_tally.name = name
 	new_tally.count = new(int64)
 	if format == nil || format[0] == nil {

@@ -146,11 +146,11 @@ func (k *kwapi_secrets) decrypt(input []byte) string {
 
 // APIRequest model
 type APIRequest struct {
-	APIVer int
-	Method string
-	Path   string
-	Params []interface{}
-	Output interface{}
+	Version int
+	Method  string
+	Path    string
+	Params  []interface{}
+	Output  interface{}
 }
 
 // SetPath shortcut.
@@ -318,7 +318,7 @@ func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) 
 			dec.Decode(&snoop_output)
 			if len(snoop_output) > 0 {
 				o, _ := json.MarshalIndent(&snoop_output, "", "  ")
-					Debug("<-- RESPONSE BODY: \n%s\n", string(o))
+				Debug("<-- RESPONSE BODY: \n%s\n", string(o))
 			}
 			return nil
 		} else {
@@ -437,11 +437,15 @@ func (s KWSession) NewRequest(method, path string, api_ver int) (req *http.Reque
 // kiteworks API Call Wrapper
 func (s KWSession) Call(api_req APIRequest) (err error) {
 	if s.limiter != nil {
-		s.limiter<-struct{}{}
+		s.limiter <- struct{}{}
 		defer func() { <-s.limiter }()
 	}
 
-	req, err := s.NewRequest(api_req.Method, api_req.Path, api_req.APIVer)
+	if api_req.Version == 0 {
+		api_req.Version = 13
+	}
+
+	req, err := s.NewRequest(api_req.Method, api_req.Path, api_req.Version)
 	if err != nil {
 		return err
 	}

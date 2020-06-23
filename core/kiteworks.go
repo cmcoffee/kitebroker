@@ -12,36 +12,36 @@ var ErrNotFound = errors.New("Requested item not found.")
 
 // KiteFile/Folder/Attachment
 type KiteObject struct {
-	Type            string         `json:"type"`
-	Status          string         `json:"status"`
-	ID              int            `json:"id"`
-	Name            string         `json:"name"`
-	Description     string         `json:"description"`
-	Created         string         `json:"created"`
-	Modified        string         `json:"modified"`
-	ClientCreated   string         `json:"clientCreated"`
-	ClientModified  string         `json:"clientModified"`
-	Deleted         bool           `json:"deleted"`
-	PermDeleted     bool           `json:"permDeleted"`
-	Expire          interface{}    `json:"expire"`
-	Path            string         `json:"path"`
-	ParentID        int            `json:"parentId"`
-	UserID          int            `json:"userId"`
-	Permalink       string         `json:"permalink"`
-	Secure          bool           `json:"secure"`
-	Locked          int            `json:"locked"`
-	Fingerprint     string         `json:"fingerprint"`
-	Size            int64          `json:"size"`
-	Mime            string         `json:"mime"`
-	AVStatus        string         `json:"avStatus"`
-	DLPStatus       string         `json:"dlpStatus"`
-	AdminQuarantineStatus string   `json:"adminQuarantineStatus`
-	Quarantined     bool           `json:"quarantined"`
-	DLPLocked       bool           `json:"dlpLocked"`
-	FileLifetime    int            `json:"fileLifetime"`
-	MailID          int            `json:"mail_id"`
-	Links           []KiteLinks    `json:"links"`
-	CurrentUserRole KitePermission `json:"currentUserRole"`
+	Type                  string         `json:"type"`
+	Status                string         `json:"status"`
+	ID                    int            `json:"id"`
+	Name                  string         `json:"name"`
+	Description           string         `json:"description"`
+	Created               string         `json:"created"`
+	Modified              string         `json:"modified"`
+	ClientCreated         string         `json:"clientCreated"`
+	ClientModified        string         `json:"clientModified"`
+	Deleted               bool           `json:"deleted"`
+	PermDeleted           bool           `json:"permDeleted"`
+	Expire                interface{}    `json:"expire"`
+	Path                  string         `json:"path"`
+	ParentID              int            `json:"parentId"`
+	UserID                int            `json:"userId"`
+	Permalink             string         `json:"permalink"`
+	Secure                bool           `json:"secure"`
+	Locked                int            `json:"locked"`
+	Fingerprint           string         `json:"fingerprint"`
+	Size                  int64          `json:"size"`
+	Mime                  string         `json:"mime"`
+	AVStatus              string         `json:"avStatus"`
+	DLPStatus             string         `json:"dlpStatus"`
+	AdminQuarantineStatus string         `json:"adminQuarantineStatus`
+	Quarantined           bool           `json:"quarantined"`
+	DLPLocked             bool           `json:"dlpLocked"`
+	FileLifetime          int            `json:"fileLifetime"`
+	MailID                int            `json:"mail_id"`
+	Links                 []KiteLinks    `json:"links"`
+	CurrentUserRole       KitePermission `json:"currentUserRole"`
 }
 
 // Returns the Expiration in time.Time.
@@ -75,7 +75,7 @@ type KitePermission struct {
 func (s KWSession) FileInfo(file_id int, params ...interface{}) (result KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path: SetPath("/rest/files/%d", file_id),
+		Path:   SetPath("/rest/files/%d", file_id),
 		Params: SetParams(params),
 		Output: &result,
 	})
@@ -172,13 +172,13 @@ func (s KWSession) FolderContents(folder_id int, params ...interface{}) (childre
 	return
 }
 
-func (s KWSession) FolderInfo(folder_id int, params...interface{}) (output KiteObject, err error) {
+func (s KWSession) FolderInfo(folder_id int, params ...interface{}) (output KiteObject, err error) {
 	if params == nil {
 		params = SetParams(Query{"deleted": false})
 	}
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path: SetPath("/rest/folders/%d", folder_id),
+		Path:   SetPath("/rest/folders/%d", folder_id),
 		Params: SetParams(params, Query{"mode": "full", "with": "(currentUserRole, fileLifetime, path)"}),
 		Output: &output,
 	})
@@ -218,10 +218,10 @@ func (s KWSession) GetUserCount(emails []string, params ...interface{}) (users i
 	if emails != nil && emails[0] != NONE {
 		for _, u := range emails {
 			err = s.DataCall(APIRequest{
-			Method: "GET",
-			Path:   "/rest/admin/users",
-			Params: SetParams(Query{"email": u}, params),
-			Output: &user}, -1, 1000)
+				Method: "GET",
+				Path:   "/rest/admin/users",
+				Params: SetParams(Query{"email": u}, params),
+				Output: &user}, -1, 1000)
 			if err != nil {
 				return
 			}
@@ -239,11 +239,11 @@ func (s KWSession) GetUserCount(emails []string, params ...interface{}) (users i
 
 // Get Users
 type GetUsers struct {
-	offset  int
-	filter  Query
-	emails  []string
-	params  []interface{}
-	session *KWSession
+	offset    int
+	filter    Query
+	emails    []string
+	params    []interface{}
+	session   *KWSession
 	completed bool
 }
 

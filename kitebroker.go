@@ -136,17 +136,7 @@ func main() {
 			args = append(args, s)
 			for _, k := range task_file.Keys(s) {
 				for _, v := range task_file.MGet(s, k) {
-					if !strings.Contains(v, " ") && !strings.Contains(v, ",") {
-						switch strings.ToLower(v) {
-						case "yes":
-							v = "true"
-						case "no":
-							v = "false"
-						}
-						args = append(args, fmt.Sprintf("--%s=%s", k, v))
-					} else {
-						args = append(args, fmt.Sprintf("--%s=\"%s\"", k, v))
-					}
+					args = append(args, fmt.Sprintf("--%s=%s", k, v))
 				}
 			}
 			args = append(args, f)

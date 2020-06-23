@@ -8,9 +8,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/bitflag"
+	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/kvlite"
 	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/go-snuglib/eflag"
 	"io"
 	"io/ioutil"
 	"net"
@@ -85,9 +85,9 @@ func (d TStore) Sub(prefix string) TStore {
 
 // Spins off a new shared table.
 func (d TStore) Shared(table string) TStore {
-	return TStore {
+	return TStore{
 		prefix: fmt.Sprintf("-shared.%s.", table),
-		db:    d.db,
+		db:     d.db,
 	}
 }
 
@@ -221,7 +221,7 @@ type Table struct {
 	table kvlite.Table
 }
 
-func (t Table) Get(key string, value interface{}) (bool) {
+func (t Table) Get(key string, value interface{}) bool {
 	found, err := t.table.Get(key, value)
 	Critical(err)
 	return found
@@ -588,10 +588,10 @@ func DateString(input time.Time) string {
 	return fmt.Sprintf("%s-%s-%s", pad(due_time.Year()), pad(int(due_time.Month())), pad(due_time.Day()))
 }
 
-func CombinePath(name...string) string {
+func CombinePath(name ...string) string {
 	if name == nil {
 		return NONE
-	} 
+	}
 	if len(name) < 2 {
 		return name[0]
 	}
@@ -623,3 +623,15 @@ func Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
+func IsBlank(input string) bool {
+	return len(input) == 0
+}
+
+func Dequote(input *string) {
+	if len(*input) > 0 && (*input)[0] == '"' {
+		*input = (*input)[:1]
+	}
+	if len(*input) > 0 && (*input)[len(*input)-1] == '"' {
+		*input = (*input)[:len(*input)-1]
+	}
+}
