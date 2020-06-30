@@ -84,30 +84,30 @@ type TokenStore interface {
 }
 
 type kvLiteStore struct {
-	*Database
+	Table
 }
 
 // Wraps KVLite Databse as a auth token store.
 func KVLiteStore(input *Database) *kvLiteStore {
-	return &kvLiteStore{input}
+	return &kvLiteStore{input.Table("KWAPI.tokens")}
 }
 
 // Save token to TokenStore
 func (T kvLiteStore) Save(username string, auth *KWAuth) error {
-	T.Database.CryptSet("KWAPI_tokens", username, &auth)
+	T.Table.CryptSet(username, &auth)
 	return nil
 }
 
 // Retrieve token from TokenStore
 func (T *kvLiteStore) Load(username string) (*KWAuth, error) {
 	var auth *KWAuth
-	T.Database.Get("KWAPI_tokens", username, &auth)
+	T.Table.Get(username, &auth)
 	return auth, nil
 }
 
 // Remove token from TokenStore
 func (T *kvLiteStore) Delete(username string) error {
-	T.Database.Unset("KWAPI_tokens", username)
+	T.Table.Unset(username)
 	return nil
 }
 
@@ -310,6 +310,7 @@ func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) 
 	)
 
 	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
+	defer resp.Body.Close()
 
 	if K.Debug {
 		if output == nil {
@@ -522,6 +523,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 		req.Body = ioutil.NopCloser(bytes.NewReader(body))
 		client := s.NewClient()
 		resp, err = client.Do(req)
+
 		if err != nil && KWAPIError(err, ERR_INTERNAL_SERVER_ERROR|TOKEN_ERR) {
 			if KWAPIError(err, TOKEN_ERR) {
 				if err := reAuth(&s, req, err); err != nil {

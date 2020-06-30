@@ -1,0 +1,295 @@
+package tasks
+
+import (
+	"fmt"
+	. "github.com/cmcoffee/kitebroker/core"
+	"strings"
+	"time"
+)
+
+type FolderFileExpiryTask struct {
+	input struct {
+		profile_id        int
+		user_emails       []string
+		exclude_my_folder bool
+	}
+	folders      Table
+	profiles     Table
+	limiter      LimitGroup
+	user_count   Tally
+	folder_count Tally
+	ppt          Passport
+}
+
+func (T *FolderFileExpiryTask) New() Task {
+	return new(FolderFileExpiryTask)
+}
+
+func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
+	all_users := flag.Bool("all_users", false, "Apply folder and file limits to everyone in all profiles.")
+	flag.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", false, "Exclude adding expirations to files in My Folder.")
+	flag.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
+	flag.SplitVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	if err := flag.Parse(); err != nil {
+		return err
+	}
+
+	if !*all_users && T.input.profile_id < 1 && len(T.input.user_emails) == 0 {
+		err = fmt.Errorf("Please specify --all_users, and/or select users based on --profile_id or --users.")
+	}
+
+	return
+}
+
+func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
+	T.ppt = ppt
+
+	type Folder struct {
+		ID              int            `json:"ID"`
+		CurrentUserRole KitePermission `json:"currentUserRole"`
+	}
+
+	T.user_count = T.ppt.Tally("Analyzed Users")
+	T.folder_count = T.ppt.Tally("Folders Updated")
+
+	T.folders = T.ppt.Table("folders")
+	T.profiles = OpenCache().Table("profiles")
+
+	T.limiter = NewLimitGroup(30)
+
+	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
+
+	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
+		user_emails, err := T.ppt.Admin().FindProfileUsers(T.input.profile_id, params)
+		if err != nil {
+			return err
+		}
+		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
+	}
+
+	user_count, err := T.ppt.Admin().UserCount(T.input.user_emails, params)
+	if err != nil {
+		return err
+	}
+
+	message := func() string {
+		return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", T.user_count.Value(), user_count, T.folder_count.Value())
+	}
+
+	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
+	PleaseWait.Show()
+
+	user_getter := T.ppt.Admin().Users(T.input.user_emails, params)
+
+	for {
+		users, err := user_getter.Next()
+		if err != nil {
+			return err
+		}
+		if len(users) == 0 {
+			break
+		}
+		for _, user := range users {
+			T.user_count.Add(1)
+			if T.input.profile_id > 0 && user.UserTypeID != T.input.profile_id {
+				Log("Skipping %s, user does not match required profile_id of %d.", user.Email, T.input.profile_id)
+				continue
+			}
+			Log("Updating folders for %s ..", user.Email)
+			var folders []*KiteObject
+			sess := T.ppt.Session(user.Email)
+			if err := sess.DataCall(APIRequest{
+				Method: "GET",
+				Path:   "/rest/folders/top",
+				Params: SetParams(Query{"deleted": false, "with": "(currentUserRole)"}),
+				Output: &folders,
+			}, -1, 1000); err != nil {
+				Err("%s: %v", user.Email, err)
+				continue
+			}
+			for _, v := range folders {
+				// Only process folders this user owns.
+				if v.CurrentUserRole.ID < 5 {
+					continue
+				}
+				T.limiter.Add(1)
+				go func(sess KWSession, user KiteUser, folder *KiteObject) {
+					defer T.limiter.Done()
+					T.ProcessFolder(&sess, &user, folder)
+				}(sess, user, v)
+			}
+			T.limiter.Wait()
+		}
+	}
+	T.limiter.Wait()
+	// If we didn't have any errors, we don't need to resume.
+	if ErrorCount() == 0 {
+		ppt.Drop("users")
+		ppt.Drop("folders")
+	}
+	return nil
+}
+
+// Finds out the expiration settings for the user in question.
+func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expiry int, file_expiry int, err error) {
+	var profile struct {
+		Features struct {
+			FileTime   int `json:"fileLifetime"`
+			FolderTime int `json:"folderExpirationLimit"`
+		} `json:"features"`
+	}
+	if found := T.profiles.Get(fmt.Sprintf("%d", user.UserTypeID), &profile); found {
+		return profile.Features.FolderTime, profile.Features.FileTime, nil
+	}
+
+	err = T.ppt.Session(user.Email).Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/profiles/%d", user.UserTypeID),
+		Output: &profile,
+	})
+	if err != nil {
+		return -1, -1, err
+	}
+	T.profiles.Set(fmt.Sprintf("%d", user.UserTypeID), &profile)
+	return profile.Features.FolderTime, profile.Features.FileTime, nil
+}
+
+// Updates folder to profile expiry
+func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
+
+	if found := T.folders.Get(fmt.Sprintf("%d", folder.ID), nil); found {
+		return nil
+	}
+
+	folder_days, file_days, err := T.GetProfileExpiration(user)
+	if err != nil {
+		return err
+	}
+
+	if folder_days < file_days && folder_days != 0 {
+		file_days = folder_days
+	}
+
+	var params []interface{}
+
+	if len(strings.Split(folder.Path, "/")) == 1 {
+		if folder_days != 0 {
+			t := time.Now().UTC().Add((time.Hour * 24) * time.Duration(folder_days))
+			params = SetParams(PostForm{"expire": DateString(t), "fileLifetime": file_days})
+		} else {
+			params = SetParams(PostForm{"expire": 0, "fileLifetime": file_days})
+		}
+	} else {
+		params = SetParams(PostForm{"fileLifetime": file_days})
+	}
+
+	err = sess.Call(APIRequest{
+		Version: 15,
+		Method:  "PUT",
+		Path:    SetPath("/rest/folders/%d", folder.ID),
+		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": true}),
+	})
+	if err == nil {
+		T.folders.Set(fmt.Sprintf("%d", folder.ID), 1)
+	} else if KWAPIError(err, ERR_ENTITY_IS_SYNC_DIR) {
+		err = T.ChangeMyFolderFiles(sess, user, folder)
+		if err == nil {
+			T.folders.Set(fmt.Sprintf("%d", folder.ID), 1)
+		} else {
+			return err
+		}
+	}
+	return
+}
+
+// Sets all files within My Folder to an expiration date.
+func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
+	if T.input.exclude_my_folder {
+		return nil
+	}
+
+	_, file_expiry, err := T.GetProfileExpiration(user)
+	if err != nil {
+		return err
+	}
+
+	var files []KiteObject
+
+	err = sess.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/folders/%d/files", folder.ID),
+		Output: &files,
+	}, -1, 1000)
+	if err != nil {
+		return err
+	}
+
+	expiry_time := time.Now().UTC().Add((time.Hour * 24) * time.Duration(file_expiry))
+	for _, file := range files {
+		err = sess.Call(APIRequest{
+			Method: "PUT",
+			Path:   SetPath("/rest/files/%d", file.ID),
+			Params: SetParams(PostJSON{"expire": WriteKWTime(expiry_time)}),
+		})
+		if err != nil {
+			Err("%s - %s/%s: %v", user.Email, folder.Path, file.Name, err)
+		}
+	}
+	return
+}
+
+func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *KiteObject) {
+	// Folder is already complete, return to caller.
+	var folders []*KiteObject
+
+	folders = append(folders, folder)
+
+	var n int
+	var next []*KiteObject
+
+	for {
+		if len(folders) < n+1 {
+			folders = folders[0:0]
+			if len(next) > 0 {
+				for i, o := range next {
+					if T.limiter.Try() {
+						go func(sess *KWSession, user *KiteUser, folder *KiteObject) {
+							defer T.limiter.Done()
+							T.ProcessFolder(sess, user, folder)
+						}(sess, user, o)
+					} else {
+						folders = append(folders, next[i])
+					}
+				}
+				next = next[0:0]
+				n = 0
+				if len(folders) == 0 {
+					break
+				}
+			} else {
+				break
+			}
+		}
+		if folders[n].Type == "d" {
+			if err := T.ModifyFolder(sess, user, folders[n]); err != nil {
+				Err("%s - %s: %v", sess.Username, folders[n].Path, err)
+				n++
+				continue
+			} else {
+				T.folder_count.Add(1)
+			}
+			childs, err := sess.Folder(folders[n].ID).Folders()
+			if err == nil {
+				for i := 0; i < len(childs); i++ {
+					if childs[i].Type == "d" {
+						next = append(next, &childs[i])
+					}
+				}
+			} else {
+				Err("%s - %s: %v", sess.Username, folders[n].Path, err)
+			}
+		}
+		n++
+	}
+	return
+}

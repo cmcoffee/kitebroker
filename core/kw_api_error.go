@@ -28,6 +28,7 @@ const (
 	SERVICE_UNAVAILABLE
 	ERR_ENTITY_NOT_SCANNED
 	ERR_ENTITY_PARENT_FOLDER_MEMBER_EXISTS
+	ERR_ENTITY_IS_SYNC_DIR
 )
 
 // Auth token related errors.
@@ -44,6 +45,8 @@ func (e *KWError) AddError(code, message string) {
 	code = strings.ToUpper(code)
 
 	switch code {
+	case "ERR_ENTITY_IS_SYNC_DIR":
+		e.flag |= ERR_ENTITY_IS_SYNC_DIR
 	case "ERR_ENTITY_PARENT_FOLDER_MEMBER_EXISTS":
 		e.flag |= ERR_ENTITY_PARENT_FOLDER_MEMBER_EXISTS
 	case "ERR_ENTITY_NOT_SCANNED":
@@ -139,6 +142,7 @@ func (K *KWAPI) respError(resp *http.Response) (err error) {
 	)
 
 	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
+	defer resp.Body.Close()
 
 	if K.Debug {
 		Debug("<-- RESPONSE STATUS: %s", resp.Status)

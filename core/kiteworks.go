@@ -31,6 +31,7 @@ type KiteObject struct {
 	Secure                bool           `json:"secure"`
 	Locked                int            `json:"locked"`
 	Fingerprint           string         `json:"fingerprint"`
+	ProfileID             int            `json:"typeID`
 	Size                  int64          `json:"size"`
 	Mime                  string         `json:"mime"`
 	AVStatus              string         `json:"avStatus"`
@@ -72,21 +73,25 @@ type KitePermission struct {
 	Disabled   bool   `json:"disabled"`
 }
 
-func (s KWSession) FileInfo(file_id int, params ...interface{}) (result KiteObject, err error) {
-	err = s.Call(APIRequest{
-		Method: "GET",
-		Path:   SetPath("/rest/files/%d", file_id),
-		Params: SetParams(params),
-		Output: &result,
-	})
-	return
+type kw_rest_folder struct {
+	folder_id int
+	*KWSession
+}
+
+func (s KWSession) Folder(folder_id int) kw_rest_folder {
+	return kw_rest_folder{
+		folder_id,
+		&s,
+	}
 }
 
 // Find item in folder, using folder path, if folder_id > 0, start search there.
-func (s KWSession) FindFolder(folder_id int, path string, params ...interface{}) (result KiteObject, err error) {
+func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
+
+	path = strings.TrimSuffix(path, "/")
 
 	folder_path := SplitPath(path)
 
@@ -96,10 +101,10 @@ func (s KWSession) FindFolder(folder_id int, path string, params ...interface{})
 
 	var current []KiteObject
 
-	if folder_id <= 0 {
+	if s.folder_id <= 0 {
 		current, err = s.TopFolders(params)
 	} else {
-		current, err = s.FolderContents(folder_id, params)
+		current, err = s.Folder(s.folder_id).Contents(params)
 	}
 	if err != nil {
 		return
@@ -114,7 +119,7 @@ func (s KWSession) FindFolder(folder_id int, path string, params ...interface{})
 		for _, c := range current {
 			if strings.ToLower(f) == strings.ToLower(c.Name) {
 				if i < folder_len && c.Type == "d" {
-					current, err = s.FolderContents(c.ID, params)
+					current, err = s.Folder(c.ID).Contents(params)
 					if err != nil {
 						return
 					}
@@ -132,6 +137,52 @@ func (s KWSession) FindFolder(folder_id int, path string, params ...interface{})
 	}
 
 	return result, ErrNotFound
+}
+
+type kw_rest_admin struct {
+	*KWSession
+}
+
+func (s KWSession) Admin() kw_rest_admin {
+	return kw_rest_admin{&s}
+}
+
+func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (emails []string, err error) {
+	var users []struct {
+		Email string `json:"email"`
+	}
+	err = s.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/admin/profiles/%d/users", profile_id),
+		Params: SetParams(params),
+		Output: &users,
+	}, -1, 1000)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		emails = append(emails, u.Email)
+	}
+	return
+}
+
+type kw_rest_file struct {
+	file_id int
+	*KWSession
+}
+
+func (s KWSession) File(file_id int) kw_rest_file {
+	return kw_rest_file{file_id, &s}
+}
+
+func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error) {
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/files/%d", s.file_id),
+		Params: SetParams(params),
+		Output: &result,
+	})
+	return
 }
 
 /*
@@ -152,34 +203,62 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 		Method: "GET",
 		Path:   "/rest/folders/top",
 		Output: &folders,
-		Params: SetParams(params, Query{"with": "(path)"}),
+		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
 	return
 }
 
 // Returns all items with listed folder_id.
-func (s KWSession) FolderContents(folder_id int, params ...interface{}) (children []KiteObject, err error) {
+func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/children", folder_id),
+		Path:   SetPath("/rest/folders/%d/children", s.folder_id),
 		Output: &children,
-		Params: SetParams(params, Query{"with": "(path)"}),
+		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
 
 	return
 }
 
-func (s KWSession) FolderInfo(folder_id int, params ...interface{}) (output KiteObject, err error) {
+// Returns all items with listed folder_id.
+func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, err error) {
+	if len(params) == 0 {
+		params = SetParams(Query{"deleted": false})
+	}
+	err = s.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/folders/%d/folders", s.folder_id),
+		Output: &children,
+		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
+	}, -1, 1000)
+
+	return
+}
+
+func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err error) {
 	if params == nil {
 		params = SetParams(Query{"deleted": false})
 	}
+	if s.folder_id == 0 {
+		return
+	}
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d", folder_id),
+		Path:   SetPath("/rest/folders/%d", s.folder_id),
 		Params: SetParams(params, Query{"mode": "full", "with": "(currentUserRole, fileLifetime, path)"}),
+		Output: &output,
+	})
+	return
+}
+
+func (s KWSession) CreateFolder(folder_id int, name string, params ...interface{}) (output KiteObject, err error) {
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/folders/%d/folders", folder_id),
+		Params: SetParams(PostJSON{"name": name}, Query{"returnEntity": true}, params),
 		Output: &output,
 	})
 	return
@@ -213,7 +292,7 @@ func (s KWSession) MyUser() (user KiteUser, err error) {
 }
 
 // Get total count of users.
-func (s KWSession) GetUserCount(emails []string, params ...interface{}) (users int, err error) {
+func (s kw_rest_admin) UserCount(emails []string, params ...interface{}) (users int, err error) {
 	var user []struct{}
 	if emails != nil && emails[0] != NONE {
 		for _, u := range emails {
@@ -243,12 +322,12 @@ type GetUsers struct {
 	filter    Query
 	emails    []string
 	params    []interface{}
-	session   *KWSession
+	session   *kw_rest_admin
 	completed bool
 }
 
 // Admin EAPI endpoint to pull all users matching parameters.
-func (s KWSession) GetUsers(emails []string, params ...interface{}) *GetUsers {
+func (s kw_rest_admin) Users(emails []string, params ...interface{}) *GetUsers {
 	var T GetUsers
 	T.filter = make(Query)
 	T.offset = 0

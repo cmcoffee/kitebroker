@@ -7,29 +7,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
-
-var xo Passport
 
 type FolderDownloadTask struct {
 	input struct {
 		src        []string
 		dst        string
 		redownload bool
+		owned_only bool
 	}
-	loader       *Loader
-	crawl_wg     sync.WaitGroup
-	dwnld_wg     sync.WaitGroup
-	folders      map[int]string
-	limiter      chan struct{}
-	folder_count Tally
-	file_count   Tally
-	transfered   Tally
-	files        Table
-	downloads    Table
-	dwnld_chan   chan *download
+	crawl_limiter    LimitGroup
+	dwnld_limiter    LimitGroup
+	folders          map[int]string
+	folder_count     Tally
+	file_count       Tally
+	transfered       Tally
+	files            Table
+	files_downloaded Tally
+	downloads        Table
+	dwnld_chan       chan *download
+	ppt              Passport
 }
 
 type download struct {
@@ -43,10 +41,11 @@ func (T *FolderDownloadTask) New() Task {
 
 // Init function.
 func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
+	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, "Only process folders I own.")
 	flag.ArrayVar(&T.input.src, "src", "<kw folder>", "Specify folders or file you wish to download.\n\t  (use multiple --src args for multi-folder/file)")
-	flag.Alias(&T.input.src, "src", "s")
+	flag.Alias("src", "s")
 	flag.StringVar(&T.input.dst, "dst", "<local destination folder>", "Specify local path to store downloaded folders/files.")
-	flag.Alias(&T.input.dst, "dst", "d")
+	flag.Alias("dst", "d")
 	flag.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
 	if err = flag.Parse(); err != nil {
 		return err
@@ -60,11 +59,14 @@ func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
 }
 
 // Main function
-func (T *FolderDownloadTask) Main(passport Passport) (err error) {
-	xo = passport
+func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
+	T.ppt = ppt
 
-	T.files = xo.Sub(xo.Username).Table("files")
-	T.downloads = xo.Sub(xo.Username).Table("downloads")
+	T.crawl_limiter = NewLimitGroup(50)
+	T.dwnld_limiter = NewLimitGroup(50)
+
+	T.files = T.ppt.Shared("sync").Table("files")
+	T.downloads = T.ppt.Shared(T.ppt.Username).Table("downloads")
 
 	var into_root bool
 	if !strings.HasSuffix(T.input.dst, SLASH) && len(T.input.src) == 1 {
@@ -76,11 +78,10 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 		return err
 	}
 
-	T.folder_count = xo.Tally("Folders Processed")
-	T.file_count = xo.Tally("Files Processed")
-	T.transfered = xo.Tally("Transfered", HumanSize)
-
-	T.loader = PleaseWait
+	T.folder_count = T.ppt.Tally("Folders Analyzed")
+	T.file_count = T.ppt.Tally("Files Analyzed")
+	T.files_downloaded = T.ppt.Tally("Files Downloaded")
+	T.transfered = T.ppt.Tally("Transfered", HumanSize)
 
 	message := func() string {
 		return fmt.Sprintf("Please wait ... [files: %d/folders: %d]", T.file_count.Value(), T.folder_count.Value())
@@ -88,14 +89,12 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-	PleaseWait = T.loader
-
-	T.limiter = make(chan struct{}, 20)
+	defer DefaultPleaseWait()
 
 	var folders []KiteObject
 
 	for _, f := range T.input.src {
-		folder, err := xo.FindFolder(0, f)
+		folder, err := T.ppt.Folder(0).Find(f)
 		if err != nil {
 			Err("%s: %v", f, err)
 			continue
@@ -104,7 +103,7 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 	}
 
 	if T.input.src == nil {
-		folders, err = xo.TopFolders()
+		folders, err = T.ppt.TopFolders()
 		if err != nil {
 			return err
 		}
@@ -115,57 +114,51 @@ func (T *FolderDownloadTask) Main(passport Passport) (err error) {
 		return err
 	}
 
-	T.dwnld_chan = make(chan *download, 0)
+	T.dwnld_chan = make(chan *download, 100)
 
-	T.dwnld_wg.Add(1)
+	// Downloader Go Thread
+	T.dwnld_limiter.Add(1)
 	go func() {
-		limiter := make(chan struct{}, xo.GetTransferLimit())
-		defer T.dwnld_wg.Done()
+		defer T.dwnld_limiter.Done()
 		for {
 			m := <-T.dwnld_chan
 			if m == nil {
 				break
 			}
-			T.dwnld_wg.Add(1)
-			limiter <- struct{}{}
+			T.dwnld_limiter.Add(1)
 			go func(m *download) {
-				defer T.dwnld_wg.Done()
-				if err := T.ProcessFile(m.path, m.file); err != nil {
+				defer T.dwnld_limiter.Done()
+				if err := T.ProcessFile(m.file, m.path); err != nil {
 					Err("%s: %v", m.file.Name, err)
 				}
-				<-limiter
 			}(m)
 		}
 	}()
 
 	for i, _ := range folders {
 		T.folder_count.Add(1)
-		T.crawl_wg.Add(1)
-		T.limiter <- struct{}{}
+		T.crawl_limiter.Add(1)
 
 		if into_root {
 			folders[i].Name = NONE
 		}
 
 		go func(path string, folder *KiteObject) {
-			if err := T.ProcessFolder(path, folder); err != nil {
-				Err("%s: %s", folder.Path, err.Error())
-			}
-			<-T.limiter
-			T.crawl_wg.Done()
+			T.ProcessFolder(folder, path)
+			T.crawl_limiter.Done()
 		}(T.input.dst, &folders[i])
 	}
 
-	T.crawl_wg.Wait()
+	T.crawl_limiter.Wait()
 
 	// Shutdown downloader.
 	T.dwnld_chan <- nil
-	T.dwnld_wg.Wait()
+	T.dwnld_limiter.Wait()
 
 	return nil
 }
 
-func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject) (err error) {
+func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string) {
 	type child struct {
 		path string
 		*KiteObject
@@ -177,22 +170,18 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 	var n int
 	var next []child
 
+	// Do iterative loop if no threads are available, do recursion if there are.
 	for {
 		if len(folders) < n+1 {
 			folders = folders[0:0]
 			if len(next) > 0 {
 				for i, o := range next {
-					select {
-					case T.limiter <- struct{}{}:
-						T.crawl_wg.Add(1)
+					if T.crawl_limiter.Try() {
 						go func(path string, obj *KiteObject) {
-							if err := T.ProcessFolder(path, obj); err != nil {
-								Err(fmt.Sprintf("%s: %s", o.KiteObject.Path, err.Error()))
-							}
-							<-T.limiter
-							T.crawl_wg.Done()
+							T.ProcessFolder(obj, local_path)
+							T.crawl_limiter.Done()
 						}(o.path, o.KiteObject)
-					default:
+					} else {
 						folders = append(folders, next[i])
 					}
 				}
@@ -209,8 +198,12 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 		obj := folders[n]
 		switch obj.Type {
 		case "d":
+			if obj.CurrentUserRole.ID < 5 && T.input.owned_only {
+				n++
+				continue
+			}
 			if obj.Secure {
-				folder, err := xo.FolderInfo(obj.ID)
+				folder, err := T.ppt.Folder(obj.ID).Info()
 				if err != nil {
 					Err("%s: %v", obj.Name, err)
 					n++
@@ -223,13 +216,13 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 				}
 			}
 			T.folder_count.Add(1)
-			err = MkDir(CombinePath(obj.path, obj.Name))
+			err := MkDir(CombinePath(obj.path, obj.Name))
 			if err != nil {
 				Err("%s: %v", obj.Path, err)
 				n++
 				continue
 			}
-			objs, err := xo.FolderContents(obj.ID)
+			objs, err := T.ppt.Folder(obj.ID).Contents()
 			if err != nil {
 				Err(err)
 				n++
@@ -248,7 +241,6 @@ func (T *FolderDownloadTask) ProcessFolder(local_path string, folder *KiteObject
 		}
 		n++
 	}
-	return nil
 }
 
 const (
@@ -256,7 +248,7 @@ const (
 	complete
 )
 
-func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err error) {
+func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (err error) {
 
 	var flag BitFlag
 
@@ -268,12 +260,21 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		return nil
 	}
 
-	mtime, err := ReadKWTime(file.ClientModified)
-	if err != nil {
-		return
+	var mtime time.Time
+
+	if !IsBlank(file.ClientModified) {
+		mtime, err = ReadKWTime(file.ClientModified)
+		if err != nil {
+			return err
+		}
+	} else if !IsBlank(file.Modified) {
+		mtime, err = ReadKWTime(file.Modified)
+		if err != nil {
+			return err
+		}
 	}
 
-	file_name := CombinePath(path, file.Name)
+	file_name := CombinePath(local_path, file.Name)
 	tmp_file_name := fmt.Sprintf("%s.incomplete", file_name)
 
 	mark_complete := func() {
@@ -301,7 +302,7 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		}
 	}
 
-	f, err := xo.FileDownload(file)
+	f, err := T.ppt.FileDownload(file)
 	if err != nil {
 		return err
 	}
@@ -323,7 +324,6 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 	if err != nil {
 		return
 	}
-	T.loader.Hide()
 
 	if fstat != nil && found {
 		offset, err := dst.Seek(fstat.Size(), 0)
@@ -340,22 +340,27 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 	if err != nil {
 		f.Close()
 		dst.Close()
-		os.Remove(tmp_file_name)
+
 		if file.AdminQuarantineStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(path, SLASH), file.Name)
+			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
+			os.Remove(tmp_file_name)
 			return nil
 		}
 		if file.AVStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(path, SLASH), file.Name, file.AVStatus)
+			Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
+			os.Remove(tmp_file_name)
 			return nil
 		}
 		if file.DLPStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(path, SLASH), file.Name, file.DLPStatus)
+			Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
+			os.Remove(tmp_file_name)
 			return nil
 		}
 		return err
 	}
+
 	T.transfered.Add(num)
+	T.files_downloaded.Add(1)
 	f.Close()
 	dst.Close()
 
@@ -364,12 +369,13 @@ func (T *FolderDownloadTask) ProcessFile(path string, file *KiteObject) (err err
 		return err
 	}
 
-	flag.Set(complete)
-	T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
-
 	err = os.Chtimes(file_name, time.Now(), mtime)
 	if err == nil {
 		mark_complete()
+	}
+	if err == nil {
+		flag.Set(complete)
+		T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
 	}
 	return
 }

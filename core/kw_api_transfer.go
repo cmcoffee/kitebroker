@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +94,9 @@ func (W *web_downloader) Close() error {
 	if W.trans_limiter != nil {
 		<-*W.trans_limiter
 	}
+	if W.resp == nil || W.resp.Body == nil {
+		return nil
+	}
 	return W.resp.Body.Close()
 }
 
@@ -133,10 +137,15 @@ type streamReadCloser struct {
 	size      int64
 	r_buff    []byte
 	w_buff    *bytes.Buffer
-	source    io.Reader
+	source    io.ReadCloser
 	eof       bool
 	f_writer  io.Writer
-	*multipart.Writer
+	mwrite    *multipart.Writer
+}
+
+func (s *streamReadCloser) Close() (err error) {
+	//return s.source.Close()
+	return nil
 }
 
 // Read function fro streamReadCloser, reads triggers a read from source->writes to bytes buffer via multipart writer->reads from bytes buffer.
@@ -152,7 +161,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	s.w_buff.Truncate(0)
 
 	if s.eof {
-		s.Close()
+		s.mwrite.Close()
 		return 0, io.EOF
 	}
 
@@ -175,7 +184,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 			return -1, err
 		}
 		if s.eof {
-			s.Close()
+			s.mwrite.Close()
 		}
 		for i := 0; i < len(s.r_buff); i++ {
 			s.r_buff[i] = 0
@@ -186,7 +195,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 }
 
 // Creates a new upload for a folder.
-func (S *KWSession) NewUpload(folder_id int, filename string, file_size int64) (int, error) {
+func (S *KWSession) NewUpload(folder_id int, file os.FileInfo) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
@@ -195,7 +204,7 @@ func (S *KWSession) NewUpload(folder_id int, filename string, file_size int64) (
 		Version: 5,
 		Method:  "POST",
 		Path:    SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
-		Params:  SetParams(PostJSON{"filename": filename, "totalSize": file_size, "totalChunks": S.Chunks(file_size)}, Query{"returnEntity": true}),
+		Params:  SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
 		Output:  &upload,
 	}); err != nil {
 		return -1, err
@@ -204,7 +213,7 @@ func (S *KWSession) NewUpload(folder_id int, filename string, file_size int64) (
 }
 
 // Create a new file version for an existing file.
-func (S *KWSession) NewVersion(file_id int, filename string, file_size int64) (int, error) {
+func (S *KWSession) NewVersion(file_id int, file os.FileInfo) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
@@ -212,7 +221,7 @@ func (S *KWSession) NewVersion(file_id int, filename string, file_size int64) (i
 	if err := S.Call(APIRequest{
 		Method: "POST",
 		Path:   SetPath("/rest/files/%d/actions/initiateUpload", file_id),
-		Params: SetParams(PostJSON{"filename": filename, "totalSize": file_size, "totalChunks": S.Chunks(file_size)}, Query{"returnEntity": true}),
+		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
 		Output: &upload,
 	}); err != nil {
 		return -1, err
@@ -267,6 +276,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	ChunkIndex := upload_record.UploadedChunks
 
 	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader)
+	defer src.Close()
 
 	if ChunkIndex > 0 {
 		if upload_record.UploadedSize > 0 && upload_record.UploadedChunks > 0 {
@@ -348,13 +358,14 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 			0,
 			make([]byte, 4096),
 			w_buff,
-			iotimeout.NewReader(src, s.RequestTimeout),
+			iotimeout.NewReadCloser(src, s.RequestTimeout),
 			false,
 			f_writer,
 			w,
 		}
 
 		req.Body = post
+		defer req.Body.Close()
 		client := s.NewClient()
 		client.Timeout = 0
 

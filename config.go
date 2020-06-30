@@ -9,7 +9,6 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/options"
 	. "github.com/cmcoffee/kitebroker/core"
-	"os"
 	"strings"
 	"time"
 )
@@ -167,8 +166,10 @@ func init_database() {
 func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/log/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
-	nfo.SetFile(nfo.ALL, file)
-	nfo.SetOutput(nfo.DEBUG, os.Stdout)
+	nfo.SetFile(nfo.STD, file)
+	if global.debug {
+		EnableDebug()
+	}
 }
 
 // Perform sha256.Sum256 against input byte string.

@@ -31,7 +31,7 @@ func (t *TaskReport) Summary(errors uint32) {
 	fmt.Fprintf(text, "\tFinished: \t%v\n", end_time.Round(time.Millisecond))
 	fmt.Fprintf(text, "\tRuntime: \t%v\n", end_time.Sub(t.start_time).Round(time.Second))
 	if t.tallys != nil {
-		for i, _ := range t.tallys {
+		for i := 0; i < len(t.tallys); i++ {
 			fmt.Fprintf(text, "\t%s: \t%s\n", t.tallys[i].name, t.tallys[i].Format(*t.tallys[i].count))
 		}
 	}
@@ -51,6 +51,11 @@ type Tally struct {
 }
 
 func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
+	for i := 0; i < len(r.tallys); i++ {
+		if name == r.tallys[i].name {
+			return *r.tallys[i]
+		}
+	}
 	new_tally.name = name
 	new_tally.count = new(int64)
 	if format == nil || format[0] == nil {
@@ -64,10 +69,19 @@ func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	return
 }
 
-func (c *Tally) Add(num int64) {
+func (c *TaskReport) FindTally(name string) int64 {
+	for _, v := range c.tallys {
+		if v.name == name {
+			return *v.count
+		}
+	}
+	return 0
+}
+
+func (c Tally) Add(num int64) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
 }
 
-func (c *Tally) Value() int64 {
+func (c Tally) Value() int64 {
 	return atomic.LoadInt64(c.count)
 }

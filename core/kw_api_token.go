@@ -200,7 +200,8 @@ func (K *KWAPI) refreshToken(username string, auth *KWAuth) (*KWAuth, error) {
 	}
 
 	if K.Debug {
-		Debug("\n[kiteworks]: %s\n--> ACTION: \"POST\" PATH: \"%s\"", username, path)
+		Debug("[kiteworks]: %s", username)
+		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
 		for k, v := range *postform {
 			if k == "grant_type" || k == "RedirectURI" || k == "scope" {
 				Debug("\\-> POST PARAM: %s VALUE: %s", k, v)
@@ -278,7 +279,8 @@ func (K *KWAPI) newToken(username, password string) (auth *KWAuth, err error) {
 	}
 
 	if K.Debug {
-		Debug("\n[kiteworks]: %s\n--> ACTION: \"POST\" PATH: \"%s\"", username, path)
+		Debug("[kiteworks]: %s", username)
+		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
 		for k, v := range *postform {
 			if k == "grant_type" || k == "redirect_uri" || k == "scope" {
 				Debug("\\-> POST PARAM: %s VALUE: %s", k, v)

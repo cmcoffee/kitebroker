@@ -7,10 +7,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/bitflag"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/kvlite"
 	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/xsync"
 	"io"
 	"io/ioutil"
 	"net"
@@ -36,7 +36,7 @@ func (f *FlagSet) Parse() (err error) {
 }
 
 // Creates passport to send to task module.
-func NewPassport(task_name string, source string, user KWSession, db *Database) Passport {
+func NewPassport(task_name string, source string, user KWSession, db SubStore) Passport {
 	return Passport{
 		&TaskReport{
 			task_name,
@@ -45,16 +45,14 @@ func NewPassport(task_name string, source string, user KWSession, db *Database) 
 			make([]*Tally, 0),
 		},
 		user,
-		&TStore{
-			fmt.Sprintf("%s:", task_name),
-			db},
+		db,
 	}
 }
 
 type Passport struct {
 	*TaskReport
 	KWSession
-	*TStore
+	SubStore
 }
 
 // Task Interface
@@ -64,68 +62,72 @@ type Task interface {
 	New() Task
 }
 
-// TStore is a TaskStore, a database with a prefix in the table.
-type TStore struct {
+// SubStore is a TaskStore, a database with a prefix in the table.
+type SubStore struct {
 	prefix string
-	db     *Database
+	db     Database
+}
+
+func (d *Database) Sub(prefix string) SubStore {
+	return SubStore{fmt.Sprintf("%s.", prefix), *d}
 }
 
 // applies prefix of table to calls.
-func (d TStore) apply_prefix(table string) string {
+func (d SubStore) apply_prefix(table string) string {
 	return fmt.Sprintf("%s%s", d.prefix, table)
 }
 
 // Applies additional prefix to table.
-func (d TStore) Sub(prefix string) TStore {
-	return TStore{
+func (d SubStore) Sub(prefix string) SubStore {
+	return SubStore{
 		prefix: fmt.Sprintf("%s%s.", d.prefix, prefix),
 		db:     d.db,
 	}
 }
 
 // Spins off a new shared table.
-func (d TStore) Shared(table string) TStore {
-	return TStore{
+func (d SubStore) Shared(table string) SubStore {
+	return SubStore{
 		prefix: fmt.Sprintf("-shared.%s.", table),
 		db:     d.db,
 	}
 }
 
 // DB Wrappers to perform fatal error checks on each call.
-func (d TStore) Drop(table string) {
+func (d SubStore) Drop(table string) {
 	d.db.Drop(d.apply_prefix(table))
 }
 
 // Encrypt value to go-kvlie, fatal on error.
-func (d TStore) CryptSet(table, key string, value interface{}) {
+func (d SubStore) CryptSet(table, key string, value interface{}) {
 	d.db.CryptSet(d.apply_prefix(table), key, value)
 }
 
 // Save value to go-kvlite.
-func (d TStore) Set(table, key string, value interface{}) {
+func (d SubStore) Set(table, key string, value interface{}) {
 	d.db.Set(d.apply_prefix(table), key, value)
 }
 
 // Retrieve value from go-kvlite.
-func (d TStore) Get(table, key string, output interface{}) bool {
+func (d SubStore) Get(table, key string, output interface{}) bool {
 	found := d.db.Get(d.apply_prefix(table), key, output)
 	return found
 }
 
 // List keys in go-kvlite.
-func (d TStore) Keys(table string) []string {
+func (d SubStore) Keys(table string) []string {
 	keylist := d.db.Keys(d.apply_prefix(table))
 	return keylist
 }
 
 // Count keys in table.
-func (d TStore) CountKeys(table string) int {
+func (d SubStore) CountKeys(table string) int {
 	count := d.db.CountKeys(d.apply_prefix(table))
 	return count
 }
 
 // List Tables in DB
-func (d TStore) Tables() []string {
+func (d SubStore) Tables() []string {
 	var tables []string
 
 	for _, t := range d.db.Tables() {
@@ -137,12 +139,12 @@ func (d TStore) Tables() []string {
 }
 
 // Delete value from go-kvlite.
-func (d TStore) Unset(table, key string) {
+func (d SubStore) Unset(table, key string) {
 	d.db.Unset(d.apply_prefix(table), key)
 }
 
 // Drill in to specific table.
-func (d TStore) Table(table string) Table {
+func (d SubStore) Table(table string) Table {
 	return d.db.Table(d.apply_prefix(table))
 }
 
@@ -177,12 +179,13 @@ var (
 	NoRate          = nfo.NoRate
 	NeedAnswer      = nfo.NeedAnswer
 	PressEnter      = nfo.PressEnter
+	NewLimitGroup   = xsync.NewLimitGroup
 )
 
 type (
 	ReadSeekCloser = nfo.ReadSeekCloser
-	BitFlag        = bitflag.BitFlag
-	Loader         = nfo.Loader
+	BitFlag        = xsync.BitFlag
+	LimitGroup     = xsync.LimitGroup
 )
 
 // Enable Debug Logging Output
@@ -294,10 +297,26 @@ func SecureDatabase(file string) (*Database, error) {
 	return &Database{db}, nil
 }
 
+// Converts string to date.
+func StringDate(input string) (output time.Time, err error) {
+	if input == NONE {
+		return
+	}
+	output, err = time.Parse(time.RFC3339, fmt.Sprintf("%sT00:00:00Z", input))
+	if err != nil {
+		if strings.Contains(err.Error(), "parse") {
+			err = fmt.Errorf("Invalid date specified, should be in format: YYYY-MM-DD")
+		} else {
+			err_split := strings.Split(err.Error(), ":")
+			err = fmt.Errorf("Invalid date specified:%s", err_split[len(err_split)-1])
+		}
+	}
+	return
+}
+
 // Open a memory-only go-kvlite store.
 func OpenCache() *Database {
-	db := kvlite.MemStore()
-	return &Database{db}
+	return &Database{kvlite.MemStore()}
 }
 
 // DB Wrappers to perform fatal error checks on each call.
@@ -380,6 +399,10 @@ func SplitPath(path string) (folder_path []string) {
 type FileInfo struct {
 	Info os.FileInfo
 	string
+}
+
+func DefaultPleaseWait() {
+	PleaseWait.Set(func() string { return "Please wait ..." }, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 }
 
 // Scans parent_folder for all subfolders and files.

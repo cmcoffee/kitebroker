@@ -100,6 +100,10 @@ func main() {
 
 	f_err := flags.Parse(os.Args[1:])
 
+	if global.debug {
+		EnableDebug()
+	}
+
 	// We need to do a quick look to see what commands we display for --help
 
 	err := load_config(config_file)

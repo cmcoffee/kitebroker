@@ -6,6 +6,7 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -32,24 +33,27 @@ func (m *menu) cmd_text(cmd string, desc string) {
 
 // Menu item.
 type menu_elem struct {
-	name   string
-	desc   string
-	admin  bool
-	parsed bool
-	task   Task
-	flags  *FlagSet
+	name    string
+	desc    string
+	admin   bool
+	parsed  bool
+	as_user string
+	task    Task
+	flags   *FlagSet
 }
 
 // Registers an admin task.
 func (m *menu) RegisterAdmin(name, desc string, task Task) {
-	m.Register(name, desc, task)
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.entries[name].admin = true
+	m.register(name, desc, true, task)
+}
+
+// Registers an admin task.
+func (m *menu) Register(name, desc string, task Task) {
+	m.register(name, desc, false, task)
 }
 
 // Registers a task with the task menu.
-func (m *menu) Register(name, desc string, task Task) {
+func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	if m.entries == nil {
@@ -58,15 +62,19 @@ func (m *menu) Register(name, desc string, task Task) {
 	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
 
 	m.entries[name] = &menu_elem{
-		name:  name,
-		desc:  desc,
-		task:  task,
-		flags: flags,
+		name:    name,
+		desc:    desc,
+		task:    task,
+		flags:   flags,
+		as_user: "",
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
+	if admin_task {
+		my_entry.admin = true
+	}
 }
 
 // Read menu items.
@@ -140,9 +148,9 @@ func (m *menu) Select(input [][]string) (err error) {
 			if err := x.task.Init(x.flags); err != nil {
 				if err != eflag.ErrHelp {
 					if source != "cli" {
-						Stderr("error [%s]: %s\n\n", source, err.Error())
+						Stderr("err [%s]: %s\n\n", source, err.Error())
 					} else {
-						Stderr("error: %s\n\n", err.Error())
+						Stderr("err: %s\n\n", err.Error())
 					}
 				}
 				x.flags.Usage()
@@ -214,7 +222,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					} else {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
-					passport := NewPassport(name, source, global.user, global.db)
+					passport := NewPassport(name, source, global.user, global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name)))
 					report := Defer(func() error {
 						passport.Summary(ErrorCount() - pre_errors)
 						return nil
@@ -222,6 +230,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					if err := x.task.Main(passport); err != nil {
 						Err(err)
 					}
+					DefaultPleaseWait()
 					report()
 					if source == "cli" {
 						Log("<-- task '%s' stopped. -->", name)
@@ -242,6 +251,8 @@ func (m *menu) Select(input [][]string) (err error) {
 		if global.freq == 0 {
 			return nil
 		}
+
+		runtime.GC()
 
 		// Task Loop
 		if ctime := time.Now().Add(time.Duration(tasks_loop_start.Round(time.Second).Sub(time.Now().Round(time.Second)) + global.freq)).Round(time.Second); ctime.Unix() > time.Now().Round(time.Second).Unix() && ctime.Sub(time.Now().Round(time.Second)) >= time.Second {
