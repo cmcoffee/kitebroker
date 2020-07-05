@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"strconv"
 )
 
 type FolderDownloadTask struct {
@@ -16,6 +17,11 @@ type FolderDownloadTask struct {
 		dst        string
 		redownload bool
 		owned_only bool
+		move bool
+	}
+	db struct {
+		downloads Table
+		files 	  Table
 	}
 	crawl_limiter    LimitGroup
 	dwnld_limiter    LimitGroup
@@ -23,9 +29,7 @@ type FolderDownloadTask struct {
 	folder_count     Tally
 	file_count       Tally
 	transfered       Tally
-	files            Table
 	files_downloaded Tally
-	downloads        Table
 	dwnld_chan       chan *download
 	ppt              Passport
 }
@@ -41,18 +45,18 @@ func (T *FolderDownloadTask) New() Task {
 
 // Init function.
 func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
-	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, "Only process folders I own.")
-	flag.ArrayVar(&T.input.src, "src", "<kw folder>", "Specify folders or file you wish to download.\n\t  (use multiple --src args for multi-folder/file)")
-	flag.Alias("src", "s")
-	flag.StringVar(&T.input.dst, "dst", "<local destination folder>", "Specify local path to store downloaded folders/files.")
-	flag.Alias("dst", "d")
-	flag.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
+	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
+	flag.ArrayVar(&T.input.src, "src", "<kw folder>", "Specify kiteworks folder or file you wish to download.\n\t  (use multiple --src args for multi-folder/file)")
+	flag.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
+	flag.BoolVar(&T.input.redownload, "redo", false, "Redownload previously downloaded files.")
+	flag.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
+	flag.Order("src", "dst", "redo", "move")
 	if err = flag.Parse(); err != nil {
 		return err
 	}
 
-	if T.input.dst == NONE {
-		return fmt.Errorf("--dst is a required paramented.")
+	if IsBlank(T.input.dst) && len(T.input.src) == 0 {
+		return fmt.Errorf("--dst is a required paramented if --src is not provided.")
 	}
 
 	return nil
@@ -65,13 +69,10 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	T.crawl_limiter = NewLimitGroup(50)
 	T.dwnld_limiter = NewLimitGroup(50)
 
-	T.files = T.ppt.Shared("sync").Table("files")
-	T.downloads = T.ppt.Shared(T.ppt.Username).Table("downloads")
+	T.db.downloads = T.ppt.Table("downloads")
+	T.db.files = T.ppt.Shared(fmt.Sprintf("sync:%s:%s", ppt.Username, T.input.dst)).Table("downloads")
+	T.db.files.Drop()
 
-	var into_root bool
-	if !strings.HasSuffix(T.input.dst, SLASH) && len(T.input.src) == 1 {
-		into_root = true
-	}
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
 	if err != nil {
@@ -123,7 +124,7 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 		for {
 			m := <-T.dwnld_chan
 			if m == nil {
-				break
+				return
 			}
 			T.dwnld_limiter.Add(1)
 			go func(m *download) {
@@ -138,10 +139,6 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	for i, _ := range folders {
 		T.folder_count.Add(1)
 		T.crawl_limiter.Add(1)
-
-		if into_root {
-			folders[i].Name = NONE
-		}
 
 		go func(path string, folder *KiteObject) {
 			T.ProcessFolder(folder, path)
@@ -254,10 +251,24 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	T.file_count.Add(1)
 
-	found := T.downloads.Get(fmt.Sprintf("%d", file.ID), &flag)
+	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
+
+	clear_from_db := func(file_id int) {
+		for _, k := range T.db.downloads.Keys() {
+			if strings.Split(k, ":")[0] == strconv.Itoa(file_id) {
+				T.db.downloads.Unset(k)
+			}
+		}
+	}
+
+	found := T.db.downloads.Get(download_record_name, &flag)
 
 	if !T.input.redownload && found && flag.Has(complete) {
-		return nil
+		if T.input.move {
+			clear_from_db(file.ID)
+		} else {
+			return nil
+		}
 	}
 
 	var mtime time.Time
@@ -277,10 +288,15 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	file_name := CombinePath(local_path, file.Name)
 	tmp_file_name := fmt.Sprintf("%s.incomplete", file_name)
 
-	mark_complete := func() {
+	mark_complete := func() (err error) {
+		clear_from_db(file.ID)
+		if T.input.move {
+			return T.ppt.File(file.ID).Delete()
+		}
 		flag.Set(complete)
-		T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
-		T.files.Set(CombinePath(file.Path, file.Name), &file)
+		T.db.downloads.Set(download_record_name, &flag)
+		T.db.files.Set(CombinePath(file.Path, file.Name), &file)
+		return nil
 	}
 
 	dstat, err := os.Stat(file_name)
@@ -288,18 +304,8 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		return err
 	}
 
-	if dstat != nil && dstat.Size() == file.Size {
-		if dstat.ModTime().UTC().Unix() == mtime.UTC().Unix() {
-			md5, err := MD5Sum(file_name)
-			if err != nil {
-				return err
-			} else {
-				if md5 == file.Fingerprint {
-					mark_complete()
-					return nil
-				}
-			}
-		}
+	if dstat != nil && dstat.Size() == file.Size && dstat.ModTime().UTC().Unix() == mtime.UTC().Unix() {
+		return mark_complete()
 	}
 
 	f, err := T.ppt.FileDownload(file)
@@ -317,7 +323,8 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 			return err
 		}
 		flag.Set(incomplete)
-		T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
+		clear_from_db(file.ID)
+		T.db.downloads.Set(download_record_name, &flag)
 	}
 
 	dst, err := os.OpenFile(tmp_file_name, os.O_CREATE|os.O_RDWR, 0755)
@@ -336,30 +343,32 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		}
 	}
 
-	num, err := io.Copy(dst, f)
-	if err != nil {
-		f.Close()
-		dst.Close()
+	if fstat == nil || fstat.Size() != file.Size {
+		num, err := io.Copy(dst, f)
+		T.transfered.Add(num)
+		if err != nil {
+			f.Close()
+			dst.Close()
 
-		if file.AdminQuarantineStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
-			os.Remove(tmp_file_name)
-			return nil
+			if file.AdminQuarantineStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			if file.AVStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			if file.DLPStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			return err
 		}
-		if file.AVStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
-			os.Remove(tmp_file_name)
-			return nil
-		}
-		if file.DLPStatus != "allowed" {
-			Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
-			os.Remove(tmp_file_name)
-			return nil
-		}
-		return err
 	}
 
-	T.transfered.Add(num)
 	T.files_downloaded.Add(1)
 	f.Close()
 	dst.Close()
@@ -371,11 +380,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	err = os.Chtimes(file_name, time.Now(), mtime)
 	if err == nil {
-		mark_complete()
-	}
-	if err == nil {
-		flag.Set(complete)
-		T.downloads.Set(fmt.Sprintf("%d", file.ID), &flag)
+		return mark_complete()
 	}
 	return
 }

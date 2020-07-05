@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"github.com/cmcoffee/go-snuglib/iotimeout"
 )
 
 func (K *KWAPI) Authenticate(username string) (*KWSession, error) {
@@ -54,18 +55,15 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 		}
 	}
 
-	var report_success bool
-
 	if K.secrets.signature_key == nil {
 		Stdout("### %s authentication ###\n\n", K.Server)
 		for {
-			if username == NONE {
-				username = strings.ToLower(GetInput("-> login e-mail: "))
+			if username == NONE || permit_change {
+				username = strings.ToLower(GetInput("-> E-MAIL: "))
 			} else {
-				Stdout("-> user: %s", username)
+				                             Stdout("-> E-MAIL: %s", username)
 			}
-			report_success = true
-			password := GetSecret("-> password: ")
+			password :=                   GetSecret("-> PASSWD: ")
 			if password == NONE {
 				err := fmt.Errorf("Blank password provided.")
 				if !auth_loop {
@@ -73,17 +71,11 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 				}
 				Stdout("\n")
 				Err("Blank password provided.\n\n")
-				if permit_change {
-					username = NONE
-				}
 				continue
 			}
 
 			auth, err := K.newToken(username, password)
 			if err != nil {
-				if permit_change {
-					username = NONE
-				}
 				if !auth_loop {
 					return nil, err
 				}
@@ -94,11 +86,8 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 				session := K.Session(username)
 				if err := K.TokenStore.Save(username, auth); err != nil {
 					return &session, err
-				} else {
-					if report_success {
-						Stdout("\n<- %s reports success!\n\n", K.Server)
-					}
 				}
+				Stdout("\n")
 				return &session, nil
 			}
 		}
@@ -212,6 +201,8 @@ func (K *KWAPI) refreshToken(username string, auth *KWAuth) (*KWAuth, error) {
 	}
 
 	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
+	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
+	defer req.Body.Close()
 
 	client := K.Session(username).NewClient()
 
@@ -291,6 +282,9 @@ func (K *KWAPI) newToken(username, password string) (auth *KWAuth, err error) {
 	}
 
 	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
+	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
+	defer req.Body.Close()
+
 
 	client := K.Session(username).NewClient()
 

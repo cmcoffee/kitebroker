@@ -7,7 +7,7 @@ import (
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"runtime"
-	"sort"
+	//"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -21,23 +21,23 @@ type menu struct {
 	mutex   sync.RWMutex
 	text    *tabwriter.Writer
 	entries map[string]*menu_elem
+	tasks []string
+	admin_tasks []string
 }
 
 // Write out menu item.
 func (m *menu) cmd_text(cmd string, desc string) {
 	if m.text == nil {
-		m.text = tabwriter.NewWriter(os.Stderr, 34, 8, 1, ' ', 0)
+		m.text = tabwriter.NewWriter(os.Stderr, 33, 8, 1, '.', 0)
 	}
-	m.text.Write([]byte(fmt.Sprintf("  %s\t%s\n", cmd, desc)))
+	m.text.Write([]byte(fmt.Sprintf("  %s \t \"%s\"\n", cmd, desc)))
 }
 
 // Menu item.
 type menu_elem struct {
 	name    string
 	desc    string
-	admin   bool
 	parsed  bool
-	as_user string
 	task    Task
 	flags   *FlagSet
 }
@@ -66,14 +66,15 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 		desc:    desc,
 		task:    task,
 		flags:   flags,
-		as_user: "",
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 	if admin_task {
-		my_entry.admin = true
+		m.admin_tasks = append(m.admin_tasks, name)
+	} else {
+		m.tasks = append(m.tasks, name)
 	}
 }
 
@@ -83,21 +84,24 @@ func (m *menu) Show() {
 	defer m.mutex.RUnlock()
 
 	var items []string
-	for k, v := range m.entries {
+	/*for k, v := range m.entries {
 		if !v.admin {
 			items = append(items, k)
 		}
+	}*/
+	/*for _ k := range m.tasks {
+		if !m.entries[k].admin
 	}
-	sort.Strings(items)
-	for _, k := range items {
-		m.cmd_text(k, m.entries[k].desc)
-	}
-
+	sort.Strings(items)*/
 	if m.text == nil {
 		m.text = tabwriter.NewWriter(os.Stderr, 34, 8, 1, ' ', 0)
 	}
 
-	if len(items) > 0 {
+	for _, k := range m.tasks {
+		m.cmd_text(k, m.entries[k].desc)
+	}
+
+	if m.tasks != nil && len(m.tasks) > 0 {
 		os.Stderr.Write([]byte(fmt.Sprintf("Available '%s' commands:\n", os.Args[0])))
 		m.text.Write([]byte(fmt.Sprintf("\n")))
 		m.text.Flush()
@@ -106,15 +110,10 @@ func (m *menu) Show() {
 	items = items[0:0]
 
 	if global.auth_mode == SIGNATURE_AUTH {
-		for k, v := range m.entries {
-			if v.admin {
-				items = append(items, k)
-			}
-		}
-		for _, k := range items {
+		for _, k := range m.admin_tasks {
 			m.cmd_text(k, m.entries[k].desc)
 		}
-		if len(items) > 0 {
+		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
 			os.Stderr.Write([]byte(fmt.Sprintf("Available '%s' administrative commands:\n", os.Args[0])))
 			m.text.Write([]byte(fmt.Sprintf("\n")))
 			m.text.Flush()
@@ -132,10 +131,8 @@ func (m *menu) Select(input [][]string) (err error) {
 	// Remove admin tools if not set to SIGNATURE_AUTH
 	if global.auth_mode != SIGNATURE_AUTH {
 		m.mutex.Lock()
-		for k, v := range m.entries {
-			if v.admin {
-				delete(m.entries, k)
-			}
+		for _, k := range m.admin_tasks {
+			delete(m.entries, k)
 		}
 		m.mutex.Unlock()
 	}
@@ -145,7 +142,15 @@ func (m *menu) Select(input [][]string) (err error) {
 		source := args[len(args)-1]
 		if x, ok := m.entries[args[0]]; ok {
 			x.flags.Args = args[1 : len(args)-1]
+			var show_help bool
+			if len(x.flags.Args) == 0 {
+				show_help = true
+			}
 			if err := x.task.Init(x.flags); err != nil {
+				if show_help {
+					x.flags.Usage()
+					Exit(0)
+				}
 				if err != eflag.ErrHelp {
 					if source != "cli" {
 						Stderr("err [%s]: %s\n\n", source, err.Error())
@@ -155,9 +160,9 @@ func (m *menu) Select(input [][]string) (err error) {
 				}
 				x.flags.Usage()
 				if err == eflag.ErrHelp {
-					os.Exit(0)
+					Exit(0)
 				} else {
-					os.Exit(1)
+					Exit(1)
 				}
 			} else {
 				x.parsed = true

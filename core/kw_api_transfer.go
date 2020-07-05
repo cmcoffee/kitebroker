@@ -38,11 +38,15 @@ func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
 		return 1
 	}
 
+	/*
 	for total_size%chunk_size > 0 {
 		chunk_size--
-	}
+	}*/
 
-	return total_size / chunk_size
+	return (total_size / chunk_size) + 1
+
+
+	//return total_size / chunk_size
 }
 
 const (
@@ -144,8 +148,7 @@ type streamReadCloser struct {
 }
 
 func (s *streamReadCloser) Close() (err error) {
-	//return s.source.Close()
-	return nil
+	return s.mwrite.Close()
 }
 
 // Read function fro streamReadCloser, reads triggers a read from source->writes to bytes buffer via multipart writer->reads from bytes buffer.
@@ -230,7 +233,7 @@ func (S *KWSession) NewVersion(file_id int, file os.FileInfo) (int, error) {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (int, error) {
+func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -257,22 +260,30 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 		Output: &upload,
 	})
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	var upload_record upload_data
 
 	if upload.Data != nil && len(upload.Data) > 0 {
-		upload_record = upload.Data[0]
+		for i, v := range upload.Data {
+			if upload_id == v.ID {
+				upload_record = upload.Data[i]
+				break
+			}
+		}
 	}
 
 	if upload_id != upload_record.ID {
-		return -1, ErrNoUploadID
+		return nil, ErrNoUploadID
 	}
 
 	total_bytes := upload_record.TotalSize
 
 	ChunkSize := upload_record.TotalSize / upload_record.TotalChunks
+	if upload_record.TotalChunks > 1 {
+		ChunkSize++
+	}
 	ChunkIndex := upload_record.UploadedChunks
 
 	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader)
@@ -281,7 +292,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	if ChunkIndex > 0 {
 		if upload_record.UploadedSize > 0 && upload_record.UploadedChunks > 0 {
 			if _, err = src.Seek(ChunkSize*ChunkIndex, 0); err != nil {
-				return -1, err
+				return nil, err
 			}
 		}
 	}
@@ -290,16 +301,14 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 	w_buff := new(bytes.Buffer)
 
-	var resp_data struct {
-		ID int `json:"id"`
-	}
+	var resp_data *KiteObject
 
 	for transfered_bytes < total_bytes || total_bytes == 0 {
 		w_buff.Reset()
 
 		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_record.URI), 7)
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		if s.Debug {
@@ -326,27 +335,27 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 		err = w.WriteField("compressionMode", "NORMAL")
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		err = w.WriteField("index", fmt.Sprintf("%d", ChunkIndex+1))
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		err = w.WriteField("compressionSize", fmt.Sprintf("%d", ChunkSize))
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		err = w.WriteField("originalSize", fmt.Sprintf("%d", ChunkSize))
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		f_writer, err := w.CreateFormFile("content", filename)
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		if s.Debug {
@@ -371,11 +380,11 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 		resp, err := client.Do(req)
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		if err := s.decodeJSON(resp, &resp_data); err != nil {
-			return -1, err
+			return nil, err
 		}
 
 		ChunkIndex++
@@ -386,8 +395,8 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	}
 
 	if resp_data.ID == 0 {
-		return -1, ErrUploadNoResp
+		return nil, ErrUploadNoResp
 	}
 
-	return resp_data.ID, nil
+	return resp_data, nil
 }

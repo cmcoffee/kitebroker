@@ -10,9 +10,10 @@ import (
 
 type FolderUploadTask struct {
 	input struct {
-		src             string
+		src             []string
 		dst             string
 		overwrite_newer bool
+		move bool
 	}
 	crawl_wg     LimitGroup
 	upload_wg    LimitGroup
@@ -34,14 +35,16 @@ func (T *FolderUploadTask) New() Task {
 }
 
 func (T *FolderUploadTask) Init(flag *FlagSet) (err error) {
-	flag.StringVar(&T.input.dst, "dst", "<kw folder>", "Specify folders you wish to download.")
-	flag.StringVar(&T.input.src, "src", "<local destination folder>", "Specify local path to store downloaded folders.")
+	flag.StringVar(&T.input.dst, "dst", "<kw folder>", "Specify kiteworks folder you wish to upload to.")
+	flag.ArrayVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.\n\t  (use multiple --src args for multi-folder/file)")
 	flag.BoolVar(&T.input.overwrite_newer, "overwrite-newer", false, "Overwrite newer files on server.")
+	flag.BoolVar(&T.input.move, "move", false, "Remove source files upon succesful upload.")
+	flag.Order("src", "dst", "overwrite-newer", "move")
 	if err = flag.Parse(); err != nil {
 		return err
 	}
 
-	if IsBlank(T.input.src) {
+	if len(T.input.src) == 0 {
 		return fmt.Errorf("please provide a --src for upload.")
 	}
 
@@ -52,11 +55,6 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 	T.ppt = ppt
 	T.crawl_wg = NewLimitGroup(20)
 	T.upload_wg = NewLimitGroup(5)
-
-	T.input.src, err = filepath.Abs(T.input.src)
-	if err != nil {
-		return err
-	}
 
 	var base_folder KiteObject
 
@@ -113,7 +111,18 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 		}
 	}()
 
-	T.ProcessFolder(T.input.src, &base_folder)
+	for i, src := range T.input.src {	
+		src, err = filepath.Abs(src)
+		if err != nil {
+			Err("%s: %v", T.input.src[i], err)
+			continue
+		}
+		T.crawl_wg.Add(1)
+		go func (src string, folder KiteObject) {
+			defer T.crawl_wg.Done()
+			T.ProcessFolder(src, &folder)
+		}(src, base_folder)
+	}
 	T.crawl_wg.Wait()
 
 	// Shutdown upload
@@ -136,8 +145,9 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 	var uid int
 	//Log(kw_file_info)
 	if kw_file_info.ID > 0 {
-		modified, _ := ReadKWTime(kw_file_info.Modified)
+		modified, _ := ReadKWTime(kw_file_info.ClientModified)
 
+		// File on kiteworks is newer than local file.
 		if modified.UTC().Unix() > finfo.ModTime().UTC().Unix() {
 			if T.input.overwrite_newer {
 				uid, err = T.ppt.NewVersion(kw_file_info.ID, finfo)
@@ -147,7 +157,21 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 			} else {
 				return nil
 			}
-
+		// Local file is newer than kiteworks file.
+		} else if modified.UTC().Unix() < finfo.ModTime().UTC().Unix() {
+			uid, err = T.ppt.NewVersion(kw_file_info.ID, finfo)
+			if err != nil {
+				return err
+			}
+		// Local file gas same timestamp as kiteworks file.
+		} else {
+			if kw_file_info.Size == finfo.Size() {
+				if T.input.move {
+					return os.Remove(local_path)
+				} else {
+					return nil
+				}
+			}
 		}
 	} else {
 		uid, err = T.ppt.NewUpload(folder.ID, finfo)
@@ -160,8 +184,12 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		return err
 	}
 	_, err = T.ppt.Upload(finfo.Name(), uid, f)
+	f.Close()
 	if err == nil {
 		T.transfered.Add(finfo.Size())
+		if T.input.move {
+			return os.Remove(local_path)
+		}
 	}
 	return
 }

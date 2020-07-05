@@ -9,9 +9,12 @@ import (
 )
 
 func init() {
+	// Register Universal Tasks:
+	jobs.Register("upload", "Upload folders and/or files to kiteworks.", new(FolderUploadTask))
+	jobs.Register("download", "Download folders and/or files from kiteworks.", new(FolderDownloadTask))
+
+	// Register Signature Only Tasks:
 	jobs.RegisterAdmin("folder_file_expiry", "Modifies the folder and file expiry.", new(FolderFileExpiryTask))
 	jobs.RegisterAdmin("user_reprofiler", "Change user profile based on last activity date.", new(UserProfilerTask))
 	jobs.RegisterAdmin("mail_cleanup", "Expire email drafts and attachments older than specified date.", new(EmailDraftExpiryTask))
-	jobs.Register("folder_download", "Download folders from kiteworks.", new(FolderDownloadTask))
-	jobs.Register("folder_upload", "Upload folders to kiteworks.", new(FolderUploadTask))
 }

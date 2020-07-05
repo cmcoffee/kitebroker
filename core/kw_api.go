@@ -301,8 +301,6 @@ func Spanner(input interface{}) string {
 
 // Decodes JSON response body to provided interface.
 func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) {
-	defer resp.Body.Close()
-
 	var (
 		snoop_output map[string]interface{}
 		snoop_buffer bytes.Buffer

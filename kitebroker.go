@@ -79,21 +79,12 @@ func main() {
 	HideTS()
 	defer Exit(0)
 
-	config_file := FormatPath(fmt.Sprintf("%s/%s.cfg", global.root, APPNAME))
-
-	if cwd, err := os.Getwd(); err == nil {
-		local_conf := FormatPath(fmt.Sprintf("%s/%s.cfg", cwd, APPNAME))
-		if _, err := os.Stat(local_conf); err == nil {
-			config_file = FormatPath(local_conf)
-		}
-	}
-
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
-	flags.StringVar(&config_file, "conf", config_file, fmt.Sprintf("%s configuration file.", APPNAME))
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
-	task_files := flags.Array("task", "<task_file.tsk>", "Task file for request.\n\t  (use multiple --task args for multi-task)")
+	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.\n\t(use multiple --task args for multi-task)")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
+	flags.Order("task", "repeat", "setup")
 	flags.Footer = " "
 
 	flags.BoolVar(&global.debug, "debug", false, NONE)
@@ -106,7 +97,7 @@ func main() {
 
 	// We need to do a quick look to see what commands we display for --help
 
-	err := load_config(config_file)
+	err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
 		if f_err != eflag.ErrHelp {

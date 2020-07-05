@@ -29,7 +29,7 @@ type KiteObject struct {
 	UserID                int            `json:"userId"`
 	Permalink             string         `json:"permalink"`
 	Secure                bool           `json:"secure"`
-	Locked                int            `json:"locked"`
+	LockUser              int            `json:"lockUser"`
 	Fingerprint           string         `json:"fingerprint"`
 	ProfileID             int            `json:"typeID`
 	Size                  int64          `json:"size"`
@@ -181,6 +181,15 @@ func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error)
 		Path:   SetPath("/rest/files/%d", s.file_id),
 		Params: SetParams(params),
 		Output: &result,
+	})
+	return
+}
+
+func (s kw_rest_file) Delete(params ...interface{}) (err error) {
+	err = s.Call(APIRequest{
+		Method: "DELETE",
+		Path: SetPath("/rest/files/%d", s.file_id),
+		Params: SetParams(params),
 	})
 	return
 }

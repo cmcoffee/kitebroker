@@ -224,6 +224,10 @@ type Table struct {
 	table kvlite.Table
 }
 
+func (t Table) Drop() {
+	Critical(t.table.Drop())
+}
+
 func (t Table) Get(key string, value interface{}) bool {
 	found, err := t.table.Get(key, value)
 	Critical(err)
@@ -607,8 +611,8 @@ func DateString(input time.Time) string {
 		return fmt.Sprintf("%d", num)
 	}
 
-	due_time := input.AddDate(0, 0, -1)
-	return fmt.Sprintf("%s-%s-%s", pad(due_time.Year()), pad(int(due_time.Month())), pad(due_time.Day()))
+	//due_time := input.AddDate(0, 0, -1)
+	return fmt.Sprintf("%s-%s-%s", pad(input.Year()), pad(int(input.Month())), pad(input.Day()))
 }
 
 func CombinePath(name ...string) string {

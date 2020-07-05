@@ -157,14 +157,16 @@ api_cfg_1 =
 func init_database() {
 	var err error
 
-	db_filename := FormatPath(fmt.Sprintf("%s/%s.db", global.root, APPNAME))
+	MkDir(fmt.Sprintf("%s/data/", global.root))
+
+	db_filename := FormatPath(fmt.Sprintf("%s/data/%s.db", global.root, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 }
 
 // Initialize Logging.
 func init_logging() {
-	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/log/%s.log", global.root, APPNAME)), 10, 10)
+	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
 	nfo.SetFile(nfo.STD, file)
 	if global.debug {
@@ -246,15 +248,23 @@ func (c *proxyValue) String() string {
 
 // Configuration Menu for API Settings
 func config_api(configure_api bool) {
+	pause := func() {
+		PressEnter("(press enter to continue)")
+	}
+
 	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
+	account := dbConfig(*global.db).user()
 
 	var signature string
 	global.db.Get("kitebroker", "signature", &signature)
 
-	account := setup.String("User Account", dbConfig(*global.db).user(), "Please provide e-mail address of user account.", false)
+	if global.auth_mode == SIGNATURE_AUTH {
+		setup.StringVar(&account, "User Account", account, "Please provide e-mail address of user account.", false)
+	}
+
 	server := setup.String("kiteworks Host", global.cfg.Get("configuration", "server"), "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", false)
 
 	if IsBlank(client_app_id) || IsBlank(client_app_secret) || global.auth_mode == SIGNATURE_AUTH {
@@ -264,6 +274,17 @@ func config_api(configure_api bool) {
 
 	if global.auth_mode == SIGNATURE_AUTH {
 		setup.StringVar(&signature, "Signature Secret", signature, NONE, true)
+	} else {
+		setup.Func("Reset user credentials", func() bool {
+			kw := new(KWAPI)
+			kw.TokenStore = KVLiteStore(global.db)
+			kw.TokenStore.Delete(account)
+			account = NONE
+			Config(global.db).set_user(account)
+			Notice("User account has been reset, you will be prompted for credentials at next run/API test.")
+			pause()
+			return false
+		})
 	}
 
 	if IsBlank(redirect_uri) || global.auth_mode == SIGNATURE_AUTH {
@@ -282,10 +303,6 @@ func config_api(configure_api bool) {
 
 	setup.Options("Advanced", advanced, false)
 
-	pause := func() {
-		PressEnter("(press enter to continue)")
-	}
-
 	//Saves current coneciguration.
 	save_config := func() {
 		Critical(global.cfg.Set("configuration", "redirect_uri", redirect_uri))
@@ -297,7 +314,7 @@ func config_api(configure_api bool) {
 		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
 			global.db.Set("kitebroker", "signature", &signature)
 		}
-		Config(global.db).set_user(*account)
+		Config(global.db).set_user(account)
 		Config(global.db).set_connect_timeout_secs(*connect_timeout_secs)
 		Config(global.db).set_request_timeout_secs(*request_timeout_secs)
 		Config(global.db).set_max_file_transfer(*max_file_transfer)
@@ -305,15 +322,37 @@ func config_api(configure_api bool) {
 
 	}
 
+	var authenticated bool
+
+	setup_account := func() string {
+		if IsBlank(account) {
+			auth, err := global.kw.AuthLoop(NONE)
+			if err != nil {
+				Fatal(err)
+			}
+			global.user = *auth
+			Config(global.db).set_user(global.user.Username)
+		} else {
+			global.user = global.kw.Session(account)
+		}
+		authenticated = true
+		return global.user.Username
+	}
+
 	// Loads API Configuration
 	load_api := func() bool {
-		if IsBlank(*server) || IsBlank(redirect_uri) || IsBlank(*account) || IsBlank(client_app_id) || IsBlank(client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) {
+		if IsBlank(*server) || IsBlank(redirect_uri) || IsBlank(client_app_id) || IsBlank(client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
 			return false
 		}
 		kw := new(KWAPI)
 		kw.Server = strings.TrimPrefix(strings.ToLower(*server), "https://")
 		if global.auth_mode == SIGNATURE_AUTH {
 			kw.Signature(signature)
+		}
+		if global.auth_mode == SIGNATURE_AUTH {
+			kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, account)
+		} else {
+			kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
 		}
 		kw.TokenStore = KVLiteStore(global.db)
 		kw.RedirectURI = redirect_uri
@@ -335,7 +374,7 @@ func config_api(configure_api bool) {
 			kw.SetTransferLimiter(*max_file_transfer)
 		}
 		global.kw = kw
-		global.user = global.kw.Session(*account)
+		account = setup_account()
 		return true
 	}
 
@@ -348,21 +387,23 @@ func config_api(configure_api bool) {
 			return false
 		}
 
-		global.kw.TokenStore.Delete(*account)
+		if global.auth_mode == SIGNATURE_AUTH {
+			global.kw.TokenStore.Delete(account)
+		}
 
 		var err error
 		Flash("[%s]: Authenticating, please wait...", global.kw.Server)
-		_, err = global.kw.Authenticate(*account)
-		if err != nil {
-			Stdout("[ERROR] %s\n", err.Error())
-			pause()
-			return false
+
+		if !authenticated {
+			setup_account()
 		}
-		err = global.kw.Session(*account).Call(APIRequest{
+
+		err = global.kw.Session(account).Call(APIRequest{
 			Method: "GET",
 			Path:   "/rest/users/me",
 			Output: nil,
 		})
+
 		if err != nil {
 			Stdout("[ERROR] %s", err.Error())
 			pause()

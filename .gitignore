@@ -15,5 +15,6 @@ build/*
 xcuserdata
 
 # svn & cvs
+update.sh
 .svn
 CVS
