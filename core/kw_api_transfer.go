@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"errors"
 )
 
 // Max/Min chunk size for kiteworks
@@ -19,8 +20,8 @@ const (
 	kw_chunk_size_min = 1048576
 )
 
-var ErrNoUploadID = fmt.Errorf("Upload ID not found.")
-var ErrUploadNoResp = fmt.Errorf("Unexpected empty resposne from server.")
+var ErrNoUploadID = errors.New("Upload ID not found.")
+var ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
 
 // Returns chunk_size, total number of chunks and last chunk size.
 func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
@@ -311,8 +312,8 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 			return nil, err
 		}
 
-		if s.Debug {
-			Debug("\n[kiteworks]: %s", s.Username)
+		if s.Snoop {
+			Debug("[kiteworks]: %s", s.Username)
 			Debug("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_record.TotalChunks)
 		}
 
@@ -324,7 +325,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 			q := req.URL.Query()
 			q.Set("returnEntity", "true")
 			q.Set("mode", "full")
-			if s.Debug {
+			if s.Snoop {
 				for k, v := range q {
 					Debug("\\-> QUERY: %s VALUE: %s", k, v)
 				}
@@ -358,7 +359,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 			return nil, err
 		}
 
-		if s.Debug {
+		if s.Snoop {
 			Debug(w_buff.String())
 		}
 

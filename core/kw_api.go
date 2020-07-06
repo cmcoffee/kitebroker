@@ -24,7 +24,7 @@ type KWAPI struct {
 	AgentString    string        // Agent-String header for calls to kiteworks.
 	VerifySSL      bool          // Verify certificate for connections.
 	ProxyURI       string        // Proxy for outgoing https requests.
-	Debug          bool          // Flag to snoop API calls
+	Snoop          bool          // Flag to snoop API calls
 	RequestTimeout time.Duration // Timeout for request to be answered from kiteworks server.
 	ConnectTimeout time.Duration // Timeout for TLS connection to kiteworks server.
 	MaxChunkSize   int64         // Max Upload Chunksize in bytes, min = 1M, max = 68M
@@ -310,7 +310,7 @@ func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) 
 	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
 	defer resp.Body.Close()
 
-	if K.Debug {
+	if K.Snoop {
 		if output == nil {
 			Debug("<-- RESPONSE STATUS: %s", resp.Status)
 			dec := json.NewDecoder(resp.Body)
@@ -339,7 +339,7 @@ func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) 
 	}
 
 	if err != nil {
-		if K.Debug {
+		if K.Snoop {
 			txt := snoop_buffer.String()
 			if err := snoop_request(&snoop_buffer); err != nil {
 				Stdout(txt)
@@ -347,12 +347,12 @@ func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) 
 			err = fmt.Errorf("I cannot understand what %s is saying: %s", K.Server, err.Error())
 			return
 		} else {
-			err = fmt.Errorf("I cannot understand what %s is saying. (Try enabling snoop): %s", K.Server, err.Error())
+			err = fmt.Errorf("I cannot understand what %s is saying: %s", K.Server, err.Error())
 			return
 		}
 	}
 
-	if K.Debug {
+	if K.Snoop {
 		snoop_request(&snoop_buffer)
 	}
 	return
@@ -449,7 +449,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 		return err
 	}
 
-	if s.Debug {
+	if s.Snoop {
 		Debug("[kiteworks snoop]: %s", s.Username)
 		Debug("--> METHOD: \"%s\" PATH: \"%s\"", strings.ToUpper(api_req.Method), api_req.Path)
 	}
@@ -463,7 +463,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 			p := make(url.Values)
 			for k, v := range i {
 				p.Add(k, Spanner(v))
-				if s.Debug {
+				if s.Snoop {
 					Debug("\\-> POST PARAM: \"%s\" VALUE: \"%s\"", k, p[k])
 				}
 			}
@@ -474,7 +474,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 			if err != nil {
 				return err
 			}
-			if s.Debug {
+			if s.Snoop {
 				Debug("\\-> POST JSON: %s", string(json))
 			}
 			body = json
@@ -482,7 +482,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 			q := req.URL.Query()
 			for k, v := range i {
 				q.Set(k, Spanner(v))
-				if s.Debug {
+				if s.Snoop {
 					Debug("\\-> QUERY: %s=%s", k, q[k])
 				}
 			}

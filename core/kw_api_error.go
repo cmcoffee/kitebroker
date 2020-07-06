@@ -144,7 +144,7 @@ func (K *KWAPI) respError(resp *http.Response) (err error) {
 	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
 	defer resp.Body.Close()
 
-	if K.Debug {
+	if K.Snoop {
 		Debug("<-- RESPONSE STATUS: %s", resp.Status)
 		body = io.TeeReader(resp.Body, &snoop_buffer)
 	} else {
@@ -163,7 +163,7 @@ func (K *KWAPI) respError(resp *http.Response) (err error) {
 
 	output, err := ioutil.ReadAll(body)
 
-	if K.Debug {
+	if K.Snoop {
 		snoop_request(&snoop_buffer)
 	}
 

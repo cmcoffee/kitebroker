@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type FolderUploadTask struct {
@@ -102,7 +103,15 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 			T.upload_wg.Add(1)
 			go func(up *upload) {
 				defer T.upload_wg.Done()
-				err := T.UploadFile(up.path, up.finfo, up.dest)
+				var err error
+				for i := 0; i < int(T.ppt.Retries); i++ {
+					err = T.UploadFile(up.path, up.finfo, up.dest)
+					if err == ErrUploadNoResp {
+						time.Sleep(time.Second * time.Duration(i) + 1)
+						continue
+					}
+					break
+				}
 				if err != nil {
 					Err("%s: %v", up.path, err)
 					return
@@ -138,6 +147,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		Notice("%s: Uploading files to base path is not permitted, ignoring file.", local_path)
 		return nil
 	}
+
 	kw_file_info, err := T.ppt.Folder(folder.ID).Find(finfo.Name())
 	if err != nil && err != ErrNotFound {
 		return err

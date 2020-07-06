@@ -33,6 +33,7 @@ var global struct {
 	freq      time.Duration
 	root      string
 	setup     bool
+	snoop     bool
 	debug     bool
 }
 
@@ -88,10 +89,11 @@ func main() {
 	flags.Footer = " "
 
 	flags.BoolVar(&global.debug, "debug", false, NONE)
+	flags.BoolVar(&global.snoop, "snoop", false, NONE)
 
 	f_err := flags.Parse(os.Args[1:])
 
-	if global.debug {
+	if global.debug || global.snoop {
 		EnableDebug()
 	}
 

@@ -188,7 +188,7 @@ func (K *KWAPI) refreshToken(username string, auth *KWAuth) (*KWAuth, error) {
 		"refresh_token": {auth.RefreshToken},
 	}
 
-	if K.Debug {
+	if K.Snoop {
 		Debug("[kiteworks]: %s", username)
 		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
 		for k, v := range *postform {
@@ -269,7 +269,7 @@ func (K *KWAPI) newToken(username, password string) (auth *KWAuth, err error) {
 
 	}
 
-	if K.Debug {
+	if K.Snoop {
 		Debug("[kiteworks]: %s", username)
 		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
 		for k, v := range *postform {

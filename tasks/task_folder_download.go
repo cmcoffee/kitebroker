@@ -48,9 +48,9 @@ func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
 	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
 	flag.ArrayVar(&T.input.src, "src", "<kw folder>", "Specify kiteworks folder or file you wish to download.\n\t  (use multiple --src args for multi-folder/file)")
 	flag.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
-	flag.BoolVar(&T.input.redownload, "redo", false, "Redownload previously downloaded files.")
+	flag.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
 	flag.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
-	flag.Order("src", "dst", "redo", "move")
+	flag.Order("src", "dst", "redownload", "move")
 	if err = flag.Parse(); err != nil {
 		return err
 	}

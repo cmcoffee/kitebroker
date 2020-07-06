@@ -70,6 +70,7 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
+	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 	if admin_task {
 		m.admin_tasks = append(m.admin_tasks, name)

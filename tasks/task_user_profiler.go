@@ -89,7 +89,7 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 	}
 
 	T.user_count.Add(int64(user_count))
-	ProgressBar.New("users", user_count)
+	ProgressBar.New("Users Processed", user_count)
 	defer ProgressBar.Done()
 
 	var wg sync.WaitGroup

@@ -169,7 +169,7 @@ func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
 	nfo.SetFile(nfo.STD, file)
-	if global.debug {
+	if global.debug || global.snoop {
 		EnableDebug()
 	}
 }
@@ -365,8 +365,8 @@ func config_api(configure_api bool) {
 		kw.MaxChunkSize = (int64(*chunk_size_mb) * 1024) * 1024
 		kw.Retries = 3
 
-		if global.debug {
-			kw.Debug = true
+		if global.snoop {
+			kw.Snoop = true
 			kw.SetLimiter(1)
 			kw.SetTransferLimiter(1)
 		} else {
