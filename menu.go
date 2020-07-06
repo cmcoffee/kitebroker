@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"github.com/cmcoffee/kitebroker/core/snuglib/eflag"
+	"github.com/cmcoffee/go-snuglib/eflag"
 	"os"
 	"runtime"
 	"strings"
@@ -217,6 +217,7 @@ func (m *menu) Select(input [][]string) (err error) {
 			m.mutex.RLock()
 			if x, ok := m.entries[args[0]]; ok {
 				if x.parsed {
+					DefaultPleaseWait()
 					PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]
 					source := args[len(args)-1]

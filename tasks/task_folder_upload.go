@@ -87,8 +87,6 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
-	PleaseWait.Show()
-	defer DefaultPleaseWait()
 
 	T.upload_chan = make(chan *upload, 100)
 	// Spin up go thread for uploading.

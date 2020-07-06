@@ -7,7 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/cmcoffee/kitebroker/core/snuglib/iotimeout"
+	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io"
 	"io/ioutil"
 	"net"

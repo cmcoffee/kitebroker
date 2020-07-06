@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/cmcoffee/kitebroker/core/snuglib/iotimeout"
+	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io"
 	"mime/multipart"
 	"net/http"

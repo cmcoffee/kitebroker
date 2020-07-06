@@ -93,14 +93,14 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 		}
 		for _, user := range users {
 			if T.users.Get(user.Email, nil) {
-				//ProgressBar.Add(1)
+				ProgressBar.Add(1)
 				T.user_counter.Add(1)
 				continue
 			}
 			T.limiter.Add(1)
 			go func(user KiteUser) {
 				defer T.limiter.Done()
-				//defer ProgressBar.Add(1)
+				defer ProgressBar.Add(1)
 				defer T.user_counter.Add(1)
 				err = T.ProcessDrafts(user.Email)
 				if err != nil {

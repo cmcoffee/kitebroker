@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/kitebroker/core/snuglib/cfg"
-	"github.com/cmcoffee/kitebroker/core/snuglib/eflag"
-	"github.com/cmcoffee/kitebroker/core/snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/cfg"
+	"github.com/cmcoffee/go-snuglib/eflag"
+	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
@@ -79,8 +79,7 @@ func load_config(config_file string) (err error) {
 func main() {
 	HideTS()
 	defer Exit(0)
-	defer PleaseWait.Hide()
-
+	
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")

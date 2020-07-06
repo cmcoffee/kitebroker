@@ -89,8 +89,6 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
-	PleaseWait.Show()
-	defer DefaultPleaseWait()
 
 	var folders []KiteObject
 

@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
-	"github.com/cmcoffee/kitebroker/core/snuglib/iotimeout"
+	"github.com/cmcoffee/go-snuglib/iotimeout"
 )
 
 func (K *KWAPI) Authenticate(username string) (*KWSession, error) {
