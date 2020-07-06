@@ -322,10 +322,11 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		if err := os.Remove(tmp_file_name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-		flag.Set(incomplete)
-		clear_from_db(file.ID)
-		T.db.downloads.Set(download_record_name, &flag)
 	}
+
+	flag.Set(incomplete)
+	clear_from_db(file.ID)
+	T.db.downloads.Set(download_record_name, &flag)
 
 	dst, err := os.OpenFile(tmp_file_name, os.O_CREATE|os.O_RDWR, 0755)
 	if err != nil {

@@ -2,12 +2,10 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
+	"github.com/cmcoffee/kitebroker/core/snuglib/eflag"
 	"os"
 	"runtime"
-	//"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -219,7 +217,7 @@ func (m *menu) Select(input [][]string) (err error) {
 			m.mutex.RLock()
 			if x, ok := m.entries[args[0]]; ok {
 				if x.parsed {
-					nfo.PleaseWait.Show()
+					PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]
 					source := args[len(args)-1]
 					pre_errors := ErrorCount()
