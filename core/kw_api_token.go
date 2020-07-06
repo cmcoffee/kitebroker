@@ -56,14 +56,16 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 	}
 
 	if K.secrets.signature_key == nil {
+		defer PleaseWait.Hide()
 		Stdout("### %s authentication ###\n\n", K.Server)
 		for {
+			PleaseWait.Hide()
 			if username == NONE || permit_change {
-				username = strings.ToLower(GetInput("-> E-MAIL: "))
+				username = strings.ToLower(GetInput(" -> Account Login(email): "))
 			} else {
-				                             Stdout("-> E-MAIL: %s", username)
+				                             Stdout(" -> Account Login(email): %s", username)
 			}
-			password :=                   GetSecret("-> PASSWD: ")
+			password :=                   GetSecret(" -> Account Password: ")
 			if password == NONE {
 				err := fmt.Errorf("Blank password provided.")
 				if !auth_loop {
@@ -73,7 +75,7 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 				Err("Blank password provided.\n\n")
 				continue
 			}
-
+			PleaseWait.Show()
 			auth, err := K.newToken(username, password)
 			if err != nil {
 				if !auth_loop {
