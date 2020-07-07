@@ -43,7 +43,10 @@ var (
 )
 
 func init() {
-	nfo.SignalCallback(syscall.SIGINT, func() bool { Log("Application interrupt received. (shutting down)"); return true })
+	nfo.SignalCallback(syscall.SIGINT, func() bool { 
+		Defer(func () { Log("Application interrupt received. (shutting down)") }) 
+		return true 
+	})
 
 	exec, err := os.Executable()
 	Critical(err)

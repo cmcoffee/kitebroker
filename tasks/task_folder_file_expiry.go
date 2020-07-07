@@ -162,7 +162,6 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 			T.limiter.Wait()
 		}
 	}
-	T.limiter.Wait()
 	// If we didn't have any errors, we don't need to resume.
 	if ErrorCount() == 0 {
 		ppt.Drop("users")
@@ -254,6 +253,7 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 			return err
 		}
 	}
+	T.folder_count.Add(1)
 	return
 }
 
@@ -273,6 +273,7 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 	err = sess.DataCall(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/folders/%d/files", folder.ID),
+		Params: SetParams(Query{"deleted": false}),
 		Output: &files,
 	}, -1, 1000)
 	if err != nil {
@@ -294,6 +295,7 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 			Err("%s - %s/%s: %v", user.Email, folder.Path, file.Name, err)
 		}
 	}
+	T.folder_count.Add(1)
 	return
 }
 
@@ -334,8 +336,6 @@ func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, fo
 				Err("%s - %s: %v", sess.Username, folders[n].Path, err)
 				n++
 				continue
-			} else {
-				T.folder_count.Add(1)
 			}
 			childs, err := sess.Folder(folders[n].ID).Folders()
 			if err == nil {

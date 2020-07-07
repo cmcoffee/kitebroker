@@ -217,6 +217,7 @@ func (m *menu) Select(input [][]string) (err error) {
 			m.mutex.RLock()
 			if x, ok := m.entries[args[0]]; ok {
 				if x.parsed {
+					ProgressBar.Done()
 					DefaultPleaseWait()
 					PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]
