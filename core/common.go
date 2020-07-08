@@ -180,6 +180,8 @@ var (
 	NeedAnswer      = nfo.NeedAnswer
 	PressEnter      = nfo.PressEnter
 	NewLimitGroup   = xsync.NewLimitGroup
+	NewFlagSet      = eflag.NewFlagSet
+	ReturnErrorOnly = eflag.ReturnErrorOnly
 )
 
 type (

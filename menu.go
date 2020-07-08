@@ -57,7 +57,7 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], ReturnErrorOnly)}
 
 	m.entries[name] = &menu_elem{
 		name:    name,
@@ -83,15 +83,7 @@ func (m *menu) Show() {
 	defer m.mutex.RUnlock()
 
 	var items []string
-	/*for k, v := range m.entries {
-		if !v.admin {
-			items = append(items, k)
-		}
-	}*/
-	/*for _ k := range m.tasks {
-		if !m.entries[k].admin
-	}
-	sort.Strings(items)*/
+
 	if m.text == nil {
 		m.text = tabwriter.NewWriter(os.Stderr, 34, 8, 1, ' ', 0)
 	}
