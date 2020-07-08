@@ -69,6 +69,30 @@ func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	return
 }
 
+func (r *TaskReport) ImportTally(name string, tally *Tally) {
+	var tmp []*Tally
+	for i := 0; i < len(r.tallys); i++ {
+		if name != r.tallys[i].name {
+			tmp = append(tmp, r.tallys[i])
+		}
+	}
+	r.tallys = tmp
+
+	new_tally := new(Tally)
+	new_tally.name = name
+	new_tally.count = tally.count
+
+	if tally.Format == nil {
+		new_tally.Format = func(val int64) string {
+			return fmt.Sprintf("%d", val)
+		}
+	} else {
+		new_tally.Format = tally.Format
+	}
+	r.tallys = append(r.tallys, new_tally)
+	return
+}
+
 func (c *TaskReport) FindTally(name string) int64 {
 	for _, v := range c.tallys {
 		if v.name == name {

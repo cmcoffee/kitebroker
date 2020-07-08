@@ -194,6 +194,14 @@ func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 	return
 }
 
+func (s kw_rest_file) PermDelete() (err error) {
+	err = s.Call(APIRequest{
+		Method: "DELETE",
+		Path: SetPath("/rest/files/%d/actions/permanent", s.file_id),
+	})
+	return
+}
+
 /*
 // Drills down specific folder and returns all results.
 func (s KWSession) CrawlFolder(folder_id int, params...interface{}) (results []KiteObject, err error) {
@@ -242,6 +250,20 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 		Path:   SetPath("/rest/folders/%d/folders", s.folder_id),
 		Output: &children,
 		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
+	}, -1, 1000)
+
+	return
+}
+
+func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err error) {
+	if len(params) == 0 {
+		params = SetParams(Query{"deleted": false})
+	}
+	err = s.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/folders/%d/files", s.folder_id),
+		Output: &children,
+		Params: SetParams(params),
 	}, -1, 1000)
 
 	return

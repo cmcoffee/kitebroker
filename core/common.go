@@ -206,7 +206,7 @@ func ResetErrorCount() {
 }
 
 // Returns amount of times Err has been triggered.
-func ErrorCount() uint32 {
+func ErrCount() uint32 {
 	return atomic.LoadUint32(&error_counter)
 }
 

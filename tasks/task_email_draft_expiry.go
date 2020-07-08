@@ -114,7 +114,7 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 
 	T.limiter.Wait()
 
-	if ErrorCount() == 0 {
+	if ErrCount() == 0 {
 		passport.Drop("users")
 	}
 
@@ -153,13 +153,13 @@ func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
 		}
 		offset = offset + len(mail_ids)
 		for _, v := range mail_ids {
-			err = T.DeleteAttachment(&sess, v.ID)
+			err = T.ShowAttachments(&sess, v.ID)
 			if err != nil && err != ErrNotFound {
 				Err("%s: %v", user, err)
 				continue
 			} else if err == ErrNotFound {
 				created, _ := ReadKWTime(v.Date)
-				Log("[%d] User: %s Created %v - No attachments in draft.", v.ID, user, created.Local())
+				Log("[%d] User: %s Created: %v - No attachments in draft.", v.ID, user, created.Local())
 			}
 
 			if !T.dry_run {
@@ -174,10 +174,10 @@ func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
 		}
 		continue
 	}
-	return
+	return T.CleanMailDir(&sess)
 }
 
-func (T *EmailDraftExpiryTask) DeleteAttachment(sess *KWSession, mail_id int) (err error) {
+func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (err error) {
 	var attachments []struct {
 		AttachmentID int `json:"attachmentId"`
 		VersionID    int `json:"versionFileId"`
@@ -210,5 +210,28 @@ func (T *EmailDraftExpiryTask) DeleteAttachment(sess *KWSession, mail_id int) (e
 		T.size.Add(finfo.Size)
 	}
 
+	return
+}
+
+func (T *EmailDraftExpiryTask) CleanMailDir(sess *KWSession) (err error) {
+	my_user, err := sess.MyUser()
+	if err != nil {
+		return err
+	}
+	files, err := sess.Folder(my_user.MyDirID).Files(Query{"deleted": true})
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		created, _ := ReadKWTime(f.Created)
+		Log("[Deleted Mail File] User: %s, Filename: %s, Size: %s, Created: %v", my_user.Email, f.Name, HumanSize(f.Size), created.Local())
+		T.size.Add(f.Size)
+		if !T.dry_run {
+			if err := sess.File(f.ID).PermDelete(); err != nil {
+				Err("%s: %v", f.Name, err)
+				continue
+			}
+		}
+	}
 	return
 }

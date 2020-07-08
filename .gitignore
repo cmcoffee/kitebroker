@@ -13,6 +13,8 @@ build/*
 *.pbxuser
 *.xcworkspace
 xcuserdata
+tasks/classified/*
+classified.go
 
 # svn & cvs
 update.sh

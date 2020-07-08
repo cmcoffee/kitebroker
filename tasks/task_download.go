@@ -284,7 +284,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	}
 
 	file_name := CombinePath(local_path, file.Name)
-	tmp_file_name := fmt.Sprintf("%s.incomplete", file_name)
+	tmp_file_name := fmt.Sprintf("%s.%d.incomplete", file_name, file.ID)
 
 	mark_complete := func() (err error) {
 		clear_from_db(file.ID)

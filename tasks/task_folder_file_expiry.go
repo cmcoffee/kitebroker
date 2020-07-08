@@ -17,7 +17,7 @@ type FolderFileExpiryTask struct {
 		file_days int
 		reset bool
 	}
-	folders      Table
+	users        Table
 	profiles     Table
 	limiter      LimitGroup
 	user_count   Tally
@@ -76,13 +76,11 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 
 	if T.input.reset {
 		ppt.Drop("users")
-		ppt.Drop("folders")
 	}
 
 	T.user_count = T.ppt.Tally("Analyzed Users")
 	T.folder_count = T.ppt.Tally("Folders Updated")
-
-	T.folders = T.ppt.Table("folders")
+	T.users = T.ppt.Table("users")
 	T.profiles = OpenCache().Table("profiles")
 
 	T.limiter = NewLimitGroup(50)
@@ -120,7 +118,11 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 			break
 		}
 		for _, user := range users {
+			err_start := ErrCount()
 			T.user_count.Add(1)
+			if T.users.Get(user.Email, nil) {
+				continue
+			}
 			if T.input.profile_id > 0 && user.UserTypeID != T.input.profile_id {
 				Log("Skipping %s, user does not match required profile_id of %d.", user.Email, T.input.profile_id)
 				continue
@@ -160,12 +162,14 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 				}(sess, user, v)
 			}
 			T.limiter.Wait()
+			if ErrCount() - err_start == 0 {
+				T.users.Set(user.Email, 1)
+			}
 		}
 	}
 	// If we didn't have any errors, we don't need to resume.
-	if ErrorCount() == 0 {
+	if ErrCount() == 0 {
 		ppt.Drop("users")
-		ppt.Drop("folders")
 	}
 	return nil
 }
@@ -205,10 +209,6 @@ func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expi
 // Updates folder to profile expiry
 func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
 
-	if found := T.folders.Get(fmt.Sprintf("%d", folder.ID), nil); found {
-		return nil
-	}
-
 	folder_days, file_days, err := T.GetProfileExpiration(user)
 	if err != nil {
 		return err
@@ -243,13 +243,9 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 		Path:    SetPath("/rest/folders/%d", folder.ID),
 		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": true}),
 	})
-	if err == nil {
-		T.folders.Set(fmt.Sprintf("%d", folder.ID), 1)
-	} else if KWAPIError(err, ERR_ENTITY_IS_SYNC_DIR) {
+	if err != nil && KWAPIError(err, ERR_ENTITY_IS_SYNC_DIR) {
 		err = T.ChangeMyFolderFiles(sess, user, folder)
-		if err == nil {
-			T.folders.Set(fmt.Sprintf("%d", folder.ID), 1)
-		} else {
+		if err != nil {
 			return err
 		}
 	}

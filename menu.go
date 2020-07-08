@@ -222,7 +222,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]
 					source := args[len(args)-1]
-					pre_errors := ErrorCount()
+					pre_errors := ErrCount()
 					if source == "cli" {
 						Log("<-- task '%s' started. -->", name)
 					} else {
@@ -230,7 +230,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 					passport := NewPassport(name, source, global.user, global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name)))
 					report := Defer(func() error {
-						passport.Summary(ErrorCount() - pre_errors)
+						passport.Summary(ErrCount() - pre_errors)
 						return nil
 					})
 					if err := x.task.Main(passport); err != nil {

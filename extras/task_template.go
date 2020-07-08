@@ -8,6 +8,7 @@ import (
 type TaskObject struct {
 	bool_value bool
 	counter Tally
+	ppt Passport
 }
 
 // Task objects need to be able create a new copy of themself.
@@ -32,7 +33,7 @@ func (T *TaskObject) Init(flag *FlagSet) (err error) {
 
 // Main function, Passport hands off KWAPI Session, a Database and a TaskReport object.
 func (T *TaskObject) Main(passport Passport) (err error) {
-	xo = passport
+	T.ppt = passport
 
 	T.counter = xo.Tally("Description for report here")
 	T.counter.Add(1)
