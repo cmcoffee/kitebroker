@@ -14,7 +14,7 @@ type FolderUploadTask struct {
 		src             []string
 		dst             string
 		overwrite_newer bool
-		move bool
+		move            bool
 	}
 	crawl_wg     LimitGroup
 	upload_wg    LimitGroup
@@ -105,7 +105,7 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 				for i := 0; i < int(T.ppt.Retries); i++ {
 					err = T.UploadFile(up.path, up.finfo, up.dest)
 					if err == ErrUploadNoResp {
-						time.Sleep(time.Second * time.Duration(i) + 1)
+						time.Sleep(time.Second*time.Duration(i) + 1)
 						continue
 					}
 					break
@@ -118,14 +118,14 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 		}
 	}()
 
-	for i, src := range T.input.src {	
+	for i, src := range T.input.src {
 		src, err = filepath.Abs(src)
 		if err != nil {
 			Err("%s: %v", T.input.src[i], err)
 			continue
 		}
 		T.crawl_wg.Add(1)
-		go func (src string, folder KiteObject) {
+		go func(src string, folder KiteObject) {
 			defer T.crawl_wg.Done()
 			T.ProcessFolder(src, &folder)
 		}(src, base_folder)
@@ -165,13 +165,13 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 			} else {
 				return nil
 			}
-		// Local file is newer than kiteworks file.
+			// Local file is newer than kiteworks file.
 		} else if modified.UTC().Unix() < finfo.ModTime().UTC().Unix() {
 			uid, err = T.ppt.NewVersion(kw_file_info.ID, finfo)
 			if err != nil {
 				return err
 			}
-		// Local file gas same timestamp as kiteworks file.
+			// Local file gas same timestamp as kiteworks file.
 		} else {
 			if kw_file_info.Size == finfo.Size() {
 				if T.input.move {
@@ -191,10 +191,13 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 	if err != nil {
 		return err
 	}
-	_, err = T.ppt.Upload(finfo.Name(), uid, f)
+	upload_counter := func(num int) {
+		T.transfered.Add(int64(num))
+	}
+	x := TransferCounter(f, upload_counter)
+	_, err = T.ppt.Upload(finfo.Name(), uid, x)
 	f.Close()
 	if err == nil {
-		T.transfered.Add(finfo.Size())
 		if T.input.move {
 			return os.Remove(local_path)
 		}

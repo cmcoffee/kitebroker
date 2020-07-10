@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 )
 
 type FolderDownloadTask struct {
@@ -17,11 +17,11 @@ type FolderDownloadTask struct {
 		dst        string
 		redownload bool
 		owned_only bool
-		move bool
+		move       bool
 	}
 	db struct {
 		downloads Table
-		files 	  Table
+		files     Table
 	}
 	crawl_limiter    LimitGroup
 	dwnld_limiter    LimitGroup
@@ -72,7 +72,6 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	T.db.downloads = T.ppt.Table("downloads")
 	T.db.files = T.ppt.Shared(fmt.Sprintf("sync:%s:%s", ppt.Username, T.input.dst)).Table("downloads")
 	T.db.files.Drop()
-
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
 	if err != nil {
@@ -343,8 +342,11 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	}
 
 	if fstat == nil || fstat.Size() != file.Size {
-		num, err := io.Copy(dst, f)
-		T.transfered.Add(num)
+		update_transfer := func(num int) {
+			T.transfered.Add(int64(num))
+		}
+		f = TransferCounter(f, update_transfer)
+		_, err := io.Copy(dst, f)
 		if err != nil {
 			f.Close()
 			dst.Close()

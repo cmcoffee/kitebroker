@@ -57,7 +57,7 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &FlagSet{EFlagSet: NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
 
 	m.entries[name] = &menu_elem{
 		name:    name,

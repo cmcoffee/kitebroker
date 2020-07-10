@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io"
@@ -11,7 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"errors"
 )
 
 // Max/Min chunk size for kiteworks
@@ -40,12 +40,11 @@ func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
 	}
 
 	/*
-	for total_size%chunk_size > 0 {
-		chunk_size--
-	}*/
+		for total_size%chunk_size > 0 {
+			chunk_size--
+		}*/
 
 	return (total_size / chunk_size) + 1
-
 
 	//return total_size / chunk_size
 }

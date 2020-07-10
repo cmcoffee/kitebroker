@@ -7,8 +7,8 @@ import (
 // Object for task.
 type TaskObject struct {
 	bool_value bool
-	counter Tally
-	ppt Passport
+	counter    Tally
+	ppt        Passport
 }
 
 // Task objects need to be able create a new copy of themself.

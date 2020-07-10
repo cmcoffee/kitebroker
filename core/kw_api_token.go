@@ -7,13 +7,13 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
-	"github.com/cmcoffee/go-snuglib/iotimeout"
 )
 
 func (K *KWAPI) Authenticate(username string) (*KWSession, error) {
@@ -63,9 +63,9 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 			if username == NONE || permit_change {
 				username = strings.ToLower(GetInput(" -> Account Login(email): "))
 			} else {
-				                             Stdout(" -> Account Login(email): %s", username)
+				Stdout(" -> Account Login(email): %s", username)
 			}
-			password :=                   GetSecret(" -> Account Password: ")
+			password := GetSecret(" -> Account Password: ")
 			if password == NONE {
 				err := fmt.Errorf("Blank password provided.")
 				if !auth_loop {
@@ -286,7 +286,6 @@ func (K *KWAPI) newToken(username, password string) (auth *KWAuth, err error) {
 	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
 	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
 	defer req.Body.Close()
-
 
 	client := K.Session(username).NewClient()
 

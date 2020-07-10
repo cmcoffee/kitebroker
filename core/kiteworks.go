@@ -188,7 +188,7 @@ func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error)
 func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
-		Path: SetPath("/rest/files/%d", s.file_id),
+		Path:   SetPath("/rest/files/%d", s.file_id),
 		Params: SetParams(params),
 	})
 	return
@@ -197,7 +197,7 @@ func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 func (s kw_rest_file) PermDelete() (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
-		Path: SetPath("/rest/files/%d/actions/permanent", s.file_id),
+		Path:   SetPath("/rest/files/%d/actions/permanent", s.file_id),
 	})
 	return
 }

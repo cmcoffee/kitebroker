@@ -179,9 +179,8 @@ var (
 	NoRate          = nfo.NoRate
 	NeedAnswer      = nfo.NeedAnswer
 	PressEnter      = nfo.PressEnter
+	TransferCounter = nfo.TransferCounter
 	NewLimitGroup   = xsync.NewLimitGroup
-	NewFlagSet      = eflag.NewFlagSet
-	ReturnErrorOnly = eflag.ReturnErrorOnly
 )
 
 type (

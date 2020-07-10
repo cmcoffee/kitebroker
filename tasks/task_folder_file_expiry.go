@@ -12,10 +12,10 @@ type FolderFileExpiryTask struct {
 		profile_id        int
 		user_emails       []string
 		exclude_my_folder bool
-		folders []string
-		folder_days int
-		file_days int
-		reset bool
+		folders           []string
+		folder_days       int
+		file_days         int
+		reset             bool
 	}
 	users        Table
 	profiles     Table
@@ -162,7 +162,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 				}(sess, user, v)
 			}
 			T.limiter.Wait()
-			if ErrCount() - err_start == 0 {
+			if ErrCount()-err_start == 0 {
 				T.users.Set(user.Email, 1)
 			}
 		}
