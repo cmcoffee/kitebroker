@@ -1,0 +1,6 @@
+# Example Task File for downloading "My Folder" to "C:\kiteworks"
+[download]
+src="My Folder"
+dst="C:\kiteworks\"
+redownload=false
+move=false

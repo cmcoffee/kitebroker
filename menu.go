@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"github.com/cmcoffee/go-snuglib/eflag"
 	"os"
 	"runtime"
 	"strings"
@@ -16,28 +15,25 @@ var jobs menu
 
 // Menu for tasks.
 type menu struct {
-	mutex   sync.RWMutex
-	text    *tabwriter.Writer
-	entries map[string]*menu_elem
-	tasks []string
+	mutex       sync.RWMutex
+	text        *tabwriter.Writer
+	entries     map[string]*menu_elem
+	tasks       []string
 	admin_tasks []string
 }
 
 // Write out menu item.
 func (m *menu) cmd_text(cmd string, desc string) {
-	if m.text == nil {
-		m.text = tabwriter.NewWriter(os.Stderr, 33, 8, 1, '.', 0)
-	}
 	m.text.Write([]byte(fmt.Sprintf("  %s \t \"%s\"\n", cmd, desc)))
 }
 
 // Menu item.
 type menu_elem struct {
-	name    string
-	desc    string
-	parsed  bool
-	task    Task
-	flags   *FlagSet
+	name   string
+	desc   string
+	parsed bool
+	task   Task
+	flags  *FlagSet
 }
 
 // Registers an admin task.
@@ -57,13 +53,13 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], ReturnErrorOnly)}
 
 	m.entries[name] = &menu_elem{
-		name:    name,
-		desc:    desc,
-		task:    task,
-		flags:   flags,
+		name:  name,
+		desc:  desc,
+		task:  task,
+		flags: flags,
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
@@ -85,7 +81,7 @@ func (m *menu) Show() {
 	var items []string
 
 	if m.text == nil {
-		m.text = tabwriter.NewWriter(os.Stderr, 34, 8, 1, ' ', 0)
+		m.text = tabwriter.NewWriter(os.Stderr, 25, 1, 3, '.', 0)
 	}
 
 	for _, k := range m.tasks {
@@ -116,7 +112,7 @@ func (m *menu) Show() {
 
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
-		return eflag.ErrHelp
+		return ErrHelp
 	}
 
 	// Remove admin tools if not set to SIGNATURE_AUTH
@@ -142,7 +138,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					x.flags.Usage()
 					Exit(0)
 				}
-				if err != eflag.ErrHelp {
+				if err != ErrHelp {
 					if source != "cli" {
 						Stderr("err [%s]: %s\n\n", source, err.Error())
 					} else {
@@ -150,7 +146,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 				}
 				x.flags.Usage()
-				if err == eflag.ErrHelp {
+				if err == ErrHelp {
 					Exit(0)
 				} else {
 					Exit(1)
@@ -197,7 +193,7 @@ func (m *menu) Select(input [][]string) (err error) {
 
 	init_kw_api()
 	ShowTS()
-	Log("### %s %s ###", APPNAME, VERSION)
+	Log("### %s v%s ###", APPNAME, VERSION)
 	Log(NONE)
 
 	// Main task loop.

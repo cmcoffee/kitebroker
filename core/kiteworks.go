@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"os"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
@@ -90,8 +91,6 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
-
-	path = strings.TrimSuffix(path, "/")
 
 	folder_path := SplitPath(path)
 
@@ -202,6 +201,23 @@ func (s kw_rest_file) PermDelete() (err error) {
 	return
 }
 
+// Create a new file version for an existing file.
+func (S kw_rest_file) NewVersion(file os.FileInfo) (int, error) {
+	var upload struct {
+		ID int `json:"id"`
+	}
+
+	if err := S.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/files/%d/actions/initiateUpload", S.file_id),
+		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
+		Output: &upload,
+	}); err != nil {
+		return -1, err
+	}
+	return upload.ID, nil
+}
+
 /*
 // Drills down specific folder and returns all results.
 func (s KWSession) CrawlFolder(folder_id int, params...interface{}) (results []KiteObject, err error) {
@@ -223,6 +239,24 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
 	return
+}
+
+// Creates a new upload for a folder.
+func (S kw_rest_folder) NewUpload(file os.FileInfo) (int, error) {
+	var upload struct {
+		ID int `json:"id"`
+	}
+
+	if err := S.Call(APIRequest{
+		Version: 5,
+		Method:  "POST",
+		Path:    SetPath("/rest/folders/%d/actions/initiateUpload", S.folder_id),
+		Params:  SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
+		Output:  &upload,
+	}); err != nil {
+		return -1, err
+	}
+	return upload.ID, nil
 }
 
 // Returns all items with listed folder_id.
@@ -285,10 +319,10 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 	return
 }
 
-func (s KWSession) CreateFolder(folder_id int, name string, params ...interface{}) (output KiteObject, err error) {
+func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/folders", folder_id),
+		Path:   SetPath("/rest/folders/%d/folders", s.folder_id),
 		Params: SetParams(PostJSON{"name": name}, Query{"returnEntity": true}, params),
 		Output: &output,
 	})

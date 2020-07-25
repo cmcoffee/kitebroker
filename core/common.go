@@ -181,6 +181,12 @@ var (
 	PressEnter      = nfo.PressEnter
 	TransferCounter = nfo.TransferCounter
 	NewLimitGroup   = xsync.NewLimitGroup
+	NewFlagSet      = eflag.NewFlagSet
+	ErrHelp    		= eflag.ErrHelp
+	ReturnErrorOnly = eflag.ReturnErrorOnly
+	SignalCallback  = nfo.SignalCallback
+	FormatPath = filepath.FromSlash
+	GetPath    = filepath.ToSlash
 )
 
 type (
@@ -188,6 +194,16 @@ type (
 	BitFlag        = xsync.BitFlag
 	LimitGroup     = xsync.LimitGroup
 )
+
+func InitLogging(path string, debug bool) {
+	file, err := nfo.LogFile(FormatPath(path), 10, 10)
+	Critical(err)
+	nfo.SetFile(nfo.STD, file)
+	if debug {
+		nfo.SetOutput(nfo.DEBUG, os.Stdout)
+		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))	
+	}
+}
 
 // Enable Debug Logging Output
 func EnableDebug() {
@@ -391,8 +407,10 @@ func Critical(err error) {
 // Splits path up
 func SplitPath(path string) (folder_path []string) {
 	if strings.Contains(path, "/") {
+		path = strings.TrimSuffix(path, "/")
 		folder_path = strings.Split(path, "/")
 	} else {
+		path = strings.TrimSuffix(path, "\\")
 		folder_path = strings.Split(path, "\\")
 	}
 	if len(folder_path) == 0 {

@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -39,14 +38,7 @@ func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
 		return 1
 	}
 
-	/*
-		for total_size%chunk_size > 0 {
-			chunk_size--
-		}*/
-
 	return (total_size / chunk_size) + 1
-
-	//return total_size / chunk_size
 }
 
 const (
@@ -197,41 +189,6 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	return
 }
 
-// Creates a new upload for a folder.
-func (S *KWSession) NewUpload(folder_id int, file os.FileInfo) (int, error) {
-	var upload struct {
-		ID int `json:"id"`
-	}
-
-	if err := S.Call(APIRequest{
-		Version: 5,
-		Method:  "POST",
-		Path:    SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
-		Params:  SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
-		Output:  &upload,
-	}); err != nil {
-		return -1, err
-	}
-	return upload.ID, nil
-}
-
-// Create a new file version for an existing file.
-func (S *KWSession) NewVersion(file_id int, file os.FileInfo) (int, error) {
-	var upload struct {
-		ID int `json:"id"`
-	}
-
-	if err := S.Call(APIRequest{
-		Method: "POST",
-		Path:   SetPath("/rest/files/%d/actions/initiateUpload", file_id),
-		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
-		Output: &upload,
-	}); err != nil {
-		return -1, err
-	}
-	return upload.ID, nil
-}
-
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error) {
 	if s.trans_limiter != nil {
@@ -239,7 +196,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 		defer func() { <-s.trans_limiter }()
 	}
 
-	type upload_data struct {
+	var upload_data struct {
 		ID             int    `json:"id"`
 		TotalSize      int64  `json:"totalSize"`
 		TotalChunks    int64  `json:"totalChunks"`
@@ -249,55 +206,40 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 		URI            string `json:"uri"`
 	}
 
-	var upload struct {
-		Data []upload_data `json:"data"`
-	}
-
 	err := s.Call(APIRequest{
 		Method: "GET",
-		Path:   "/rest/uploads",
-		Params: SetParams(Query{"locate_id": upload_id, "limit": 1, "with": "(id,totalSize,totalChunks,uploadedChunks,finished,uploadedSize)"}),
-		Output: &upload,
+		Path:   SetPath("/rest/uploads/%d", upload_id),
+		Params: SetParams(Query{"with": "(id,totalSize,totalChunks,uploadedChunks,finished,uploadedSize)"}),
+		Output: &upload_data,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	var upload_record upload_data
-
-	if upload.Data != nil && len(upload.Data) > 0 {
-		for i, v := range upload.Data {
-			if upload_id == v.ID {
-				upload_record = upload.Data[i]
-				break
-			}
-		}
-	}
-
-	if upload_id != upload_record.ID {
+	if upload_data.ID != upload_data.ID {
 		return nil, ErrNoUploadID
 	}
 
-	total_bytes := upload_record.TotalSize
+	total_bytes := upload_data.TotalSize
 
-	ChunkSize := upload_record.TotalSize / upload_record.TotalChunks
-	if upload_record.TotalChunks > 1 {
+	ChunkSize := upload_data.TotalSize / upload_data.TotalChunks
+	if upload_data.TotalChunks > 1 {
 		ChunkSize++
 	}
-	ChunkIndex := upload_record.UploadedChunks
+	ChunkIndex := upload_data.UploadedChunks
 
 	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader)
 	defer src.Close()
 
 	if ChunkIndex > 0 {
-		if upload_record.UploadedSize > 0 && upload_record.UploadedChunks > 0 {
+		if upload_data.UploadedSize > 0 && upload_data.UploadedChunks > 0 {
 			if _, err = src.Seek(ChunkSize*ChunkIndex, 0); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	transfered_bytes := upload_record.UploadedSize
+	transfered_bytes := upload_data.UploadedSize
 
 	w_buff := new(bytes.Buffer)
 
@@ -306,21 +248,21 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	for transfered_bytes < total_bytes || total_bytes == 0 {
 		w_buff.Reset()
 
-		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_record.URI), 7)
+		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI), 7)
 		if err != nil {
 			return nil, err
 		}
 
 		if s.Snoop {
 			Debug("[kiteworks]: %s", s.Username)
-			Debug("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_record.TotalChunks)
+			Debug("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
 		}
 
 		w := multipart.NewWriter(w_buff)
 
 		req.Header.Set("Content-Type", "multipart/form-data; boundary="+w.Boundary())
 
-		if ChunkIndex == upload_record.TotalChunks-1 {
+		if ChunkIndex == upload_data.TotalChunks-1 {
 			q := req.URL.Query()
 			q.Set("returnEntity", "true")
 			q.Set("mode", "full")
@@ -394,7 +336,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 		}
 	}
 
-	if resp_data.ID == 0 {
+	if resp_data == nil || resp_data.ID == 0 {
 		return nil, ErrUploadNoResp
 	}
 

@@ -1,4 +1,4 @@
-package tasks
+package user
 
 import (
 	"fmt"
@@ -22,6 +22,7 @@ type FolderUploadTask struct {
 	file_count   Tally
 	folder_count Tally
 	transfered   Tally
+	uploads      Table
 	ppt          Passport
 }
 
@@ -36,9 +37,9 @@ func (T *FolderUploadTask) New() Task {
 }
 
 func (T *FolderUploadTask) Init(flag *FlagSet) (err error) {
-	flag.StringVar(&T.input.dst, "dst", "<kw folder>", "Specify kiteworks folder you wish to upload to.")
-	flag.ArrayVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.\n\t  (use multiple --src args for multi-folder/file)")
-	flag.BoolVar(&T.input.overwrite_newer, "overwrite-newer", false, "Overwrite newer files on server.")
+	flag.StringVar(&T.input.dst, "dst", "<remote folder>", "Specify kiteworks folder you wish to upload to.")
+	flag.ArrayVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.")
+	flag.BoolVar(&T.input.overwrite_newer, "overwrite_newer", false, "Overwrite newer files on server.")
 	flag.BoolVar(&T.input.move, "move", false, "Remove source files upon succesful upload.")
 	flag.Order("src", "dst", "overwrite-newer", "move")
 	if err = flag.Parse(); err != nil {
@@ -56,6 +57,7 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 	T.ppt = ppt
 	T.crawl_wg = NewLimitGroup(20)
 	T.upload_wg = NewLimitGroup(5)
+	T.uploads = T.ppt.Table("uploads")
 
 	var base_folder KiteObject
 
@@ -68,7 +70,7 @@ func (T *FolderUploadTask) Main(ppt Passport) (err error) {
 		base_folder, err = ppt.Folder(0).Find(T.input.dst)
 		if err != nil {
 			if err == ErrNotFound {
-				base_folder, err = ppt.CreateFolder(0, T.input.dst)
+				base_folder, err = ppt.Folder(0).NewFolder(T.input.dst)
 				if err != nil {
 					return err
 				}
@@ -146,6 +148,47 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		return nil
 	}
 
+	var UploadRecord struct {
+		Name string
+		ID int
+		ClientModified time.Time
+		Size int64
+	}
+
+	transfer_file := func(local_path string, uid int) (err error) {
+		upload_counter := func(num int) {
+			T.transfered.Add(int64(num))
+		}
+
+		f, err := os.Open(local_path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+
+		x := TransferCounter(f, upload_counter)
+		_, err = T.ppt.Upload(finfo.Name(), uid, x)
+		if err == nil {
+			if T.input.move {
+				return os.Remove(local_path)
+			}
+		}
+		return
+	}
+
+	target := fmt.Sprintf("%d:%s", folder.ID, finfo.Name())
+
+	if T.uploads.Get(target, &UploadRecord) {
+		if UploadRecord.Name == finfo.Name() && UploadRecord.Size == finfo.Size() && UploadRecord.ClientModified == finfo.ModTime() {
+			if err := transfer_file(local_path, UploadRecord.ID); err != nil {
+				Debug("Error attempting to resume file: %s", err.Error())
+			} else {
+				T.uploads.Unset(target)
+				return nil
+			}
+		}
+	} 
+
 	kw_file_info, err := T.ppt.Folder(folder.ID).Find(finfo.Name())
 	if err != nil && err != ErrNotFound {
 		return err
@@ -158,22 +201,24 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		// File on kiteworks is newer than local file.
 		if modified.UTC().Unix() > finfo.ModTime().UTC().Unix() {
 			if T.input.overwrite_newer {
-				uid, err = T.ppt.NewVersion(kw_file_info.ID, finfo)
+				uid, err = T.ppt.File(kw_file_info.ID).NewVersion(finfo)
 				if err != nil {
 					return err
 				}
 			} else {
+				T.uploads.Unset(target)
 				return nil
 			}
 			// Local file is newer than kiteworks file.
 		} else if modified.UTC().Unix() < finfo.ModTime().UTC().Unix() {
-			uid, err = T.ppt.NewVersion(kw_file_info.ID, finfo)
+			uid, err = T.ppt.File(kw_file_info.ID).NewVersion(finfo)
 			if err != nil {
 				return err
 			}
 			// Local file gas same timestamp as kiteworks file.
 		} else {
 			if kw_file_info.Size == finfo.Size() {
+				T.uploads.Unset(target)
 				if T.input.move {
 					return os.Remove(local_path)
 				} else {
@@ -182,25 +227,21 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 			}
 		}
 	} else {
-		uid, err = T.ppt.NewUpload(folder.ID, finfo)
+		uid, err = T.ppt.Folder(folder.ID).NewUpload(finfo)
 		if err != nil {
 			return err
 		}
 	}
-	f, err := os.Open(local_path)
-	if err != nil {
-		return err
-	}
-	upload_counter := func(num int) {
-		T.transfered.Add(int64(num))
-	}
-	x := TransferCounter(f, upload_counter)
-	_, err = T.ppt.Upload(finfo.Name(), uid, x)
-	f.Close()
+	UploadRecord.Name = finfo.Name()
+	UploadRecord.ID = uid
+	UploadRecord.ClientModified = finfo.ModTime()
+	UploadRecord.Size = finfo.Size()
+
+	T.uploads.Set(target, &UploadRecord)
+
+	err = transfer_file(local_path, uid)
 	if err == nil {
-		if T.input.move {
-			return os.Remove(local_path)
-		}
+		T.uploads.Unset(target)
 	}
 	return
 }
@@ -278,13 +319,15 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 				if err != nil {
 					if err != ErrNotFound {
 						Err("%s: %v", target.Path, err)
-						n++
 						continue
 					} else {
-						kw_folder, err = T.ppt.CreateFolder(target.ID, v.Name())
+						kw_folder, err = T.ppt.Folder(target.ID).NewFolder(v.Name())
 						if err != nil {
-							Err("%s: %v", target.Path, err)
-							n++
+							if IsKWError(err, "ERR_INPUT_FOLDER_NAME_INVALID_START_END_FORMAT") {
+								Notice("%s: %v", v.Name(), err)
+							} else {
+								Err("%s: %v", target.Path, err)
+							}
 							continue
 						}
 					}

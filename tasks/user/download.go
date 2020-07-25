@@ -1,4 +1,4 @@
-package tasks
+package user
 
 import (
 	"fmt"
@@ -46,7 +46,7 @@ func (T *FolderDownloadTask) New() Task {
 // Init function.
 func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
 	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
-	flag.ArrayVar(&T.input.src, "src", "<kw folder>", "Specify kiteworks folder or file you wish to download.\n\t  (use multiple --src args for multi-folder/file)")
+	flag.ArrayVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
 	flag.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
 	flag.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
 	flag.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
@@ -127,7 +127,7 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 			go func(m *download) {
 				defer T.dwnld_limiter.Done()
 				if err := T.ProcessFile(m.file, m.path); err != nil {
-					Err("%s: %v", m.file.Name, err)
+					Err("%s/%s: %v", strings.TrimPrefix(strings.TrimPrefix(m.path, T.input.dst), "/"), m.file.Name, err)
 				}
 			}(m)
 		}
@@ -192,7 +192,11 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 		obj := folders[n]
 		switch obj.Type {
 		case "d":
-			if obj.CurrentUserRole.ID < 5 && T.input.owned_only {
+			if obj.CurrentUserRole.Rank < 500000 && T.input.owned_only {
+				n++
+				continue
+			}
+			if obj.CurrentUserRole.Rank < 200000 {
 				n++
 				continue
 			}

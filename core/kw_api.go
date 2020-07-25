@@ -515,15 +515,15 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 				s.TokenStore.Delete(s.Username)
 				Critical(fmt.Errorf("Token is no longer valid: %s", orig_err.Error()))
 			}
-			return s.setToken(req, KWAPIError(err, TOKEN_ERR))
+			return s.setToken(req, IsKWError(err, _TOKEN_ERR[0:]...))
 		}
 
 		req.Body = ioutil.NopCloser(bytes.NewReader(body))
 		client := s.NewClient()
 		resp, err = client.Do(req)
 
-		if err != nil && KWAPIError(err, ERR_INTERNAL_SERVER_ERROR|TOKEN_ERR) {
-			if KWAPIError(err, TOKEN_ERR) {
+		if err != nil && (IsKWError(err, _TOKEN_ERR[0:]...) || IsKWError(err, "ERR_INTERNAL_SERVER_ERROR")) {
+			if IsKWError(err, _TOKEN_ERR[0:]...) {
 				if err := reAuth(&s, req, err); err != nil {
 					return err
 				}
@@ -541,7 +541,7 @@ func (s KWSession) Call(api_req APIRequest) (err error) {
 		}
 
 		err = s.decodeJSON(resp, api_req.Output)
-		if err != nil && KWAPIError(err, ERR_INTERNAL_SERVER_ERROR|TOKEN_ERR) {
+		if err != nil && (IsKWError(err, _TOKEN_ERR[0:]...) || IsKWError(err, "ERR_INTERNAL_SERVER_ERROR")) {
 			Debug("(CALL ERROR) %s -> %s: %s (%d/%d)", s.Username, api_req.Path, err.Error(), i+1, s.Retries+1)
 			if err := reAuth(&s, req, err); err != nil {
 				return err

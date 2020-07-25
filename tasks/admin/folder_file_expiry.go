@@ -1,4 +1,4 @@
-package tasks
+package admin
 
 import (
 	"fmt"
@@ -152,7 +152,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 			}
 			for _, v := range folders {
 				// Only process folders this user owns.
-				if v.CurrentUserRole.ID < 5 {
+				if v.CurrentUserRole.Rank < 500000 {
 					continue
 				}
 				T.limiter.Add(1)
@@ -243,7 +243,7 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 		Path:    SetPath("/rest/folders/%d", folder.ID),
 		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": true}),
 	})
-	if err != nil && KWAPIError(err, ERR_ENTITY_IS_SYNC_DIR) {
+	if err != nil && IsKWError(err, "ERR_ENTITY_IS_SYNC_DIR") {
 		err = T.ChangeMyFolderFiles(sess, user, folder)
 		if err != nil {
 			return err

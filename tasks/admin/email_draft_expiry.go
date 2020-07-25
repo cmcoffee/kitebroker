@@ -1,4 +1,4 @@
-package tasks
+package admin
 
 import (
 	"fmt"
@@ -199,7 +199,7 @@ func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (er
 	}
 	for _, f := range attachments {
 		finfo, err := sess.File(f.VersionID).Info()
-		if err != nil && KWAPIError(err, ERR_ACCESS_USER) {
+		if err != nil && IsKWError(err, "ERR_ACCESS_USER") {
 			finfo, err = sess.File(f.AttachmentID).Info()
 			if err != nil {
 				Notice("[%d] Attachment information is unavailable: %v", mail_id, err)

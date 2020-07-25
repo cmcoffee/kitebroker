@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/cfg"
-	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
@@ -15,7 +13,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "1.0.0a-ng"
+	VERSION = "20.07.01"
 )
 
 const (
@@ -37,15 +35,10 @@ var global struct {
 	debug     bool
 }
 
-var (
-	FormatPath = filepath.FromSlash
-	GetPath    = filepath.ToSlash
-)
-
 func init() {
-	nfo.SignalCallback(syscall.SIGINT, func() bool { 
-		Defer(func () { Log("Application interrupt received. (shutting down)") }) 
-		return true 
+	SignalCallback(syscall.SIGINT, func() bool {
+		Defer(func() { Log("Application interrupt received. (shutting down)") })
+		return true
 	})
 
 	exec, err := os.Executable()
@@ -82,12 +75,13 @@ func load_config(config_file string) (err error) {
 func main() {
 	HideTS()
 	defer Exit(0)
-	
+
 	// Initial modifier flags and flag aliases.
-	flags := eflag.NewFlagSet(os.Args[0], eflag.ReturnErrorOnly)
+	flags := NewFlagSet(os.Args[0], ReturnErrorOnly)
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
-	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.\n\t(use multiple --task args for multi-task)")
+	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
+	version := flags.Bool("version", false, "")
 	flags.Order("task", "repeat", "setup")
 	flags.Footer = " "
 
@@ -95,6 +89,13 @@ func main() {
 	flags.BoolVar(&global.snoop, "snoop", false, NONE)
 
 	f_err := flags.Parse(os.Args[1:])
+
+	if *version {
+		Stdout("### %s v%s ###", APPNAME, VERSION)
+		Stdout("\n")
+		Stdout("Written by Craig M. Coffee. (craig@snuglab.com)")
+		Exit(0)
+	}
 
 	if global.debug || global.snoop {
 		EnableDebug()
@@ -105,7 +106,7 @@ func main() {
 	err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
-		if f_err != eflag.ErrHelp {
+		if f_err != ErrHelp {
 			Stderr(f_err)
 			Stderr(NONE)
 		}
@@ -151,12 +152,12 @@ func main() {
 	}
 
 	if err := jobs.Select(task_args); err != nil {
-		if err != eflag.ErrHelp {
+		if err != ErrHelp {
 			Stderr(err)
 		}
 		flags.Usage()
 		jobs.Show()
-		if err == eflag.ErrHelp {
+		if err == ErrHelp {
 			return
 		} else {
 			Exit(1)
