@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/cfg"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
@@ -13,7 +12,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "20.07.01"
+	VERSION = "20.09.04"
 )
 
 const (
@@ -23,8 +22,8 @@ const (
 
 // Global Variables
 var global struct {
-	cfg       cfg.Store
-	db        *Database
+	cfg       ConfigStore
+	db        Database
 	auth_mode int
 	user      KWSession
 	kw        *KWAPI
@@ -33,6 +32,7 @@ var global struct {
 	setup     bool
 	snoop     bool
 	debug     bool
+	pause     bool
 }
 
 func init() {
@@ -77,16 +77,18 @@ func main() {
 	defer Exit(0)
 
 	// Initial modifier flags and flag aliases.
-	flags := NewFlagSet(os.Args[0], ReturnErrorOnly)
+	flags := NewFlagSet(NONE, ReturnErrorOnly)
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
 	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
 	version := flags.Bool("version", false, "")
-	flags.Order("task", "repeat", "setup")
+	flags.BoolVar(&global.pause, "pause", false, "Pause after execution.")
+	flags.Order("task", "repeat", "setup", "pause")
 	flags.Footer = " "
 
 	flags.BoolVar(&global.debug, "debug", false, NONE)
 	flags.BoolVar(&global.snoop, "snoop", false, NONE)
+	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 
 	f_err := flags.Parse(os.Args[1:])
 
@@ -130,7 +132,7 @@ func main() {
 
 	// Read and process task files.
 	for _, f := range *task_files {
-		var task_file cfg.Store
+		var task_file ConfigStore
 		Critical(task_file.File(f))
 		for _, s := range task_file.Sections() {
 			var args []string
@@ -162,5 +164,10 @@ func main() {
 		} else {
 			Exit(1)
 		}
+	}
+
+	if global.pause {
+		PleaseWait.Hide()
+		pause()
 	}
 }

@@ -23,7 +23,7 @@ var ErrNoUploadID = errors.New("Upload ID not found.")
 var ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
 
 // Returns chunk_size, total number of chunks and last chunk size.
-func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
+func (K *APIClient) Chunks(total_size int64) (total_chunks int64) {
 	chunk_size := K.MaxChunkSize
 
 	if chunk_size == 0 || chunk_size > kw_chunk_size_max {
@@ -43,87 +43,134 @@ func (K *KWAPI) Chunks(total_size int64) (total_chunks int64) {
 
 const (
 	wd_started = 1 << iota
+	wd_closed
 )
 
 // Webdownloader for external sources
 type web_downloader struct {
 	flag            BitFlag
 	err             error
+	api             *APIClient
 	req             *http.Request
-	client          *http.Client
+	reqs            []*http.Request
 	resp            *http.Response
 	offset          int64
-	trans_limiter   *chan struct{}
+	last_byte       []int64
 	request_timeout time.Duration
 }
 
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
-		if W.req == nil || W.client == nil {
+		W.req = W.reqs[0]
+		if W.req == nil {
 			return 0, fmt.Errorf("Webdownloader not initialized.")
-		} else {
-			W.flag.Set(wd_started)
-			W.client.Timeout = 0
-			W.resp, err = W.client.Do(W.req)
-			if err != nil {
-				return 0, err
-			}
-			if W.resp.StatusCode < 200 || W.resp.StatusCode >= 300 {
-				return 0, fmt.Errorf("GET %s: %s", W.req.URL, W.resp.Status)
-			}
-			if W.offset > 0 {
-				content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
-				if len(content_range) > 1 {
-					if strings.TrimSpace(content_range[0]) != strconv.FormatInt(W.offset, 10) {
-						return 0, fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])
-					}
+		}
+		W.reqs = append(W.reqs[:0], W.reqs[1:]...)
+		W.flag.Set(wd_started)
+		W.resp, err = W.api.Do(W.req)
+		if err != nil {
+			return 0, err
+		}
+
+		if W.resp.StatusCode < 200 || W.resp.StatusCode >= 300 {
+			return 0, fmt.Errorf("GET %s: %s", W.req.URL, W.resp.Status)
+		}
+		if W.offset > 0 {
+			content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
+			if len(content_range) > 1 {
+				if strings.TrimSpace(content_range[0]) != strconv.FormatInt(W.offset, 10) {
+					return 0, fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])
 				}
 			}
-			W.resp.Body = iotimeout.NewReadCloser(W.resp.Body, W.request_timeout)
+		}
+		W.resp.Body = iotimeout.NewReadCloser(W.resp.Body, W.request_timeout)
+	}
+
+	n, err = W.resp.Body.Read(p)
+
+	// If we have multiple requests, start next request.
+	if err == io.EOF {
+		if len(W.reqs) > 0 {
+			W.offset = 0
+			err = nil
+			W.flag.Unset(wd_started)
+			W.resp.Body.Close()
 		}
 	}
-	n, err = W.resp.Body.Read(p)
+
 	return
 }
 
 func (W *web_downloader) Close() error {
-	if W.trans_limiter != nil {
-		<-*W.trans_limiter
+	if !W.flag.Has(wd_closed) {
+		W.flag.Set(wd_closed)
+		if W.api.trans_limiter != nil {
+			<-W.api.trans_limiter
+		}
+		if W.resp == nil || W.resp.Body == nil {
+			return nil
+		}
+		return W.resp.Body.Close()
 	}
-	if W.resp == nil || W.resp.Body == nil {
-		return nil
-	}
-	return W.resp.Body.Close()
+	return nil
 }
 
 func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 	if offset < 0 {
 		return 0, fmt.Errorf("Can't read before the start of the file.")
 	}
-	W.req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
-	W.offset = offset
+	if offset == 0 {
+		return 0, nil
+	}
+	if len(W.reqs) == 1 {
+		W.offset = offset
+		W.reqs[0].Header.Set("Range", fmt.Sprintf("bytes=%d-", W.offset))
+	} else {
+		var real_offset int64
+		for i, v := range W.last_byte {
+			if offset > v+real_offset {
+				real_offset += v
+				continue
+			} else {
+				W.reqs = append(W.reqs[:0], W.reqs[i:]...)
+				W.reqs[0].Header.Set("Range", fmt.Sprintf("bytes=%d-", offset-real_offset))
+				break
+			}
+		}
+	}
 	return offset, nil
 }
 
 // Perform External Download from a remote request.
-func (S *KWSession) Download(req *http.Request) ReadSeekCloser {
+func (S *APIClient) Download(req *http.Request, reqs ...*http.Request) ReadSeekCloser {
 	if S.trans_limiter != nil {
 		S.trans_limiter <- struct{}{}
 	}
-	req.Header.Set("Content-Type", "application/octet-stream")
 
-	if S.AgentString == NONE {
-		req.Header.Set("User-Agent", "kwlib/1.0")
-	} else {
-		req.Header.Set("User-Agent", S.AgentString)
+	var last_byte []int64
+
+	reqs = append([]*http.Request{req}[0:], reqs[0:]...)
+
+	for _, v := range reqs {
+		v.Header.Set("Content-Type", "application/octet-stream")
+		if S.AgentString != NONE {
+			v.Header.Set("User-Agent", S.AgentString)
+		}
+		var current_sz int64
+		if l := v.Header.Get("Size"); l != NONE {
+			if sz, _ := strconv.ParseInt(l, 0, 64); sz > 0 {
+				current_sz += sz
+				last_byte = append(last_byte, current_sz)
+			}
+			v.Header.Del("Size")
+		}
 	}
 
-	client := S.NewClient()
 	return &web_downloader{
-		req:             req,
-		client:          client.Client,
+		api:             S,
+		reqs:            reqs[0:],
+		last_byte:       last_byte,
 		request_timeout: S.RequestTimeout,
-		trans_limiter:   &S.trans_limiter,
 	}
 }
 
@@ -233,7 +280,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 	if ChunkIndex > 0 {
 		if upload_data.UploadedSize > 0 && upload_data.UploadedChunks > 0 {
-			if _, err = src.Seek(ChunkSize*ChunkIndex, 0); err != nil {
+			if _, err := src.Seek(ChunkSize*ChunkIndex, 0); err != nil {
 				return nil, err
 			}
 		}
@@ -248,10 +295,12 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	for transfered_bytes < total_bytes || total_bytes == 0 {
 		w_buff.Reset()
 
-		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI), 7)
+		req, err := s.NewRequest(s.Username, "POST", fmt.Sprintf("/%s", upload_data.URI))
 		if err != nil {
 			return nil, err
 		}
+
+		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
 
 		if s.Snoop {
 			Debug("[kiteworks]: %s", s.Username)
@@ -317,15 +366,13 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 		req.Body = post
 		defer req.Body.Close()
-		client := s.NewClient()
-		client.Timeout = 0
 
-		resp, err := client.Do(req)
+		resp, err := s.Do(req)
 		if err != nil {
 			return nil, err
 		}
 
-		if err := s.decodeJSON(resp, &resp_data); err != nil {
+		if err := s.DecodeJSON(resp, &resp_data); err != nil {
 			return nil, err
 		}
 

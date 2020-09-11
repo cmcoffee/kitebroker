@@ -32,6 +32,7 @@ type menu_elem struct {
 	name   string
 	desc   string
 	parsed bool
+	admin  bool
 	task   Task
 	flags  *FlagSet
 }
@@ -54,18 +55,22 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 		m.entries = make(map[string]*menu_elem)
 	}
 	flags := &FlagSet{EFlagSet: NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], ReturnErrorOnly)}
+	flags.AdaptArgs = true
 
 	m.entries[name] = &menu_elem{
-		name:  name,
-		desc:  desc,
-		task:  task,
-		flags: flags,
+		name:   name,
+		desc:   desc,
+		admin:  admin_task,
+		task:   task,
+		flags:  flags,
+		parsed: false,
 	}
 	my_entry := m.entries[name]
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
+	my_entry.flags.BoolVar(&global.pause, "pause", global.pause, NONE)
 	if admin_task {
 		m.admin_tasks = append(m.admin_tasks, name)
 	} else {
@@ -88,8 +93,16 @@ func (m *menu) Show() {
 		m.cmd_text(k, m.entries[k].desc)
 	}
 
+	var user_cmd_prompt string
+
+	if global.auth_mode == SIGNATURE_AUTH {
+		user_cmd_prompt = "Available user commands:\n"
+	} else {
+		user_cmd_prompt = " Available commands:\n"
+	}
+
 	if m.tasks != nil && len(m.tasks) > 0 {
-		os.Stderr.Write([]byte(fmt.Sprintf("Available '%s' commands:\n", os.Args[0])))
+		os.Stderr.Write([]byte(user_cmd_prompt))
 		m.text.Write([]byte(fmt.Sprintf("\n")))
 		m.text.Flush()
 	}
@@ -101,7 +114,7 @@ func (m *menu) Show() {
 			m.cmd_text(k, m.entries[k].desc)
 		}
 		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
-			os.Stderr.Write([]byte(fmt.Sprintf("Available '%s' administrative commands:\n", os.Args[0])))
+			os.Stderr.Write([]byte("Available admin commands:\n"))
 			m.text.Write([]byte(fmt.Sprintf("\n")))
 			m.text.Flush()
 		}
@@ -128,9 +141,9 @@ func (m *menu) Select(input [][]string) (err error) {
 	init := func(args []string) (err error) {
 		source := args[len(args)-1]
 		if x, ok := m.entries[args[0]]; ok {
-			x.flags.Args = args[1 : len(args)-1]
+			x.flags.FlagArgs = args[1 : len(args)-1]
 			var show_help bool
-			if len(x.flags.Args) == 0 {
+			if len(x.flags.FlagArgs) == 0 {
 				show_help = true
 			}
 			if err := x.task.Init(x.flags); err != nil {
@@ -216,7 +229,16 @@ func (m *menu) Select(input [][]string) (err error) {
 					} else {
 						Log("<-- task '%s' (%s) started. -->", name, source)
 					}
-					passport := NewPassport(name, source, global.user, global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name)))
+
+					var db SubStore
+
+					if x.admin {
+						db = global.db.Shared(name)
+					} else {
+						db = global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name))
+					}
+
+					passport := NewPassport(name, source, x.flags, global.user, db)
 					report := Defer(func() error {
 						passport.Summary(ErrCount() - pre_errors)
 						return nil

@@ -3,6 +3,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/eflag"
 	"strings"
 	"sync/atomic"
 	"text/tabwriter"
@@ -12,6 +13,7 @@ import (
 type TaskReport struct {
 	name       string
 	file       string
+	flags      *FlagSet
 	start_time time.Time
 	tallys     []*Tally
 }
@@ -27,6 +29,29 @@ func (t *TaskReport) Summary(errors uint32) {
 		fmt.Fprintf(text, "\tFile: \t%s\n", t.file)
 	}
 	fmt.Fprintf(text, "\tTask: \t%s\n", t.name)
+	if t.flags != nil {
+		first := true
+		log_flag := func(input *eflag.Flag) {
+			switch input.Name {
+			case "repeat":
+				return
+			case "snoop":
+				return
+			case "debug":
+				return
+			case "pause":
+				return
+			}
+			if first {
+				fmt.Fprintf(text, "\tOptions: ")
+				fmt.Fprintf(text, "\t%s = %v\n", t.flags.ResolveAlias(input.Name), input.Value)
+				first = false
+			} else {
+				fmt.Fprintf(text, "\t\t%s = %v\n", t.flags.ResolveAlias(input.Name), input.Value)
+			}
+		}
+		t.flags.Visit(log_flag)
+	}
 	fmt.Fprintf(text, "\tStarted: \t%v\n", t.start_time.Round(time.Millisecond))
 	fmt.Fprintf(text, "\tFinished: \t%v\n", end_time.Round(time.Millisecond))
 	fmt.Fprintf(text, "\tRuntime: \t%v\n", end_time.Sub(t.start_time).Round(time.Second))

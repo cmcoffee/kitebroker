@@ -6,29 +6,38 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/options"
 	. "github.com/cmcoffee/kitebroker/core"
 	"strings"
 	"time"
 )
 
 // Wrapper for config items stored in database
-type dbConfig Database
+type dbCFG struct{}
 
-func Config(input *Database) dbConfig {
-	return dbConfig(*input)
-}
+var dbConfig dbCFG
 
-func (d dbConfig) user() (account string) {
+func (d dbCFG) user() (account string) {
 	global.db.Get("kitebroker", "account", &account)
 	return
 }
 
-func (d dbConfig) set_user(account string) {
+func (d dbCFG) set_user(account string) {
 	global.db.Set("kitebroker", "account", &account)
 }
 
-func (d dbConfig) max_file_transfer() (max int) {
+func (d dbCFG) max_api_calls() (max int) {
+	found := global.db.Get("kitebroker", "max_api_calls", &max)
+	if !found {
+		return 3
+	}
+	return
+}
+
+func (d dbCFG) set_max_api_calls(max int) {
+	global.db.Set("kitebroker", "max_api_calls", &max)
+}
+
+func (d dbCFG) max_file_transfer() (max int) {
 	found := global.db.Get("kitebroker", "max_file_transfer", &max)
 	if !found {
 		return 3
@@ -36,15 +45,15 @@ func (d dbConfig) max_file_transfer() (max int) {
 	return
 }
 
-func (d dbConfig) set_max_file_transfer(max int) {
+func (d dbCFG) set_max_file_transfer(max int) {
 	global.db.Set("kitebroker", "max_file_transfer", &max)
 }
 
-func (d dbConfig) set_connect_timeout_secs(max int) {
+func (d dbCFG) set_connect_timeout_secs(max int) {
 	global.db.Set("kitebroker", "connect_timeout_secs", &max)
 }
 
-func (d dbConfig) connect_timeout_secs() (max int) {
+func (d dbCFG) connect_timeout_secs() (max int) {
 	found := global.db.Get("kitebroker", "connect_timeout_secs", &max)
 	if !found {
 		return 12
@@ -52,23 +61,23 @@ func (d dbConfig) connect_timeout_secs() (max int) {
 	return
 }
 
-func (d dbConfig) set_request_timeout_secs(max int) {
+func (d dbCFG) set_request_timeout_secs(max int) {
 	global.db.Set("kitebroker", "request_timeout_secs", &max)
 }
 
-func (d dbConfig) request_timeout_secs() (max int) {
-	found := global.db.Get("kitebroker", "connect_request_secs", &max)
+func (d dbCFG) request_timeout_secs() (max int) {
+	found := global.db.Get("kitebroker", "request_timeout_secs", &max)
 	if !found {
 		return 60
 	}
 	return
 }
 
-func (d dbConfig) set_chunk_size_mb(max int) {
+func (d dbCFG) set_chunk_size_mb(max int) {
 	global.db.Set("kitebroker", "chunk_size_mb", &max)
 }
 
-func (d dbConfig) chunk_size_mb() (max int) {
+func (d dbCFG) chunk_size_mb() (max int) {
 	found := global.db.Get("kitebroker", "chunk_size_mb", &max)
 	if !found {
 		return 68
@@ -92,15 +101,16 @@ func init_kw_api() {
 	config_api(false)
 
 	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
-	username := dbConfig(*global.db).user()
-	user, err := global.kw.AuthLoop(username)
+	username := dbConfig.user()
+	user, err := global.kw.Login(username)
 	if err != nil {
 		Err(err)
 		Log("\n")
 		config_api(true)
 		return
 	}
-	dbConfig(*global.db).set_user(string(user.Username))
+	global.user = *user
+	dbConfig.set_user(string(user.Username))
 
 	init_logging()
 }
@@ -165,7 +175,7 @@ func init_database() {
 
 // Initialize Logging.
 func init_logging() {
-	var debug bool 
+	var debug bool
 
 	if global.debug || global.snoop {
 		debug = true
@@ -246,17 +256,18 @@ func (c *proxyValue) String() string {
 	}
 }
 
+func pause() {
+	PressEnter("\n(press enter to continue)")
+}
+
 // Configuration Menu for API Settings
 func config_api(configure_api bool) {
-	pause := func() {
-		PressEnter("(press enter to continue)")
-	}
 
-	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
-	account := dbConfig(*global.db).user()
+	account := dbConfig.user()
 
 	var signature string
 	global.db.Get("kitebroker", "signature", &signature)
@@ -276,11 +287,11 @@ func config_api(configure_api bool) {
 		setup.StringVar(&signature, "Signature Secret", signature, NONE, true)
 	} else {
 		setup.Func("Reset user credentials", func() bool {
-			kw := new(KWAPI)
+			kw := new(APIClient)
 			kw.TokenStore = KVLiteStore(global.db)
 			kw.TokenStore.Delete(account)
 			account = NONE
-			Config(global.db).set_user(account)
+			dbConfig.set_user(account)
 			Notice("User account has been reset, you will be prompted for credentials at next run/API test.")
 			pause()
 			return false
@@ -295,11 +306,12 @@ func config_api(configure_api bool) {
 	proxy := proxyValue{"Proxy Server", proxy_uri}
 	setup.Register(&proxy)
 
-	advanced := options.NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
-	connect_timeout_secs := advanced.Int("Connection timeout seconds", Config(global.db).connect_timeout_secs(), "Default Value: 12", 0, 600)
-	request_timeout_secs := advanced.Int("Request timeout seconds", Config(global.db).request_timeout_secs(), "Default Value: 60", 0, 600)
-	max_file_transfer := advanced.Int("Maximum file transfers", Config(global.db).max_file_transfer(), "Default Value: 3", 1, 5)
-	chunk_size_mb := advanced.Int("Chunk size in megabytes", Config(global.db).chunk_size_mb(), "Default Value: 68", 1, 68)
+	advanced := NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
+	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
+	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
+	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
+	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 5)
+	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 68", 1, 68)
 
 	setup.Options("Advanced", advanced, false)
 
@@ -314,11 +326,12 @@ func config_api(configure_api bool) {
 		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
 			global.db.Set("kitebroker", "signature", &signature)
 		}
-		Config(global.db).set_user(account)
-		Config(global.db).set_connect_timeout_secs(*connect_timeout_secs)
-		Config(global.db).set_request_timeout_secs(*request_timeout_secs)
-		Config(global.db).set_max_file_transfer(*max_file_transfer)
-		Config(global.db).set_chunk_size_mb(*chunk_size_mb)
+		dbConfig.set_user(account)
+		dbConfig.set_connect_timeout_secs(*connect_timeout_secs)
+		dbConfig.set_request_timeout_secs(*request_timeout_secs)
+		dbConfig.set_max_api_calls(*max_api_calls)
+		dbConfig.set_max_file_transfer(*max_file_transfer)
+		dbConfig.set_chunk_size_mb(*chunk_size_mb)
 
 	}
 
@@ -326,12 +339,12 @@ func config_api(configure_api bool) {
 
 	setup_account := func() string {
 		if IsBlank(account) {
-			auth, err := global.kw.AuthLoop(NONE)
+			auth, err := global.kw.Login(NONE)
 			if err != nil {
 				Fatal(err)
 			}
 			global.user = *auth
-			Config(global.db).set_user(global.user.Username)
+			dbConfig.set_user(global.user.Username)
 		} else {
 			global.user = global.kw.Session(account)
 		}
@@ -344,7 +357,7 @@ func config_api(configure_api bool) {
 		if IsBlank(*server) || IsBlank(redirect_uri) || IsBlank(client_app_id) || IsBlank(client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
 			return false
 		}
-		kw := new(KWAPI)
+		kw := &KWAPI{new(APIClient)}
 		kw.Server = strings.TrimPrefix(strings.ToLower(*server), "https://")
 		if global.auth_mode == SIGNATURE_AUTH {
 			kw.Signature(signature)
@@ -354,6 +367,7 @@ func config_api(configure_api bool) {
 		} else {
 			kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
 		}
+		kw.APIClient.NewToken = kw.KWNewToken
 		kw.TokenStore = KVLiteStore(global.db)
 		kw.RedirectURI = redirect_uri
 		kw.ProxyURI = proxy.Get().(string)
@@ -370,7 +384,7 @@ func config_api(configure_api bool) {
 			kw.SetLimiter(1)
 			kw.SetTransferLimiter(1)
 		} else {
-			kw.SetLimiter(5)
+			kw.SetLimiter(*max_api_calls)
 			kw.SetTransferLimiter(*max_file_transfer)
 		}
 		global.kw = kw

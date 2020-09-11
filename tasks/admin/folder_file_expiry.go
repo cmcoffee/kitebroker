@@ -9,13 +9,16 @@ import (
 
 type FolderFileExpiryTask struct {
 	input struct {
-		profile_id        int
-		user_emails       []string
-		exclude_my_folder bool
-		folders           []string
-		folder_days       int
-		file_days         int
-		reset             bool
+		profile_id         int
+		user_emails        []string
+		exclude_my_folder  bool
+		folders            []string
+		folder_days        int
+		file_days          int
+		resume             bool
+		recover_deleted    bool
+		dont_extend        bool
+		dont_modify_folder bool
 	}
 	users        Table
 	profiles     Table
@@ -37,7 +40,10 @@ func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
 	flag.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
 	flag.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
 	flag.ArrayVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
-	flag.BoolVar(&T.input.reset, "reset", false, "Don't resume, and reset ALL expirations specified files/folders.")
+	flag.BoolVar(&T.input.resume, "resume", false, "Resume previous update of folder/file expiration.")
+	flag.BoolVar(&T.input.recover_deleted, "undelete_all", false, "Undelete all deleted folders and files.")
+	flag.BoolVar(&T.input.dont_extend, "dont_extend", false, "Don't extend expiration of individual files.")
+	flag.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", false, "Don't modify folder properties.")
 	flag.Order("folder_days", "file_days")
 	if err := flag.Parse(); err != nil {
 		return err
@@ -47,8 +53,8 @@ func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
 		err = fmt.Errorf("Please specify --all_users, and/or select users based on --profile_id or --users.")
 	}
 
-	if T.input.folder_days >= 0 {
-		if T.input.file_days > T.input.folder_days {
+	if T.input.folder_days > -1 {
+		if T.input.folder_days > 0 && T.input.file_days > T.input.folder_days {
 			return fmt.Errorf("--file_days cannot be greater than --folder_days.")
 		}
 		if T.input.file_days < 0 {
@@ -56,10 +62,9 @@ func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
 		}
 	}
 
-	if T.input.file_days >= 0 {
+	if T.input.file_days > -1 {
 		if T.input.folder_days < 0 {
 			return fmt.Errorf("--folder_days must be set if --file_days is set.")
-
 		}
 	}
 
@@ -72,10 +77,6 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 	type Folder struct {
 		ID              int            `json:"ID"`
 		CurrentUserRole KitePermission `json:"currentUserRole"`
-	}
-
-	if T.input.reset {
-		ppt.Drop("users")
 	}
 
 	T.user_count = T.ppt.Tally("Analyzed Users")
@@ -120,7 +121,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 		for _, user := range users {
 			err_start := ErrCount()
 			T.user_count.Add(1)
-			if T.users.Get(user.Email, nil) {
+			if T.input.resume && T.users.Get(user.Email, nil) {
 				continue
 			}
 			if T.input.profile_id > 0 && user.UserTypeID != T.input.profile_id {
@@ -226,24 +227,26 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 		}
 	}
 
-	if len(strings.Split(folder.Path, "/")) == 1 {
-		if folder_days != 0 {
-			t := time.Now().UTC().Add((time.Hour * 24) * time.Duration(folder_days))
-			params = SetParams(PostForm{"expire": DateString(t), "fileLifetime": file_days})
+	if !T.input.dont_modify_folder {
+		if len(strings.Split(folder.Path, "/")) == 1 {
+			if folder_days != 0 {
+				t := time.Now().UTC().Add((time.Hour * 24) * time.Duration(folder_days))
+				params = SetParams(PostForm{"expire": DateString(t), "fileLifetime": file_days})
+			} else {
+				params = SetParams(PostForm{"expire": 0, "fileLifetime": file_days})
+			}
 		} else {
-			params = SetParams(PostForm{"expire": 0, "fileLifetime": file_days})
+			params = SetParams(PostForm{"fileLifetime": file_days})
 		}
-	} else {
-		params = SetParams(PostForm{"fileLifetime": file_days})
 	}
 
 	err = sess.Call(APIRequest{
 		Version: 15,
 		Method:  "PUT",
 		Path:    SetPath("/rest/folders/%d", folder.ID),
-		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": true}),
+		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),
 	})
-	if err != nil && IsKWError(err, "ERR_ENTITY_IS_SYNC_DIR") {
+	if err != nil && IsAPIError(err, "ERR_ENTITY_IS_SYNC_DIR") {
 		err = T.ChangeMyFolderFiles(sess, user, folder)
 		if err != nil {
 			return err
@@ -255,7 +258,7 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 
 // Sets all files within My Folder to an expiration date.
 func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
-	if T.input.exclude_my_folder {
+	if T.input.exclude_my_folder || T.input.dont_extend {
 		return nil
 	}
 
@@ -295,6 +298,33 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 	return
 }
 
+func (T *FolderFileExpiryTask) Recover(sess *KWSession, folder *KiteObject) (err error) {
+	if !T.input.recover_deleted {
+		return nil
+	}
+
+	children, err := sess.Folder(folder.ID).Contents(SetParams(Query{"deleted": true}))
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if child.Type == "d" {
+			Log("%s - %s/%s: Recovering folder from trash.", sess.Username, folder.Path, child.Name)
+			err = sess.Folder(child.ID).Recover()
+			if err != nil {
+				Err("%s - %s: %s", sess.Username, child.Path, err.Error())
+			}
+		} else {
+			Log("%s - %s/%s: Recovering file from trash.", sess.Username, folder.Path, child.Name)
+			err = sess.File(child.ID).Recover()
+			if err != nil {
+				Err("%s - %s: %s", sess.Username, child.Path, err.Error())
+			}
+		}
+	}
+	return
+}
+
 func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *KiteObject) {
 	// Folder is already complete, return to caller.
 	var folders []*KiteObject
@@ -303,6 +333,11 @@ func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, fo
 
 	var n int
 	var next []*KiteObject
+
+	err := T.Recover(sess, folder)
+	if err != nil {
+		Err("%s - %s: %v", sess.Username, folder.Path, err)
+	}
 
 	for {
 		if len(folders) < n+1 {
@@ -328,6 +363,10 @@ func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, fo
 			}
 		}
 		if folders[n].Type == "d" {
+			err = T.Recover(sess, folders[n])
+			if err != nil {
+				Err("%s - %s: %v", sess.Username, folder.Path, err)
+			}
 			if err := T.ModifyFolder(sess, user, folders[n]); err != nil {
 				Err("%s - %s: %v", sess.Username, folders[n].Path, err)
 				n++

@@ -8,7 +8,7 @@ import (
 
 type EmailDraftExpiryTask struct {
 	limiter      LimitGroup
-	restart      bool
+	resume       bool
 	user_emails  []string
 	drafts       Tally
 	attachments  Tally
@@ -25,10 +25,11 @@ func (T *EmailDraftExpiryTask) New() Task {
 }
 
 func (T *EmailDraftExpiryTask) Init(flag *FlagSet) (err error) {
-	flag.BoolVar(&T.restart, "restart", false, "Restart from begining of user list.")
+	flag.BoolVar(&T.resume, "resume", false, "Resume previous cleanup.")
 	expiry := flag.String("expiry", "<YYYY-MM-DD>", "Expire drafts and their files older than specified date.")
 	flag.BoolVar(&T.dry_run, "dry-run", false, "Don't delete just display what would be deleted.")
 	flag.SplitVar(&T.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	flag.Order("expiry", "users", "dry-run", "resume")
 	if err := flag.Parse(); err != nil {
 		return err
 	}
@@ -77,10 +78,6 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 	ProgressBar.New("users", user_count)
 	defer ProgressBar.Done()
 
-	if T.restart {
-		T.ppt.Drop("users")
-	}
-
 	user_getter := T.ppt.Admin().Users(T.user_emails, params)
 
 	for {
@@ -92,7 +89,7 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 			break
 		}
 		for _, user := range users {
-			if T.users.Get(user.Email, nil) {
+			if T.resume && T.users.Get(user.Email, nil) {
 				ProgressBar.Add(1)
 				T.user_counter.Add(1)
 				continue
@@ -199,7 +196,7 @@ func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (er
 	}
 	for _, f := range attachments {
 		finfo, err := sess.File(f.VersionID).Info()
-		if err != nil && IsKWError(err, "ERR_ACCESS_USER") {
+		if err != nil && IsAPIError(err, "ERR_ACCESS_USER") {
 			finfo, err = sess.File(f.AttachmentID).Info()
 			if err != nil {
 				Notice("[%d] Attachment information is unavailable: %v", mail_id, err)

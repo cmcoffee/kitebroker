@@ -2,274 +2,60 @@ package core
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/tls"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/iotimeout"
-	"io"
 	"io/ioutil"
-	"net"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
 
-type KWAPI struct {
-	Server         string        // kiteworks host name.
-	ApplicationID  string        // Application ID set for kiteworks custom app.
-	RedirectURI    string        // Redirect URI for kiteworks custom app.
-	AgentString    string        // Agent-String header for calls to kiteworks.
-	VerifySSL      bool          // Verify certificate for connections.
-	ProxyURI       string        // Proxy for outgoing https requests.
-	Snoop          bool          // Flag to snoop API calls
-	RequestTimeout time.Duration // Timeout for request to be answered from kiteworks server.
-	ConnectTimeout time.Duration // Timeout for TLS connection to kiteworks server.
-	MaxChunkSize   int64         // Max Upload Chunksize in bytes, min = 1M, max = 68M
-	Retries        uint          // Max retries on a failed call
-	TokenStore     TokenStore    // TokenStore for reading and writing auth tokens securely.
-	secrets        kwapi_secrets // Encrypted config options such as signature token, client secret key.
-	limiter        chan struct{} // Implements a limiter for API calls to appliance.
-	trans_limiter  chan struct{} // Implements a file transfer limiter.
-}
-
-// Configures maximum number of simultaneous api calls.
-func (K *KWAPI) SetLimiter(max_calls int) {
-	if max_calls <= 0 {
-		max_calls = 1
-	}
-	if K.limiter == nil {
-		K.limiter = make(chan struct{}, max_calls)
-	}
-}
-
-// Configures maximum number of simultaneous file transfers.
-func (K *KWAPI) SetTransferLimiter(max_transfers int) {
-	if max_transfers <= 0 {
-		max_transfers = 1
-	}
-	if K.trans_limiter == nil {
-		K.trans_limiter = make(chan struct{}, max_transfers)
-	}
-}
-
-func (K *KWAPI) GetTransferLimit() int {
-	if K.trans_limiter != nil {
-		return cap(K.trans_limiter)
-	}
-	return 1
-}
-
-// Tests TokenStore, creates one if missing.
-func (K *KWAPI) testTokenStore() {
-	if K.TokenStore == nil {
-		K.TokenStore = KVLiteStore(OpenCache())
-	}
-}
-
-type kwapi_secrets struct {
-	key               []byte
-	signature_key     []byte
-	client_secret_key []byte
-}
-
-// TokenStore interface for saving and retrieving auth tokens.
-// Errors should only be underlying issues reading/writing to the store itself.
-type TokenStore interface {
-	Save(username string, auth *KWAuth) error
-	Load(username string) (*KWAuth, error)
-	Delete(username string) error
-}
-
-type kvLiteStore struct {
-	Table
-}
-
-// Wraps KVLite Databse as a auth token store.
-func KVLiteStore(input *Database) *kvLiteStore {
-	return &kvLiteStore{input.Table("KWAPI.tokens")}
-}
-
-// Save token to TokenStore
-func (T kvLiteStore) Save(username string, auth *KWAuth) error {
-	T.Table.CryptSet(username, &auth)
-	return nil
-}
-
-// Retrieve token from TokenStore
-func (T *kvLiteStore) Load(username string) (*KWAuth, error) {
-	var auth *KWAuth
-	T.Table.Get(username, &auth)
-	return auth, nil
-}
-
-// Remove token from TokenStore
-func (T *kvLiteStore) Delete(username string) error {
-	T.Table.Unset(username)
-	return nil
-}
-
-// Encryption function for storing signature and client secrets.
-func (k *kwapi_secrets) encrypt(input string) []byte {
-
-	if k.key == nil {
-		k.key = RandBytes(32)
+// Reads KW rest errors and interprets them.
+func kwapiError(body []byte) APIError {
+	// kiteworks API Error
+	type KiteErr struct {
+		Error     string `json:"error"`
+		ErrorDesc string `json:"error_description"`
+		Errors    []struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
 
-	block, err := aes.NewCipher(k.key)
-	Critical(err)
-	in_bytes := []byte(input)
+	var kite_err *KiteErr
+	json.Unmarshal(body, &kite_err)
 
-	buff := make([]byte, len(in_bytes))
-	copy(buff, in_bytes)
+	e := new(apiError)
 
-	cipher.NewCFBEncrypter(block, k.key[0:block.BlockSize()]).XORKeyStream(buff, buff)
-
-	return buff
-}
-
-// Retrieves encrypted signature and client secrets.
-func (k *kwapi_secrets) decrypt(input []byte) string {
-	if k.key == nil {
-		return NONE
+	if kite_err != nil {
+		for _, v := range kite_err.Errors {
+			if strings.Contains(v.Code, "ERR_INTERNAL_") {
+				e.Register("ERR_INTERNAL_SERVER_ERROR", "")
+			}
+			e.Register(v.Code, v.Message)
+		}
+		if kite_err.ErrorDesc != NONE {
+			e.Register(kite_err.Error, kite_err.ErrorDesc)
+		}
 	}
 
-	output := make([]byte, len(input))
-
-	block, _ := aes.NewCipher(k.key)
-	cipher.NewCFBDecrypter(block, k.key[0:block.BlockSize()]).XORKeyStream(output, input)
-
-	return string(output)
-}
-
-// APIRequest model
-type APIRequest struct {
-	Version int
-	Method  string
-	Path    string
-	Params  []interface{}
-	Output  interface{}
-}
-
-// SetPath shortcut.
-var SetPath = fmt.Sprintf
-
-// Creates Param for KWAPI post
-func SetParams(vars ...interface{}) (output []interface{}) {
-	if len(vars) == 0 {
+	if e.NoErrors() {
 		return nil
 	}
-	var (
-		post_json PostJSON
-		query     Query
-		form      PostForm
-	)
 
-	process_vars := func(vars interface{}) {
-		switch x := vars.(type) {
-		case Query:
-			if query == nil {
-				query = x
-			} else {
-				for key, val := range x {
-					query[key] = val
-				}
-			}
-		case PostJSON:
-			if post_json == nil {
-				post_json = x
-			} else {
-				for key, val := range x {
-					post_json[key] = val
-				}
-			}
-		case PostForm:
-			if form == nil {
-				form = x
-			} else {
-				for key, val := range x {
-					form[key] = val
-				}
-			}
-		}
-	}
-
-	for {
-		tmp := vars[0:0]
-		for _, v := range vars {
-			switch val := v.(type) {
-			case []interface{}:
-				for _, elem := range val {
-					tmp = append(tmp[0:], elem)
-				}
-			case nil:
-				continue
-			default:
-				process_vars(val)
-
-			}
-		}
-		if len(tmp) == 0 {
-			break
-		}
-		vars = tmp
-	}
-
-	if post_json != nil {
-		output = append(output, post_json)
-	}
-	if query != nil {
-		output = append(output, query)
-	}
-	if form != nil {
-		output = append(output, form)
-	}
-	return
+	return e
 }
 
-// Post JSON to KWAPI.
-type PostJSON map[string]interface{}
-
-// Form POST to KWAPI.
-type PostForm map[string]interface{}
-
-// Add Query params to KWAPI request.
-type Query map[string]interface{}
-
-// KWAPI Client
-type KWAPIClient struct {
-	session *KWSession
-	*http.Client
-}
-
-func (c *KWAPIClient) Do(req *http.Request) (resp *http.Response, err error) {
-	resp, err = c.Client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	err = c.session.respError(resp)
-	return
-}
-
-// Sets signature key.
-func (K *KWAPI) Signature(signature_key string) {
-	K.secrets.signature_key = K.secrets.encrypt(signature_key)
-}
-
-// Sets client secret key.
-func (K *KWAPI) ClientSecret(client_secret_key string) {
-	K.secrets.client_secret_key = K.secrets.encrypt(client_secret_key)
-}
-
-// kiteworks Auth token.
-type KWAuth struct {
-	AccessToken  string `json:"access_token"`
-	Scope        string `json:"scope"`
-	RefreshToken string `json:"refresh_token"`
-	Expires      int64  `json:"expires_in"`
+// KWAPI Wrapper for kiteworks.
+type KWAPI struct {
+	*APIClient
 }
 
 // kiteworks Session.
@@ -283,276 +69,17 @@ func (K *KWAPI) Session(username string) KWSession {
 	return KWSession{username, K}
 }
 
-// Prints arrays for string and int arrays, when submitted to Queries or Form post.
-func Spanner(input interface{}) string {
-	switch v := input.(type) {
-	case []string:
-		return strings.Join(v, ",")
-	case []int:
-		var output []string
-		for _, i := range v {
-			output = append(output, fmt.Sprintf("%v", i))
-		}
-		return strings.Join(output, ",")
-	default:
-		return fmt.Sprintf("%v", input)
-	}
-}
-
-// Decodes JSON response body to provided interface.
-func (K *KWAPI) decodeJSON(resp *http.Response, output interface{}) (err error) {
-	var (
-		snoop_output map[string]interface{}
-		snoop_buffer bytes.Buffer
-		body         io.Reader
-	)
-
-	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
-	defer resp.Body.Close()
-
-	if K.Snoop {
-		if output == nil {
-			Debug("<-- RESPONSE STATUS: %s", resp.Status)
-			dec := json.NewDecoder(resp.Body)
-			dec.Decode(&snoop_output)
-			if len(snoop_output) > 0 {
-				o, _ := json.MarshalIndent(&snoop_output, "", "  ")
-				Debug("<-- RESPONSE BODY: \n%s\n", string(o))
-			}
-			return nil
-		} else {
-			Debug("<-- RESPONSE STATUS: %s", resp.Status)
-			body = io.TeeReader(resp.Body, &snoop_buffer)
-		}
-	} else {
-		body = resp.Body
-	}
-
-	if output == nil {
-		return nil
-	}
-
-	dec := json.NewDecoder(body)
-	err = dec.Decode(output)
-	if err == io.EOF {
-		return nil
-	}
-
-	if err != nil {
-		if K.Snoop {
-			txt := snoop_buffer.String()
-			if err := snoop_request(&snoop_buffer); err != nil {
-				Stdout(txt)
-			}
-			err = fmt.Errorf("I cannot understand what %s is saying: %s", K.Server, err.Error())
-			return
-		} else {
-			err = fmt.Errorf("I cannot understand what %s is saying: %s", K.Server, err.Error())
-			return
-		}
-	}
-
-	if K.Snoop {
-		snoop_request(&snoop_buffer)
-	}
-	return
-}
-
-// Provides output of specified request.
-func snoop_request(body io.Reader) error {
-	var snoop_generic map[string]interface{}
-	dec := json.NewDecoder(body)
-	if err := dec.Decode(&snoop_generic); err != nil {
-		return err
-	}
-	if snoop_generic != nil {
-		for v, _ := range snoop_generic {
-			switch v {
-			case "refresh_token":
-				fallthrough
-			case "access_token":
-				snoop_generic[v] = "[HIDDEN]"
-			}
-		}
-	}
-	o, _ := json.MarshalIndent(&snoop_generic, "", "  ")
-	Debug("<-- RESPONSE BODY: \n%s\n", string(o))
-	return nil
-}
-
-// kiteworks Client
-func (s KWSession) NewClient() *KWAPIClient {
-	var transport http.Transport
-
-	// Allows invalid certs if set to "no" in config.
-	if !s.VerifySSL {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-
-	if s.ProxyURI != NONE {
-		proxyURL, err := url.Parse(s.ProxyURI)
-		Critical(err)
-		transport.Proxy = http.ProxyURL(proxyURL)
-	}
-
-	transport.Dial = (&net.Dialer{
-		Timeout: s.ConnectTimeout,
-	}).Dial
-
-	transport.TLSHandshakeTimeout = s.ConnectTimeout
-
-	return &KWAPIClient{&s, &http.Client{Transport: &transport, Timeout: s.RequestTimeout}}
-}
-
-// New kiteworks Request.
-func (s KWSession) NewRequest(method, path string, api_ver int) (req *http.Request, err error) {
-
-	// Set API Version
-	if api_ver == 0 {
-		api_ver = 11
-	}
-
-	req, err = http.NewRequest(method, fmt.Sprintf("https://%s%s", s.Server, path), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	req.URL.Host = s.Server
-	req.URL.Scheme = "https"
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_ver))
-	if s.AgentString == NONE {
-		s.AgentString = "kwlib/1.0"
-	}
-	req.Header.Set("User-Agent", s.AgentString)
-	req.Header.Set("Referer", "https://"+s.Server+"/")
-
-	if err := s.setToken(req, false); err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// kiteworks API Call Wrapper
-func (s KWSession) Call(api_req APIRequest) (err error) {
-	if s.limiter != nil {
-		s.limiter <- struct{}{}
-		defer func() { <-s.limiter }()
-	}
-
-	if api_req.Version == 0 {
+// Wrapper around Call to provide username.
+func (K KWSession) Call(api_req APIRequest) (err error) {
+	if api_req.Version <= 0 {
 		api_req.Version = 13
 	}
-
-	req, err := s.NewRequest(api_req.Method, api_req.Path, api_req.Version)
-	if err != nil {
-		return err
+	if api_req.Header == nil {
+		api_req.Header = make(map[string][]string)
 	}
 
-	if s.Snoop {
-		Debug("[kiteworks snoop]: %s", s.Username)
-		Debug("--> METHOD: \"%s\" PATH: \"%s\"", strings.ToUpper(api_req.Method), api_req.Path)
-	}
-
-	var body []byte
-
-	for _, in := range api_req.Params {
-		switch i := in.(type) {
-		case PostForm:
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			p := make(url.Values)
-			for k, v := range i {
-				p.Add(k, Spanner(v))
-				if s.Snoop {
-					Debug("\\-> POST PARAM: \"%s\" VALUE: \"%s\"", k, p[k])
-				}
-			}
-			body = []byte(p.Encode())
-		case PostJSON:
-			req.Header.Set("Content-Type", "application/json")
-			json, err := json.Marshal(i)
-			if err != nil {
-				return err
-			}
-			if s.Snoop {
-				Debug("\\-> POST JSON: %s", string(json))
-			}
-			body = json
-		case Query:
-			q := req.URL.Query()
-			for k, v := range i {
-				q.Set(k, Spanner(v))
-				if s.Snoop {
-					Debug("\\-> QUERY: %s=%s", k, q[k])
-				}
-			}
-			req.URL.RawQuery = q.Encode()
-		case nil:
-			continue
-		default:
-			return fmt.Errorf("Unknown request exception.")
-		}
-	}
-
-	var resp *http.Response
-
-	// Retry calls on failure.
-	for i := 0; i <= int(s.Retries); i++ {
-		reAuth := func(s *KWSession, req *http.Request, orig_err error) error {
-			if s.secrets.signature_key == nil {
-				existing, err := s.TokenStore.Load(s.Username)
-				if err != nil {
-					return err
-				}
-				if token, err := s.refreshToken(s.Username, existing); err == nil {
-					if err := s.TokenStore.Save(s.Username, token); err != nil {
-						return err
-					}
-					if err = s.setToken(req, false); err == nil {
-						return nil
-					}
-				}
-				s.TokenStore.Delete(s.Username)
-				Critical(fmt.Errorf("Token is no longer valid: %s", orig_err.Error()))
-			}
-			return s.setToken(req, IsKWError(err, _TOKEN_ERR[0:]...))
-		}
-
-		req.Body = ioutil.NopCloser(bytes.NewReader(body))
-		client := s.NewClient()
-		resp, err = client.Do(req)
-
-		if err != nil && (IsKWError(err, _TOKEN_ERR[0:]...) || IsKWError(err, "ERR_INTERNAL_SERVER_ERROR")) {
-			if IsKWError(err, _TOKEN_ERR[0:]...) {
-				if err := reAuth(&s, req, err); err != nil {
-					return err
-				}
-			}
-			Debug("(CALL ERROR) %s -> %s: %s (%d/%d)", s.Username, api_req.Path, err.Error(), i+1, s.Retries+1)
-			time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
-			continue
-		} else if err != nil {
-			if !IsKWError(err) {
-				Warn("%s -> %s: %s (%d/%d)", s.Username, api_req.Path, err.Error(), i+1, s.Retries+1)
-				time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
-				continue
-			}
-			break
-		}
-
-		err = s.decodeJSON(resp, api_req.Output)
-		if err != nil && (IsKWError(err, _TOKEN_ERR[0:]...) || IsKWError(err, "ERR_INTERNAL_SERVER_ERROR")) {
-			Debug("(CALL ERROR) %s -> %s: %s (%d/%d)", s.Username, api_req.Path, err.Error(), i+1, s.Retries+1)
-			if err := reAuth(&s, req, err); err != nil {
-				return err
-			}
-			time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
-			continue
-		} else {
-			break
-		}
-	}
-	return
+	api_req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_req.Version))
+	return K.APIClient.Call(K.Username, api_req)
 }
 
 // Call handler which allows for easier getting of multiple-object arrays.
@@ -629,5 +156,197 @@ func (s KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 			return err
 		}
 	}
+	return
+}
+
+// Authenticate with server.
+func (K *KWAPI) Authenticate(username string) (*KWSession, error) {
+	return K.authenticate(username, true, false)
+}
+
+// Login to server
+func (K *KWAPI) Login(username string) (*KWSession, error) {
+	if username != NONE {
+		session := K.Session(username)
+		token, err := K.TokenStore.Load(username)
+		if err != nil {
+			return nil, err
+		}
+		if token != nil {
+			if token.Expires < time.Now().Add(time.Duration(5*time.Minute)).Unix() {
+				// First attempt to use a refresh token if there is one.
+				token, err = session.refreshToken(username, token)
+				if err != nil {
+					if K.secrets.signature_key == nil {
+						Notice("Unable to use refresh token, must reauthenticate for new access token: %s", err.Error())
+					}
+					token = nil
+				} else {
+					if err := K.TokenStore.Save(username, token); err != nil {
+						return &session, err
+					}
+					return &session, nil
+				}
+			} else {
+				return &session, nil
+			}
+		}
+	}
+	return K.authenticate(username, true, true)
+}
+
+// Set User Credentials for kw_api.
+func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*KWSession, error) {
+	if K.TokenStore == nil {
+		return nil, fmt.Errorf("APIClient: NewToken not initalized.")
+	}
+
+	if IsBlank(K.GetSignature()) {
+		defer PleaseWait.Hide()
+		Stdout("### %s authentication ###\n\n", K.Server)
+		for {
+			PleaseWait.Hide()
+			if username == NONE || permit_change {
+				username = strings.ToLower(GetInput(" -> Account Login(email): "))
+			} else {
+				Stdout(" -> Account Login(email): %s", username)
+			}
+			password := GetSecret(" -> Account Password: ")
+			if password == NONE {
+				err := fmt.Errorf("Blank password provided.")
+				if !auth_loop {
+					return nil, err
+				}
+				Stdout("\n")
+				Err("Blank password provided.\n\n")
+				continue
+			}
+			PleaseWait.Show()
+			auth, err := K.kwNewToken(username, password)
+			if err != nil {
+				if !auth_loop {
+					return nil, err
+				}
+				Stdout("\n")
+				Err(fmt.Sprintf("%s\n\n", err.Error()))
+				continue
+			} else {
+				session := K.Session(username)
+				if err := K.TokenStore.Save(username, auth); err != nil {
+					return &session, err
+				}
+				Stdout("\n")
+				return &session, nil
+			}
+		}
+	} else {
+		if K.NewToken == nil {
+			return nil, fmt.Errorf("APIClient not fully initialized, missing NewToken function.")
+		}
+		auth, err := K.NewToken(username)
+		if err != nil {
+			return nil, err
+		}
+		session := K.Session(username)
+		if err := K.TokenStore.Save(username, auth); err != nil {
+			return &session, err
+		}
+		return &session, nil
+	}
+
+	return nil, fmt.Errorf("Unable to obtain a token for specified user.")
+}
+
+func (K *KWAPI) KWNewToken(username string) (auth *Auth, err error) {
+	return K.kwNewToken(username, NONE)
+}
+
+// Generate a new Bearer token from kiteworks.
+func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
+	path := fmt.Sprintf("https://%s/oauth/token", K.Server)
+
+	req, err := http.NewRequest(http.MethodPost, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	http_header := make(http.Header)
+	http_header.Set("Content-Type", "application/x-www-form-urlencoded")
+	http_header.Set("User-Agent", K.AgentString)
+
+	req.Header = http_header
+
+	client_id := K.ApplicationID
+
+	postform := &url.Values{
+		"client_id":     {client_id},
+		"client_secret": {K.GetClientSecret()},
+		"redirect_uri":  {K.RedirectURI},
+	}
+
+	signature := K.GetSignature()
+
+	if IsBlank(signature) {
+		if IsBlank(password) {
+			_, err := K.authenticate(username, false, false)
+			if err != nil {
+				return nil, err
+			}
+			auth, err = K.TokenStore.Load(username)
+			if err != nil {
+				return nil, err
+			}
+			return auth, nil
+		}
+		postform.Add("grant_type", "password")
+		postform.Add("username", username)
+		postform.Add("password", password)
+	} else {
+		signature := K.GetSignature()
+		randomizer := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
+		nonce := randomizer.Int() % 999999
+		timestamp := int64(time.Now().Unix())
+
+		base_string := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d", client_id, username, timestamp, nonce)
+
+		mac := hmac.New(sha1.New, []byte(signature))
+		mac.Write([]byte(base_string))
+		signature = hex.EncodeToString(mac.Sum(nil))
+
+		auth_code := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d|@@|%s",
+			base64.StdEncoding.EncodeToString([]byte(client_id)),
+			base64.StdEncoding.EncodeToString([]byte(username)),
+			timestamp, nonce, signature)
+
+		postform.Add("grant_type", "authorization_code")
+		postform.Add("code", auth_code)
+	}
+
+	if K.Snoop {
+		Debug("[kiteworks]: %s", username)
+		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
+		for k, v := range *postform {
+			if k == "grant_type" || k == "redirect_uri" || k == "scope" {
+				Debug("\\-> POST PARAM: %s VALUE: %s", k, v)
+			} else {
+				Debug("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
+			}
+		}
+	}
+
+	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
+	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
+	defer req.Body.Close()
+
+	resp, err := K.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := K.DecodeJSON(resp, &auth); err != nil {
+		return nil, err
+	}
+
+	auth.Expires = auth.Expires + time.Now().Unix()
 	return
 }

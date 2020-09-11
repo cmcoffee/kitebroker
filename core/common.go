@@ -2,14 +2,17 @@ package core
 
 import (
 	"archive/zip"
+	"bytes"
 	"compress/flate"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/cfg"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/kvlite"
 	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/options"
 	"github.com/cmcoffee/go-snuglib/xsync"
 	"io"
 	"io/ioutil"
@@ -18,29 +21,48 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"text/tabwriter"
 	"time"
 )
 
 // Menu item flags
 type FlagSet struct {
-	Args []string
+	FlagArgs []string
 	*eflag.EFlagSet
+}
+
+func (F FlagSet) PrintValues() {
+	var buffer bytes.Buffer
+	text := tabwriter.NewWriter(&buffer, 0, 0, 3, '-', 0)
+	fmt.Fprintf(text, "\n")
+	log_flag := func(input *eflag.Flag) {
+		/*if input.Usage == "" {
+			return
+		}*/
+		fmt.Fprintf(text, "    (%s) \t> %v\n", input.Name, input.Value)
+	}
+	F.Visit(log_flag)
+	text.Flush()
+	for _, t := range strings.Split(buffer.String(), "\n") {
+		Log(t)
+	}
 }
 
 // Prase flags assocaited with task.
 func (f *FlagSet) Parse() (err error) {
-	if err = f.EFlagSet.Parse(f.Args[0:]); err != nil {
+	if err = f.EFlagSet.Parse(f.FlagArgs[0:]); err != nil {
 		return err
 	}
 	return nil
 }
 
 // Creates passport to send to task module.
-func NewPassport(task_name string, source string, user KWSession, db SubStore) Passport {
+func NewPassport(task_name string, source string, flags *FlagSet, user KWSession, db SubStore) Passport {
 	return Passport{
 		&TaskReport{
 			task_name,
 			source,
+			flags,
 			time.Now().Round(time.Millisecond),
 			make([]*Tally, 0),
 		},
@@ -65,10 +87,31 @@ type Task interface {
 // SubStore is a TaskStore, a database with a prefix in the table.
 type SubStore struct {
 	prefix string
-	db     Database
+	db     dbase
 }
 
-func (d *Database) Sub(prefix string) SubStore {
+type Database interface {
+	Sub(prefix string) SubStore
+	Shared(table string) SubStore
+	Drop(table string)
+	CryptSet(table, key string, value interface{})
+	Set(table, key string, value interface{})
+	Unset(table, key string)
+	Get(table, key string, output interface{}) bool
+	Keys(table string) []string
+	CountKeys(table string) int
+	Tables() []string
+	Table(table string) Table
+}
+
+// Spins off a new shared table.
+func (d *dbase) Shared(table string) SubStore {
+	return SubStore{
+		prefix: fmt.Sprintf("-shared.%s.", table),
+		db:     *d,
+	}
+}
+func (d *dbase) Sub(prefix string) SubStore {
 	return SubStore{fmt.Sprintf("%s.", prefix), *d}
 }
 
@@ -182,17 +225,19 @@ var (
 	TransferCounter = nfo.TransferCounter
 	NewLimitGroup   = xsync.NewLimitGroup
 	NewFlagSet      = eflag.NewFlagSet
-	ErrHelp    		= eflag.ErrHelp
+	ErrHelp         = eflag.ErrHelp
 	ReturnErrorOnly = eflag.ReturnErrorOnly
 	SignalCallback  = nfo.SignalCallback
-	FormatPath = filepath.FromSlash
-	GetPath    = filepath.ToSlash
+	FormatPath      = filepath.FromSlash
+	GetPath         = filepath.ToSlash
+	NewOptions      = options.NewOptions
 )
 
 type (
 	ReadSeekCloser = nfo.ReadSeekCloser
 	BitFlag        = xsync.BitFlag
 	LimitGroup     = xsync.LimitGroup
+	ConfigStore    = cfg.Store
 )
 
 func InitLogging(path string, debug bool) {
@@ -201,7 +246,7 @@ func InitLogging(path string, debug bool) {
 	nfo.SetFile(nfo.STD, file)
 	if debug {
 		nfo.SetOutput(nfo.DEBUG, os.Stdout)
-		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))	
+		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 	}
 }
 
@@ -233,7 +278,7 @@ func Err(input ...interface{}) {
 }
 
 // Wrapper around go-kvlite.
-type Database struct {
+type dbase struct {
 	db kvlite.Store
 }
 
@@ -276,16 +321,16 @@ func (t Table) CountKeys() int {
 }
 
 // Opens go-kvlite sqlite database.
-func OpenDatabase(file string, padlock ...byte) (*Database, error) {
+func Opendbase(file string, padlock ...byte) (*dbase, error) {
 	db, err := kvlite.Open(file, padlock...)
 	if err != nil {
 		return nil, err
 	}
-	return &Database{db}, nil
+	return &dbase{db}, nil
 }
 
 // Opens go-kvlite database using mac address for lock.
-func SecureDatabase(file string) (*Database, error) {
+func SecureDatabase(file string) (*dbase, error) {
 	// Provides us the mac address of the first interface.
 	get_mac_addr := func() []byte {
 		ifaces, err := net.Interfaces()
@@ -315,7 +360,7 @@ func SecureDatabase(file string) (*Database, error) {
 			return nil, err
 		}
 	}
-	return &Database{db}, nil
+	return &dbase{db}, nil
 }
 
 // Converts string to date.
@@ -336,64 +381,64 @@ func StringDate(input string) (output time.Time, err error) {
 }
 
 // Open a memory-only go-kvlite store.
-func OpenCache() *Database {
-	return &Database{kvlite.MemStore()}
+func OpenCache() *dbase {
+	return &dbase{kvlite.MemStore()}
 }
 
 // DB Wrappers to perform fatal error checks on each call.
-func (d Database) Drop(table string) {
+func (d dbase) Drop(table string) {
 	Critical(d.db.Drop(table))
 }
 
 // Encrypt value to go-kvlie, fatal on error.
-func (d Database) CryptSet(table, key string, value interface{}) {
+func (d dbase) CryptSet(table, key string, value interface{}) {
 	Critical(d.db.CryptSet(table, key, value))
 }
 
 // Save value to go-kvlite.
-func (d Database) Set(table, key string, value interface{}) {
+func (d dbase) Set(table, key string, value interface{}) {
 	Critical(d.db.Set(table, key, value))
 }
 
 // Retrieve value from go-kvlite.
-func (d Database) Get(table, key string, output interface{}) bool {
+func (d dbase) Get(table, key string, output interface{}) bool {
 	found, err := d.db.Get(table, key, output)
 	Critical(err)
 	return found
 }
 
-func (d Database) Table(table string) Table {
+func (d dbase) Table(table string) Table {
 	return Table{table: d.db.Table(table)}
 }
 
 // List keys in go-kvlite.
-func (d Database) Keys(table string) []string {
+func (d dbase) Keys(table string) []string {
 	keylist, err := d.db.Keys(table)
 	Critical(err)
 	return keylist
 }
 
 // Count keys in table.
-func (d Database) CountKeys(table string) int {
+func (d dbase) CountKeys(table string) int {
 	count, err := d.db.CountKeys(table)
 	Critical(err)
 	return count
 }
 
 // List Tables in DB
-func (d Database) Tables() []string {
+func (d dbase) Tables() []string {
 	tables, err := d.db.Tables()
 	Critical(err)
 	return tables
 }
 
 // Delete value from go-kvlite.
-func (d Database) Unset(table, key string) {
+func (d dbase) Unset(table, key string) {
 	Critical(d.db.Unset(table, key))
 }
 
 // Closes go-kvlite database.
-func (d Database) Close() {
+func (d dbase) Close() {
 	Critical(d.db.Close())
 }
 
@@ -415,6 +460,11 @@ func SplitPath(path string) (folder_path []string) {
 	}
 	if len(folder_path) == 0 {
 		folder_path = append(folder_path, path)
+	}
+	for i := 0; i < len(folder_path); i++ {
+		if folder_path[i] == NONE {
+			folder_path = append(folder_path[:i], folder_path[i+1:]...)
+		}
 	}
 	return
 }

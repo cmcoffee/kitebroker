@@ -3,13 +3,20 @@ package core
 import (
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"time"
-	"os"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
+
+type KiteMember struct {
+	ID     int            `json:"objectId"`
+	RoleID int            `json:"roleId`
+	User   KiteUser       `json:"user"`
+	Role   KitePermission `json:"role"`
+}
 
 // KiteFile/Folder/Attachment
 type KiteObject struct {
@@ -86,6 +93,53 @@ func (s KWSession) Folder(folder_id int) kw_rest_folder {
 	}
 }
 
+func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err error) {
+	return result, s.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/folders/%d/members", s.folder_id),
+		Output: &result,
+		Params: SetParams(params, Query{"with": "(user,role)"}),
+	}, -1, 1000)
+}
+
+func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, params ...interface{}) (err error) {
+	params = SetParams(PostJSON{"notify": false, "notifyFileAdded": false, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/folders/%d/members", s.folder_id),
+		Params: params,
+	})
+	return
+}
+
+func (s kw_rest_folder) ResolvePath(path string) (result KiteObject, err error) {
+	folder_path := SplitPath(path)
+
+	current_id := s.folder_id
+
+	var current KiteObject
+
+	for i, f := range folder_path {
+		current, err = s.Folder(current_id).Find(f)
+		if err != nil {
+			if err == ErrNotFound {
+				for _, v := range folder_path[i:] {
+					current, err = s.Folder(current_id).NewFolder(v)
+					if err != nil {
+						return
+					}
+					current_id = current.ID
+				}
+			} else {
+				return
+			}
+		}
+		current_id = current.ID
+	}
+	result = current
+	return
+}
+
 // Find item in folder, using folder path, if folder_id > 0, start search there.
 func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObject, err error) {
 	if len(params) == 0 {
@@ -93,10 +147,6 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 	}
 
 	folder_path := SplitPath(path)
-
-	if len(folder_path) == 0 {
-		folder_path = append(folder_path, path)
-	}
 
 	var current []KiteObject
 
@@ -117,6 +167,7 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 		found = false
 		for _, c := range current {
 			if strings.ToLower(f) == strings.ToLower(c.Name) {
+				result = c
 				if i < folder_len && c.Type == "d" {
 					current, err = s.Folder(c.ID).Contents(params)
 					if err != nil {
@@ -125,7 +176,6 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 					found = true
 					break
 				} else if i == folder_len {
-					result = c
 					return
 				}
 			}
@@ -248,11 +298,11 @@ func (S kw_rest_folder) NewUpload(file os.FileInfo) (int, error) {
 	}
 
 	if err := S.Call(APIRequest{
-		Version: 5,
-		Method:  "POST",
-		Path:    SetPath("/rest/folders/%d/actions/initiateUpload", S.folder_id),
-		Params:  SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
-		Output:  &upload,
+		//Version: 5,
+		Method: "POST",
+		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", S.folder_id),
+		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
+		Output: &upload,
 	}); err != nil {
 		return -1, err
 	}
@@ -287,6 +337,20 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 	}, -1, 1000)
 
 	return
+}
+
+func (s kw_rest_folder) Recover(params ...interface{}) (err error) {
+	return s.Call(APIRequest{
+		Method: "PATCH",
+		Path:   SetPath("/rest/folders/%d/actions/recover", s.folder_id),
+	})
+}
+
+func (s kw_rest_file) Recover(params ...interface{}) (err error) {
+	return s.Call(APIRequest{
+		Method: "PATCH",
+		Path:   SetPath("/rest/files/%d/actions/recover", s.file_id),
+	})
 }
 
 func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err error) {
@@ -555,10 +619,43 @@ func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
 
-	req, err := s.NewRequest("GET", SetPath("/rest/files/%d/content", file.ID), 7)
+	req, err := s.NewRequest(s.Username, "GET", SetPath("/rest/files/%d/content", file.ID))
 	if err != nil {
 		return nil, err
 	}
 
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
+
 	return TransferMonitor(file.Name, file.Size, RightToLeft, s.Download(req)), nil
+}
+
+type kw_profile struct {
+	profile_id int
+	*KWSession
+}
+
+func (K KWSession) Profile(profile_id int) kw_profile {
+	return kw_profile{
+		profile_id,
+		&K,
+	}
+
+}
+
+func (K kw_profile) Get() (profile KWProfile, err error) {
+	err = K.Call(APIRequest{
+		Version: 13,
+		Path:    SetPath("/rest/profiles/%d", K.profile_id),
+		Output:  &profile,
+	})
+	return
+}
+
+type KWProfile struct {
+	Features struct {
+		AllowSFTP    bool  `json:"allowSftp"`
+		MaxStorage   int64 `json:"maxStorage"`
+		SendExternal bool  `json:"sendExternal`
+		FolderCreate int   `json:"folderCreate"`
+	} `json:"features"`
 }
