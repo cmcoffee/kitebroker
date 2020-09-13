@@ -40,6 +40,7 @@ type FolderPermissionFixer struct {
 	perm_map     map[string]map[string]int
 	kw_perm_map  map[int]map[string]int
 	workspace    []string
+	managers     []string
 	wg           LimitGroup
 	folders      Tally
 	perm_updates Tally
@@ -81,7 +82,7 @@ func read_csv(file string) (output map[string]map[string]int, err error) {
 		output[o[ws_path]] = make(map[string]int)
 
 		if o[ws_owner] != NONE {
-			output[o[ws_path]][o[ws_owner]] = OWNER
+			output[o[ws_path]][o[ws_owner]] = MANAGER
 		}
 
 		for _, v := range strings.Split(o[ws_manager], ", ") {
@@ -124,6 +125,7 @@ func (T *FolderPermissionFixer) GetMembers(in_map map[string]int, role int) (out
 func (T *FolderPermissionFixer) Init(flags *FlagSet) (err error) {
 	csv := flags.String("csv", "<workspace_list.csv>", "FTA CSV File")
 	flags.ArrayVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
+	flags.SplitVar(&T.managers, "manager", "<manager>", "Override managers from CSV for folder.")
 	if err := flags.Parse(); err != nil {
 		return err
 	}
@@ -195,6 +197,10 @@ func (T *FolderPermissionFixer) Main(passport Passport) (err error) {
 		if !strings.Contains(k, "/") {
 			work_list = append(work_list, k)
 		}
+	}
+
+	for _, u := range T.managers {
+		T.MakeManager(u)
 	}
 
 	for _, k := range work_list {
@@ -274,56 +280,50 @@ func (T *FolderPermissionFixer) ProcessFolders(kw_user string, target KiteObject
 
 var ErrNoManagers = fmt.Errorf("No viable managers were found in kiteworks for folder!")	
 
-func (T *FolderPermissionFixer) MakeManager(folder string) (kw_user string, err error) {
-	var owner string
-
-	fta_managers := T.GetMembers(T.perm_map[folder], OWNER)
-	if len(fta_managers) > 0 {
-		owner = fta_managers[0]
-	}
-	if owner == NONE {
-		return NONE, ErrNoManagers
+func (T *FolderPermissionFixer) MakeManager(user string) {
+	if user == NONE {
+		return 
 
 	}
-	Log("%s: Attmpting to create owner: %s", folder, owner)
 
 	var users []KiteUser
 
-	err = T.ppt.DataCall(APIRequest{
+	if err := T.ppt.DataCall(APIRequest{
 		Method: "GET",
 		Path:	"/rest/admin/users",
-		Params: SetParams(Query{"email": owner, "deleted": false}),
+		Params: SetParams(Query{"email": user, "deleted": false, "verified": false}),
 		Output: &users,
-	}, -1, 1000)
-	if err != nil {
-		return NONE, err
+	}, -1, 1000); err != nil {
+		Err("%s: %v", T.ppt.Username, err)
 	}
 
 	if len(users) == 0 {
-		return NONE, ErrNoManagers	
+		return 
 	}
 
-	err = T.ppt.Call(APIRequest{
-		Method: "PUT",
-		Path: SetPath("/rest/admin/users/%d", users[0].ID),
-		Params: SetParams(PostJSON{"suspended": false, "verified": true}),
-	})
-
-	if err != nil {
-		return NONE, err
+	if !users[0].Verified {
+		if err := T.ppt.Call(APIRequest{
+			Method: "PUT",
+			Path: SetPath("/rest/admin/users/%d", users[0].ID),
+			Params: SetParams(PostJSON{"verified": true}),
+		}); err != nil {
+			Err("%s: %v", user, err)
+		}
 	}
 
-	return owner, nil
+	return 
 }
 
 func (T *FolderPermissionFixer) FindManager(folder string) (kw_user string, kw_folder *KiteObject, err error) {
 	fta_managers := T.GetMembers(T.perm_map[folder], MANAGER)
 
+	if len(T.managers) > 0 {
+		fta_managers = append(T.managers, fta_managers[0:]...)
+	}
+
 	if len(fta_managers) == 0 {
 		return NONE, nil, fmt.Errorf("No managers found for specified workspace in csv!")
 	}
-
-	fta_managers = append(fta_managers, "migration_user@accellion.com")
 
 	var (
 		folder_id int
@@ -331,42 +331,31 @@ func (T *FolderPermissionFixer) FindManager(folder string) (kw_user string, kw_f
 		managers  []string
 	)
 
-	created_manager := false 
-	for {
-		for i, u := range fta_managers {
-			sess := T.ppt.Session(u)
-			if result, err := sess.Folder(0).Find(folder); err != nil {
-				if err != ErrNotFound && u != "migration_user@accellion.com" {
-					Err("%s: (%s): %v", folder, u, err)
-				}
-				continue
-			} else {
-				if result.ID != folder_id && folder_id != 0 {
-					return NONE, nil, fmt.Errorf("Multiple folders with same name detected!")
-				} else {
-					folder_id = result.ID
-				}
-
-				if result.CurrentUserRole.Rank >= 400000 {
-					managers = append(managers, fta_managers[i])
-				}	
-
-				kw_f = result
+	for i, u := range fta_managers {
+		sess := T.ppt.Session(u)
+		if result, err := sess.Folder(0).Find(folder); err != nil {
+			if err != ErrNotFound  {
+				Err("%s: (%s): %v", folder, u, err)
 			}
-		}
-		if len(managers) > 0 {
-			return managers[0], &kw_f, nil
+			continue
 		} else {
-			if !created_manager {
-				user, err := T.MakeManager(folder)
-				if err != nil {
-					return NONE, nil, err
-				}
-				fta_managers = append(fta_managers, user)
-				created_manager = true
-				continue
+			if result.ID != folder_id && folder_id != 0 {
+				return NONE, nil, fmt.Errorf("Multiple folders with same name detected!")
+			} else {
+				folder_id = result.ID
 			}
+	
+			if result.CurrentUserRole.Rank >= 400000 {
+				if _, err = sess.Folder(folder_id).Members(); err == nil {
+					managers = append(managers, fta_managers[i])
+				}
+			}	
+
+			kw_f = result
 		}
+	}
+	if len(managers) > 0 {
+		return managers[0], &kw_f, nil
 	}
 	return NONE, nil, fmt.Errorf("No viable managers were found in kiteworks for folder!")
 }
@@ -376,20 +365,14 @@ func (T *FolderPermissionFixer) SetPermissions(kw_user string, target KiteObject
 
 	T.kw_perm_map[target.ID] = make(map[string]int)
 
-	previous := make(map[string]int)
-
 	fta_map := T.perm_map[target.Path]
 	if kw_map, found := T.kw_perm_map[target.ParentID]; found {
 		for k, v := range kw_map {
 			if fta_map[k] == v {
-				previous[k] = v
+				T.kw_perm_map[target.ID][k] = v
 				delete(fta_map, k)
 			}
 		}
-	}
-
-	for k, v := range previous {
-		T.kw_perm_map[target.ID][k] = v
 	}
 
 	T.map_lock.Unlock()
@@ -403,7 +386,7 @@ func (T *FolderPermissionFixer) SetPermissions(kw_user string, target KiteObject
 				return
 			}
 			if err := kw_sess.Folder(target.ID).AddUsersToFolder(users, role_id); err != nil {
-				if !IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED", "ERR_ENTITY_IS_OWNER") {
+				if !IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED", "ERR_ENTITY_IS_OWNER", "ERR_ENTITY_USER_HAS_INSUFFICIENT_PERMISSIONS") {
 					return err
 				}
 			}

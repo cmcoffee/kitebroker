@@ -86,7 +86,7 @@ func KVLiteStore(input Database) *kvLiteStore {
 }
 
 // Save token to TokenStore
-func (T kvLiteStore) Save(username string, auth *Auth) error {
+func (T *kvLiteStore) Save(username string, auth *Auth) error {
 	T.Table.CryptSet(username, &auth)
 	return nil
 }
@@ -249,8 +249,8 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 	return
 }
 
-// Add Bearer token to KWAPI requests.
-func (s APIClient) setToken(username string, req *http.Request) (err error) {
+// Add Bearer token to APIClient requests.
+func (s *APIClient) setToken(username string, req *http.Request) (err error) {
 	if s.TokenStore == nil {
 		return fmt.Errorf("APIClient: TokenStore not initalized.")
 	}
@@ -361,6 +361,8 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 			auth.Expires = expiry + time.Now().Unix()
 		case int64:
 			auth.Expires = t + time.Now().Unix()
+		case int:
+			auth.Expires = int64(t) + time.Now().Unix()
 		}
 	}
 
@@ -398,7 +400,7 @@ type Auth struct {
 }
 
 // Prints arrays for string and int arrays, when submitted to Queries or Form post.
-func (K *APIClient) spanner(input interface{}) string {
+func (K APIClient) spanner(input interface{}) string {
 	switch v := input.(type) {
 	case []string:
 		return strings.Join(v, ",")
@@ -414,7 +416,7 @@ func (K *APIClient) spanner(input interface{}) string {
 }
 
 // Decodes JSON response body to provided interface.
-func (K *APIClient) DecodeJSON(resp *http.Response, output interface{}) (err error) {
+func (K APIClient) DecodeJSON(resp *http.Response, output interface{}) (err error) {
 	var (
 		snoop_output map[string]interface{}
 		snoop_buffer bytes.Buffer
@@ -700,25 +702,32 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 		if err != nil {
 			if s.isTokenError(err) {
 					err = reAuth(&s, username, req, err)
-					time.Sleep(time.Second)
-					continue
+					if err != nil {
+						return
+					} else {
+						continue
+					}
 			}
 			if s.isRetryError(err) || !IsAPIError(err) {
 				report_success = true
 				if first_attempt {
-					Warn("[#%s]: %s -> %s: %s (will retry)", attempt, username, api_req.Path, err.Error())
+					if s.Retries > 0 {
+						Debug("[#%s]: %s -> %s: %s (will retry)", attempt, username, api_req.Path, err.Error())
+					}
 					first_attempt = false
 				} else {
-					Warn("[#%s]: %s (retry %d/%d)", attempt, err.Error(), i, s.Retries)
+					Debug("[#%s]: %s (retry %d/%d)", attempt, err.Error(), i, s.Retries)
 				}
-				time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
+				if i < int(s.Retries) {
+					time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
+				}
 				continue
 			} else {
 				return
 			}
 		} else {
 			if report_success {
-				Notice("[#%s]: Success!!! (retry %d/%d)", attempt, i, s.Retries)
+				Debug("[#%s]: Success!!! (retry %d/%d)", attempt, i, s.Retries)
 			}
 			return
 		}
