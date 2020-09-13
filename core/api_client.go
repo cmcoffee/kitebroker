@@ -260,9 +260,9 @@ func (s *APIClient) setToken(username string, req *http.Request) (err error) {
 		return err
 	}
 
-	// If we find a token, check if it's still valid within the next 5 minutes.
+	// If we find a token, check if it's still valid.
 	if token != nil {
-		if token.Expires < time.Now().Add(time.Duration(5*time.Minute)).Unix() {
+		if token.Expires <= time.Now().Unix() {
 			// First attempt to use a refresh token if there is one.
 			token, err = s.refreshToken(username, token)
 			if err != nil && s.secrets.signature_key == nil {
@@ -355,15 +355,8 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 	}
 
 	if new_token.Expires != nil {
-		switch t := new_token.Expires.(type) {
-		case string:
-			expiry, _ := strconv.ParseInt(t, 0, 64)
-			auth.Expires = expiry + time.Now().Unix()
-		case int64:
-			auth.Expires = t + time.Now().Unix()
-		case int:
-			auth.Expires = int64(t) + time.Now().Unix()
-		}
+		expiry, _ := strconv.ParseInt(fmt.Sprintf("%v", new_token.Expires), 0, 64)
+		auth.Expires = time.Now().Unix() + expiry
 	}
 
 	auth.AccessToken = new_token.AccessToken
@@ -718,9 +711,7 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 				} else {
 					Debug("[#%s]: %s (retry %d/%d)", attempt, err.Error(), i, s.Retries)
 				}
-				if i < int(s.Retries) {
-					time.Sleep((time.Second * time.Duration(i+1)) * time.Duration(i+1))
-				}
+				s.BackoffTimer(uint(i))
 				continue
 			} else {
 				return
@@ -733,6 +724,13 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 		}
 	}
 	return
+}
+
+// Backs off subsequent attempts generating a pause between requests.
+func (s APIClient) BackoffTimer (retry uint) {
+	if retry < s.Retries {
+		time.Sleep((time.Second * time.Duration(retry+1)) * time.Duration(retry+1))
+	}
 }
 
 // Call handler which allows for easier getting of multiple-object arrays.

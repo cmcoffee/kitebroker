@@ -96,9 +96,9 @@ func (m *menu) Show() {
 	var user_cmd_prompt string
 
 	if global.auth_mode == SIGNATURE_AUTH {
-		user_cmd_prompt = "Available user commands:\n"
+		user_cmd_prompt = "User commands:\n"
 	} else {
-		user_cmd_prompt = " Available commands:\n"
+		user_cmd_prompt = "Available commands:\n"
 	}
 
 	if m.tasks != nil && len(m.tasks) > 0 {
@@ -114,7 +114,7 @@ func (m *menu) Show() {
 			m.cmd_text(k, m.entries[k].desc)
 		}
 		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
-			os.Stderr.Write([]byte("Available admin commands:\n"))
+			os.Stderr.Write([]byte("Admin commands:\n"))
 			m.text.Write([]byte(fmt.Sprintf("\n")))
 			m.text.Flush()
 		}

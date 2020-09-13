@@ -173,7 +173,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 			return nil, err
 		}
 		if token != nil {
-			if token.Expires < time.Now().Add(time.Duration(5*time.Minute)).Unix() {
+			if token.Expires <= time.Now().Unix() {
 				// First attempt to use a refresh token if there is one.
 				token, err = session.refreshToken(username, token)
 				if err != nil {
@@ -347,6 +347,6 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 		return nil, err
 	}
 
-	auth.Expires = auth.Expires + time.Now().Unix()
+	auth.Expires = time.Now().Add(time.Duration(auth.Expires) * time.Second).Unix()
 	return
 }

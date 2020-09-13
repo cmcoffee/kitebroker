@@ -253,7 +253,8 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		err = transfer_file(local_path, uid)
 		if err == nil || IsAPIError(err) {
 			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
-				Warn("%s/%s: %s (%d/%d)", folder.Path, UploadRecord.Name, err.Error(), i+1, T.ppt.Retries+1)
+				Debug("%s/%s: %s (%d/%d)", folder.Path, UploadRecord.Name, err.Error(), i+1, T.ppt.Retries+1)
+				T.ppt.BackoffTimer(i)
 				continue
 			}
 			T.uploads.Unset(target)

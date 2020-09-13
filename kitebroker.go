@@ -37,10 +37,7 @@ var global struct {
 
 func init() {
 	SignalCallback(syscall.SIGINT, func() bool {
-		Defer(func() { 
-			Log(NONE)
-			Notice("Application interrupt received. (shutting down)") 
-		})
+		Log("Application interrupt received. (shutting down)")
 		return true
 	})
 
