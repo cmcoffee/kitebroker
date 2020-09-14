@@ -54,7 +54,14 @@ func (t *TaskReport) Summary(errors uint32) {
 	}
 	fmt.Fprintf(text, "\tStarted: \t%v\n", t.start_time.Round(time.Millisecond))
 	fmt.Fprintf(text, "\tFinished: \t%v\n", end_time.Round(time.Millisecond))
-	fmt.Fprintf(text, "\tRuntime: \t%v\n", end_time.Sub(t.start_time).Round(time.Second))
+
+	rt := end_time.Sub(t.start_time)
+	if x := rt.Round(time.Second); x == 0 {
+		rt = rt.Round(time.Millisecond)
+	} else {
+		rt = x
+	}
+	fmt.Fprintf(text, "\tRuntime: \t%v\n", rt)
 	if t.tallys != nil {
 		for i := 0; i < len(t.tallys); i++ {
 			fmt.Fprintf(text, "\t%s: \t%s\n", t.tallys[i].name, t.tallys[i].Format(*t.tallys[i].count))

@@ -167,29 +167,28 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 	// Do iterative loop if no threads are available, do recursion if there are.
 	for {
 		if len(folders) < n+1 {
-			folders = folders[0:0]
 			if len(next) > 0 {
-				for i, o := range next {
-					if T.crawl_limiter.Try() {
-						go func(path string, obj *KiteObject) {
-							T.ProcessFolder(obj, local_path)
-							T.crawl_limiter.Done()
-						}(o.path, o.KiteObject)
-					} else {
-						folders = append(folders, next[i])
-					}
-				}
+				folders = append(folders[:0], next[0:]...)
 				next = next[0:0]
-				n = 0
-				if len(folders) == 0 {
-					break
-				}
 			} else {
 				break
 			}
+			n = 0
 		}
 
 		obj := folders[n]
+
+		if n+1 < len(folders)-1 {
+			if T.crawl_limiter.Try() {
+				go func(path string, obj *KiteObject) {
+					T.ProcessFolder(obj, local_path)
+					T.crawl_limiter.Done()
+				}(obj.path, obj.KiteObject)
+				n++
+				continue
+			}
+		}
+
 		switch obj.Type {
 		case "d":
 			if obj.CurrentUserRole.Rank < 500000 && T.input.owned_only {

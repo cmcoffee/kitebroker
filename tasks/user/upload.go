@@ -292,28 +292,28 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 
 	for {
 		if n > len(current)-1 {
-			current = current[0:0]
 			if len(next) > 0 {
-				for _, o := range next {
-					if T.crawl_wg.Try() {
-						go func(local_path string, folder *KiteObject) {
-							defer T.crawl_wg.Done()
-							T.ProcessFolder(local_path, folder)
-						}(o.path, o.KiteObject)
-					} else {
-						current = append(current, o)
-					}
-				}
+				current = append(current[:0], next[0:]...)
+				next = next[0:0]
+				n = 0
 			} else {
 				break
 			}
-			next = next[0:0]
-			n = 0
-			if len(current) == 0 {
-				return
+		}
+		
+		target := current[n]
+
+		if n+1 < len(current)-1 {
+			if T.crawl_wg.Try() {
+				go func(local_path string, folder *KiteObject) {
+					defer T.crawl_wg.Done()
+					T.ProcessFolder(local_path, folder)
+				}(target.path, target.KiteObject)
+				n++
+				continue
 			}
 		}
-		target := current[n]
+
 		if target.FileInfo.Name() == ".." || target.FileInfo.Name() == "." {
 			n++
 			continue

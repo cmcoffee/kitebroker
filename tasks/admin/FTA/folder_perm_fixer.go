@@ -1,4 +1,4 @@
-package admin
+package FTA
 
 import (
 	"bufio"
@@ -9,15 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-)
-
-const (
-	DOWNLOADER   = 2
-	COLLABORATOR = 3
-	MANAGER      = 4
-	OWNER        = 5
-	VIEWER       = 6
-	UPLOADER     = 7
 )
 
 const (
@@ -69,7 +60,7 @@ func read_csv(file string) (output map[string]map[string]int, err error) {
 		r := csv.NewReader(bytes.NewReader(s.Bytes()))
 		o, err := r.Read()
 		if err != nil {
-			return nil, fmt.Errorf("%s: Parse Error On Line %d!!! (%v)", file, err)
+			return nil, fmt.Errorf("%s: %s", file, strings.Replace(err.Error(), "line 1", fmt.Sprintf("line %d", line), 1))
 		}
 		if len(o) >= 11 {
 			if o[ws_expiry] == "Available Until" {
