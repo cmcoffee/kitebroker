@@ -275,7 +275,7 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 	}
 	ChunkIndex := upload_data.UploadedChunks
 
-	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader)
+	src := transferMonitor(filename, total_bytes, leftToRight, source_reader)
 	defer src.Close()
 
 	if ChunkIndex > 0 {

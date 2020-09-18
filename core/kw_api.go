@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/iotimeout"
+	"github.com/cmcoffee/go-snuglib/nfo"
 	"io/ioutil"
 	"math/rand"
 	"net/http"
@@ -178,7 +179,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 				token, err = session.refreshToken(username, token)
 				if err != nil {
 					if K.secrets.signature_key == nil {
-						Notice("Unable to use refresh token, must reauthenticate for new access token: %s", err.Error())
+						Debug("Unable to use refresh token: %v", err)
 					}
 					token = nil
 				} else {
@@ -207,11 +208,11 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 		for {
 			PleaseWait.Hide()
 			if username == NONE || permit_change {
-				username = strings.ToLower(GetInput(" -> Account Login(email): "))
+				username = strings.ToLower(nfo.GetInput(" -> Account Login(email): "))
 			} else {
 				Stdout(" -> Account Login(email): %s", username)
 			}
-			password := GetSecret(" -> Account Password: ")
+			password := nfo.GetSecret(" -> Account Password: ")
 			if password == NONE {
 				err := fmt.Errorf("Blank password provided.")
 				if !auth_loop {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/eflag"
+	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"runtime"
@@ -11,7 +13,16 @@ import (
 	"time"
 )
 
-var jobs menu
+// Creates passport to send to task module.
+func NewPassport(task_name string, source string, flags *FlagSet, user KWSession, db SubStore) Passport {
+	return Passport{
+		NewTaskReport(task_name, source, flags),
+		user,
+		db,
+	}
+}
+
+var command menu
 
 // Menu for tasks.
 type menu struct {
@@ -54,7 +65,7 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &FlagSet{EFlagSet: NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
 	flags.AdaptArgs = true
 
 	m.entries[name] = &menu_elem{
@@ -125,7 +136,7 @@ func (m *menu) Show() {
 
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
-		return ErrHelp
+		return eflag.ErrHelp
 	}
 
 	// Remove admin tools if not set to SIGNATURE_AUTH
@@ -151,7 +162,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					x.flags.Usage()
 					Exit(0)
 				}
-				if err != ErrHelp {
+				if err != eflag.ErrHelp {
 					if source != "cli" {
 						Stderr("err [%s]: %s\n\n", source, err.Error())
 					} else {
@@ -159,7 +170,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 				}
 				x.flags.Usage()
-				if err == ErrHelp {
+				if err == eflag.ErrHelp {
 					Exit(0)
 				} else {
 					Exit(1)
@@ -189,7 +200,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				new_name := fmt.Sprintf("%s:%d", x.name, i)
 				new_task := x.task.New()
 				m.mutex.RUnlock()
-				jobs.Register(new_name, x.desc, new_task)
+				command.Register(new_name, x.desc, new_task)
 				m.mutex.RLock()
 				input[n][0] = new_name
 				init(args)
@@ -204,14 +215,17 @@ func (m *menu) Select(input [][]string) (err error) {
 		m.mutex.RUnlock()
 	}
 
+	if global.debug || global.snoop {
+		enable_debug()
+	}
+
 	init_kw_api()
-	ShowTS()
+	nfo.ShowTS()
 	Log("### %s v%s ###", APPNAME, VERSION)
 	Log(NONE)
 
 	// Main task loop.
 	for {
-		ResetErrorCount()
 		tasks_loop_start := time.Now().Round(time.Millisecond)
 		task_count := len(input) - 1
 		for i, args := range input {

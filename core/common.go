@@ -2,7 +2,6 @@ package core
 
 import (
 	"archive/zip"
-	"bytes"
 	"compress/flate"
 	"crypto/md5"
 	"crypto/rand"
@@ -10,18 +9,14 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/cfg"
 	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/kvlite"
 	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/go-snuglib/options"
 	"github.com/cmcoffee/go-snuglib/xsync"
 	"io"
 	"io/ioutil"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
-	"text/tabwriter"
 	"time"
 )
 
@@ -31,24 +26,7 @@ type FlagSet struct {
 	*eflag.EFlagSet
 }
 
-func (F FlagSet) PrintValues() {
-	var buffer bytes.Buffer
-	text := tabwriter.NewWriter(&buffer, 0, 0, 3, '-', 0)
-	fmt.Fprintf(text, "\n")
-	log_flag := func(input *eflag.Flag) {
-		/*if input.Usage == "" {
-			return
-		}*/
-		fmt.Fprintf(text, "    (%s) \t> %v\n", input.Name, input.Value)
-	}
-	F.Visit(log_flag)
-	text.Flush()
-	for _, t := range strings.Split(buffer.String(), "\n") {
-		Log(t)
-	}
-}
-
-// Prase flags assocaited with task.
+// Parse flags assocaited with task.
 func (f *FlagSet) Parse() (err error) {
 	if err = f.EFlagSet.Parse(f.FlagArgs[0:]); err != nil {
 		return err
@@ -56,21 +34,7 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
-// Creates passport to send to task module.
-func NewPassport(task_name string, source string, flags *FlagSet, user KWSession, db SubStore) Passport {
-	return Passport{
-		&TaskReport{
-			task_name,
-			source,
-			flags,
-			time.Now().Round(time.Millisecond),
-			make([]*Tally, 0),
-		},
-		user,
-		db,
-	}
-}
-
+// Passport is the handoff to the task including a task report, a session and a database.
 type Passport struct {
 	*TaskReport
 	KWSession
@@ -82,113 +46,6 @@ type Task interface {
 	Init(*FlagSet) error
 	Main(Passport) error
 	New() Task
-}
-
-// SubStore is a TaskStore, a database with a prefix in the table.
-type SubStore struct {
-	prefix string
-	db     dbase
-}
-
-type Database interface {
-	Sub(prefix string) SubStore
-	Shared(table string) SubStore
-	Drop(table string)
-	CryptSet(table, key string, value interface{})
-	Set(table, key string, value interface{})
-	Unset(table, key string)
-	Get(table, key string, output interface{}) bool
-	Keys(table string) []string
-	CountKeys(table string) int
-	Tables() []string
-	Table(table string) Table
-}
-
-// Spins off a new shared table.
-func (d *dbase) Shared(table string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("-shared.%s.", table),
-		db:     *d,
-	}
-}
-func (d *dbase) Sub(prefix string) SubStore {
-	return SubStore{fmt.Sprintf("%s.", prefix), *d}
-}
-
-// applies prefix of table to calls.
-func (d SubStore) apply_prefix(table string) string {
-	return fmt.Sprintf("%s%s", d.prefix, table)
-}
-
-// Applies additional prefix to table.
-func (d SubStore) Sub(prefix string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("%s%s.", d.prefix, prefix),
-		db:     d.db,
-	}
-}
-
-// Spins off a new shared table.
-func (d SubStore) Shared(table string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("-shared.%s.", table),
-		db:     d.db,
-	}
-}
-
-// DB Wrappers to perform fatal error checks on each call.
-func (d SubStore) Drop(table string) {
-	d.db.Drop(d.apply_prefix(table))
-}
-
-// Encrypt value to go-kvlie, fatal on error.
-func (d SubStore) CryptSet(table, key string, value interface{}) {
-	d.db.CryptSet(d.apply_prefix(table), key, value)
-}
-
-// Save value to go-kvlite.
-func (d SubStore) Set(table, key string, value interface{}) {
-	d.db.Set(d.apply_prefix(table), key, value)
-}
-
-// Retrieve value from go-kvlite.
-func (d SubStore) Get(table, key string, output interface{}) bool {
-	found := d.db.Get(d.apply_prefix(table), key, output)
-	return found
-}
-
-// List keys in go-kvlite.
-func (d SubStore) Keys(table string) []string {
-	keylist := d.db.Keys(d.apply_prefix(table))
-	return keylist
-}
-
-// Count keys in table.
-func (d SubStore) CountKeys(table string) int {
-	count := d.db.CountKeys(d.apply_prefix(table))
-	return count
-}
-
-// List Tables in DB
-func (d SubStore) Tables() []string {
-	var tables []string
-
-	for _, t := range d.db.Tables() {
-		if strings.HasPrefix(t, d.prefix) {
-			tables = append(tables, strings.TrimPrefix(t, d.prefix))
-		}
-	}
-	return tables
-}
-
-// Delete value from go-kvlite.
-func (d SubStore) Unset(table, key string) {
-	d.db.Unset(d.apply_prefix(table), key)
-}
-
-// Drill in to specific table.
-func (d SubStore) Table(table string) Table {
-	return d.db.Table(d.apply_prefix(table))
 }
 
 const (
@@ -206,31 +63,22 @@ var (
 	Warn            = nfo.Warn
 	Defer           = nfo.Defer
 	Debug           = nfo.Debug
-	GetSecret       = nfo.GetSecret
-	GetInput        = nfo.GetInput
 	Exit            = nfo.Exit
 	PleaseWait      = nfo.PleaseWait
 	Stderr          = nfo.Stderr
-	GetConfirm      = nfo.GetConfirm
-	HideTS          = nfo.HideTS
-	ShowTS          = nfo.ShowTS
 	ProgressBar     = nfo.ProgressBar
-	TransferMonitor = nfo.TransferMonitor
 	Path            = filepath.Clean
-	LeftToRight     = nfo.LeftToRight
-	RightToLeft     = nfo.RightToLeft
-	NoRate          = nfo.NoRate
-	NeedAnswer      = nfo.NeedAnswer
-	PressEnter      = nfo.PressEnter
 	TransferCounter = nfo.TransferCounter
 	NewLimitGroup   = xsync.NewLimitGroup
-	NewFlagSet      = eflag.NewFlagSet
-	ErrHelp         = eflag.ErrHelp
-	ReturnErrorOnly = eflag.ReturnErrorOnly
-	SignalCallback  = nfo.SignalCallback
 	FormatPath      = filepath.FromSlash
 	GetPath         = filepath.ToSlash
-	NewOptions      = options.NewOptions
+)
+
+var (
+	transferMonitor = nfo.TransferMonitor
+	leftToRight     = nfo.LeftToRight
+	rightToLeft     = nfo.RightToLeft
+	noRate          = nfo.NoRate
 )
 
 type (
@@ -240,32 +88,7 @@ type (
 	ConfigStore    = cfg.Store
 )
 
-func InitLogging(path string, debug bool) {
-	file, err := nfo.LogFile(FormatPath(path), 10, 10)
-	Critical(err)
-	nfo.SetFile(nfo.STD, file)
-	if debug {
-		nfo.SetOutput(nfo.DEBUG, os.Stdout)
-		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
-	}
-}
-
-// Enable Debug Logging Output
-func EnableDebug() {
-	nfo.SetOutput(nfo.DEBUG, os.Stdout)
-	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
-}
-
-// Disables Flash from being displayed.
-func Quiet() {
-	Flash = func(vars ...interface{}) { return }
-}
-
 var error_counter uint32
-
-func ResetErrorCount() {
-	atomic.StoreUint32(&error_counter, 0)
-}
 
 // Returns amount of times Err has been triggered.
 func ErrCount() uint32 {
@@ -275,92 +98,6 @@ func ErrCount() uint32 {
 func Err(input ...interface{}) {
 	atomic.AddUint32(&error_counter, 1)
 	nfo.Err(input...)
-}
-
-// Wrapper around go-kvlite.
-type dbase struct {
-	db kvlite.Store
-}
-
-type Table struct {
-	table kvlite.Table
-}
-
-func (t Table) Drop() {
-	Critical(t.table.Drop())
-}
-
-func (t Table) Get(key string, value interface{}) bool {
-	found, err := t.table.Get(key, value)
-	Critical(err)
-	return found
-}
-
-func (t Table) Set(key string, value interface{}) {
-	Critical(t.table.Set(key, value))
-}
-
-func (t Table) CryptSet(key string, value interface{}) {
-	Critical(t.table.CryptSet(key, value))
-}
-
-func (t Table) Unset(key string) {
-	Critical(t.table.Unset(key))
-}
-
-func (t Table) Keys() []string {
-	keys, err := t.table.Keys()
-	Critical(err)
-	return keys
-}
-
-func (t Table) CountKeys() int {
-	count, err := t.table.CountKeys()
-	Critical(err)
-	return count
-}
-
-// Opens go-kvlite sqlite database.
-func Opendbase(file string, padlock ...byte) (*dbase, error) {
-	db, err := kvlite.Open(file, padlock...)
-	if err != nil {
-		return nil, err
-	}
-	return &dbase{db}, nil
-}
-
-// Opens go-kvlite database using mac address for lock.
-func SecureDatabase(file string) (*dbase, error) {
-	// Provides us the mac address of the first interface.
-	get_mac_addr := func() []byte {
-		ifaces, err := net.Interfaces()
-		Critical(err)
-
-		for _, v := range ifaces {
-			if len(v.HardwareAddr) == 0 {
-				continue
-			}
-			return v.HardwareAddr
-		}
-		return nil
-	}
-
-	db, err := kvlite.Open(file, get_mac_addr()[0:]...)
-	if err != nil {
-		if err == kvlite.ErrBadPadlock {
-			Notice("Hardware changes detected, you will need to reauthenticate.")
-			if err := kvlite.CryptReset(file); err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
-		db, err = kvlite.Open(file, get_mac_addr()[0:]...)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &dbase{db}, nil
 }
 
 // Converts string to date.
@@ -378,68 +115,6 @@ func StringDate(input string) (output time.Time, err error) {
 		}
 	}
 	return
-}
-
-// Open a memory-only go-kvlite store.
-func OpenCache() *dbase {
-	return &dbase{kvlite.MemStore()}
-}
-
-// DB Wrappers to perform fatal error checks on each call.
-func (d dbase) Drop(table string) {
-	Critical(d.db.Drop(table))
-}
-
-// Encrypt value to go-kvlie, fatal on error.
-func (d dbase) CryptSet(table, key string, value interface{}) {
-	Critical(d.db.CryptSet(table, key, value))
-}
-
-// Save value to go-kvlite.
-func (d dbase) Set(table, key string, value interface{}) {
-	Critical(d.db.Set(table, key, value))
-}
-
-// Retrieve value from go-kvlite.
-func (d dbase) Get(table, key string, output interface{}) bool {
-	found, err := d.db.Get(table, key, output)
-	Critical(err)
-	return found
-}
-
-func (d dbase) Table(table string) Table {
-	return Table{table: d.db.Table(table)}
-}
-
-// List keys in go-kvlite.
-func (d dbase) Keys(table string) []string {
-	keylist, err := d.db.Keys(table)
-	Critical(err)
-	return keylist
-}
-
-// Count keys in table.
-func (d dbase) CountKeys(table string) int {
-	count, err := d.db.CountKeys(table)
-	Critical(err)
-	return count
-}
-
-// List Tables in DB
-func (d dbase) Tables() []string {
-	tables, err := d.db.Tables()
-	Critical(err)
-	return tables
-}
-
-// Delete value from go-kvlite.
-func (d dbase) Unset(table, key string) {
-	Critical(d.db.Unset(table, key))
-}
-
-// Closes go-kvlite database.
-func (d dbase) Close() {
-	Critical(d.db.Close())
 }
 
 // Fatal Error Check
@@ -474,6 +149,7 @@ type FileInfo struct {
 	string
 }
 
+// Returns please wait prompt back to default setting.
 func DefaultPleaseWait() {
 	PleaseWait.Set(func() string { return "Please wait ..." }, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 }
@@ -595,7 +271,7 @@ func CompressFolder(input_folder, dest_file string) (err error) {
 			return err
 		}
 
-		tm := TransferMonitor(fmt.Sprintf("%s", file.Info.Name()), file.Info.Size(), NoRate, r)
+		tm := transferMonitor(fmt.Sprintf("%s", file.Info.Name()), file.Info.Size(), noRate, r)
 		_, err = io.CopyBuffer(z, tm, buf)
 		tm.Close()
 

@@ -10,6 +10,23 @@ import (
 	"time"
 )
 
+/*
+func ResetErrorCount() {
+	atomic.StoreUint32(&error_counter, 0)
+}*/
+
+// Create New Task Report.
+func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
+	return &TaskReport{
+		name:       name,
+		file:       file,
+		flags:      flags,
+		start_time: time.Now().Round(time.Millisecond),
+		tallys:     make([]*Tally, 0),
+	}
+}
+
+// TraskReport
 type TaskReport struct {
 	name       string
 	file       string
@@ -18,13 +35,14 @@ type TaskReport struct {
 	tallys     []*Tally
 }
 
+// Generates Summary Report
 func (t *TaskReport) Summary(errors uint32) {
 	var buffer bytes.Buffer
 	text := tabwriter.NewWriter(&buffer, 0, 0, 1, ' ', tabwriter.AlignRight)
 	end_time := time.Now()
 
 	Log("\n")
-	//fmt.Fprintf(text, "################### Task Summary ###################\n")
+
 	if t.file != "cli" {
 		fmt.Fprintf(text, "\tFile: \t%s\n", t.file)
 	}
@@ -68,7 +86,8 @@ func (t *TaskReport) Summary(errors uint32) {
 		}
 	}
 	fmt.Fprintf(text, "\tErrors: \t%d\n", errors)
-	//fmt.Fprintf(text, "####################################################")
+	atomic.StoreUint32(&error_counter, 0)
+
 	text.Flush()
 	for _, t := range strings.Split(buffer.String(), "\n") {
 		Log(t)
@@ -76,12 +95,14 @@ func (t *TaskReport) Summary(errors uint32) {
 	return
 }
 
+// Tally for TaskReport.
 type Tally struct {
 	name   string
 	count  *int64
 	Format func(val int64) string
 }
 
+// Generates a new Tally for the TaskReport
 func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
 	for i := 0; i < len(r.tallys); i++ {
 		if name == r.tallys[i].name {
@@ -101,6 +122,7 @@ func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	return
 }
 
+// ImportTally is to allow bringining in an outside Tally.
 func (r *TaskReport) ImportTally(name string, tally *Tally) {
 	var tmp []*Tally
 	for i := 0; i < len(r.tallys); i++ {
@@ -125,6 +147,7 @@ func (r *TaskReport) ImportTally(name string, tally *Tally) {
 	return
 }
 
+// Looks up Tally
 func (c *TaskReport) FindTally(name string) int64 {
 	for _, v := range c.tallys {
 		if v.name == name {
@@ -134,10 +157,12 @@ func (c *TaskReport) FindTally(name string) int64 {
 	return 0
 }
 
+// Add to Tally
 func (c Tally) Add(num int64) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
 }
 
+// Get the value of the Tally
 func (c Tally) Value() int64 {
 	return atomic.LoadInt64(c.count)
 }

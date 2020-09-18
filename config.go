@@ -6,7 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/kvlite"
+	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/options"
 	. "github.com/cmcoffee/kitebroker/core"
+	"net"
+	"os"
 	"strings"
 	"time"
 )
@@ -173,15 +178,49 @@ func init_database() {
 	Critical(err)
 }
 
-// Initialize Logging.
-func init_logging() {
-	var debug bool
+// Opens go-kvlite database using mac address for lock.
+func SecureDatabase(file string) (*DBase, error) {
+	// Provides us the mac address of the first interface.
+	get_mac_addr := func() []byte {
+		ifaces, err := net.Interfaces()
+		Critical(err)
 
-	if global.debug || global.snoop {
-		debug = true
+		for _, v := range ifaces {
+			if len(v.HardwareAddr) == 0 {
+				continue
+			}
+			return v.HardwareAddr
+		}
+		return nil
 	}
 
-	InitLogging(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME), debug)
+	db, err := kvlite.Open(file, get_mac_addr()[0:]...)
+	if err != nil {
+		if err == kvlite.ErrBadPadlock {
+			Notice("Hardware changes detected, you will need to reauthenticate.")
+			if err := kvlite.CryptReset(file); err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+		db, err = kvlite.Open(file, get_mac_addr()[0:]...)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &DBase{db}, nil
+}
+
+// Initialize Logging.
+func init_logging() {
+	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
+	Critical(err)
+	nfo.SetFile(nfo.STD, file)
+	if global.debug || global.snoop {
+		nfo.SetOutput(nfo.DEBUG, os.Stdout)
+		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
+	}
 }
 
 // Perform sha256.Sum256 against input byte string.
@@ -237,7 +276,7 @@ type proxyValue struct {
 
 func (c *proxyValue) Set() bool {
 	v := c.value
-	c.value = GetInput(fmt.Sprintf(`
+	c.value = nfo.GetInput(fmt.Sprintf(`
 # Format of proxy server should be: https://proxy.server.com:3127
 # Leave blank for direct connection/no proxy.
 --> %s: `, c.desc))
@@ -257,13 +296,13 @@ func (c *proxyValue) String() string {
 }
 
 func pause() {
-	PressEnter("\n(press enter to continue)")
+	nfo.PressEnter("\n(press enter to continue)")
 }
 
 // Configuration Menu for API Settings
 func config_api(configure_api bool) {
 
-	setup := NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
@@ -306,7 +345,7 @@ func config_api(configure_api bool) {
 	proxy := proxyValue{"Proxy Server", proxy_uri}
 	setup.Register(&proxy)
 
-	advanced := NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
+	advanced := options.NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
 	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
@@ -388,7 +427,7 @@ func config_api(configure_api bool) {
 			kw.SetTransferLimiter(*max_file_transfer)
 		}
 		global.kw = kw
-		account = setup_account()
+		//account = setup_account()
 		return true
 	}
 
@@ -408,8 +447,8 @@ func config_api(configure_api bool) {
 		var err error
 		Flash("[%s]: Authenticating, please wait...", global.kw.Server)
 
-		if !authenticated {
-			setup_account()
+		if !authenticated || account == NONE {
+			account = setup_account()
 		}
 
 		err = global.kw.Session(account).Call(APIRequest{
@@ -419,6 +458,7 @@ func config_api(configure_api bool) {
 		})
 
 		if err != nil {
+			Stdout("")
 			Stdout("[ERROR] %s", err.Error())
 			pause()
 			return false
@@ -437,7 +477,7 @@ func config_api(configure_api bool) {
 			tested = false
 			if setup.Select(true) {
 				*server = strings.TrimPrefix(strings.ToLower(*server), "https://")
-				if load_api() && !tested && GetConfirm("\nWould you like validate changes with a quick test?") {
+				if load_api() && !tested && nfo.GetConfirm("\nWould you like validate changes with a quick test?") {
 					Stdout("\n")
 					if test_api() {
 						save_config()

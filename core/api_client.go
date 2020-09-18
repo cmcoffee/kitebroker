@@ -266,7 +266,8 @@ func (s *APIClient) setToken(username string, req *http.Request) (err error) {
 			// First attempt to use a refresh token if there is one.
 			token, err = s.refreshToken(username, token)
 			if err != nil && s.secrets.signature_key == nil {
-				Notice("Unable to use refresh token, must reauthenticate for new access token: %s", err.Error())
+				Debug("Unable to use refresh token: %v", err)
+				Fatal("Access token has expired, must reauthenticate for new access token.")
 			}
 			err = nil
 		}
@@ -691,15 +692,17 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 		req.Body = ioutil.NopCloser(bytes.NewReader(body))
 		resp, err = s.Do(req)
 
-		err = s.DecodeJSON(resp, api_req.Output)
+		if err == nil && resp != nil {
+			err = s.DecodeJSON(resp, api_req.Output)
+		}
 		if err != nil {
 			if s.isTokenError(err) {
-					err = reAuth(&s, username, req, err)
-					if err != nil {
-						return
-					} else {
-						continue
-					}
+				err = reAuth(&s, username, req, err)
+				if err != nil {
+					return
+				} else {
+					continue
+				}
 			}
 			if s.isRetryError(err) || !IsAPIError(err) {
 				report_success = true
@@ -727,7 +730,7 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 }
 
 // Backs off subsequent attempts generating a pause between requests.
-func (s APIClient) BackoffTimer (retry uint) {
+func (s APIClient) BackoffTimer(retry uint) {
 	if retry < s.Retries {
 		time.Sleep((time.Second * time.Duration(retry+1)) * time.Duration(retry+1))
 	}

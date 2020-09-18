@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"github.com/cmcoffee/go-snuglib/eflag"
+	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
@@ -12,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "20.09.06"
+	VERSION = "20.09.08"
 )
 
 const (
@@ -36,7 +38,7 @@ var global struct {
 }
 
 func init() {
-	SignalCallback(syscall.SIGINT, func() bool {
+	nfo.SignalCallback(syscall.SIGINT, func() bool {
 		Log("Application interrupt received. (shutting down)")
 		return true
 	})
@@ -72,12 +74,18 @@ func load_config(config_file string) (err error) {
 	return nil
 }
 
+// Enable Debug Logging Output
+func enable_debug() {
+	nfo.SetOutput(nfo.DEBUG, os.Stdout)
+	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
+}
+
 func main() {
-	HideTS()
+	nfo.HideTS()
 	defer Exit(0)
 
 	// Initial modifier flags and flag aliases.
-	flags := NewFlagSet(NONE, ReturnErrorOnly)
+	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
 	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
@@ -100,7 +108,7 @@ func main() {
 	}
 
 	if global.debug || global.snoop {
-		EnableDebug()
+		enable_debug()
 	}
 
 	// We need to do a quick look to see what commands we display for --help
@@ -108,12 +116,12 @@ func main() {
 	err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
-		if f_err != ErrHelp {
+		if f_err != eflag.ErrHelp {
 			Stderr(f_err)
 			Stderr(NONE)
 		}
 		flags.Usage()
-		jobs.Show()
+		command.Show()
 		return
 	}
 
@@ -153,13 +161,13 @@ func main() {
 		task_args = append(task_args, args)
 	}
 
-	if err := jobs.Select(task_args); err != nil {
-		if err != ErrHelp {
+	if err := command.Select(task_args); err != nil {
+		if err != eflag.ErrHelp {
 			Stderr(err)
 		}
 		flags.Usage()
-		jobs.Show()
-		if err == ErrHelp {
+		command.Show()
+		if err == eflag.ErrHelp {
 			return
 		} else {
 			Exit(1)
