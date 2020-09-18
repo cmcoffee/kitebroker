@@ -444,6 +444,18 @@ func config_api(configure_api bool) {
 			global.kw.TokenStore.Delete(account)
 		}
 
+		if account != NONE {
+			token, err := global.kw.TokenStore.Load(account)
+			if err != nil {
+				global.kw.TokenStore.Delete(account)
+			}
+			if token != nil {
+				if token.Expires <= time.Now().Unix() {
+					global.kw.TokenStore.Delete(account)
+				}
+			}
+		}
+
 		var err error
 		Flash("[%s]: Authenticating, please wait...", global.kw.Server)
 
