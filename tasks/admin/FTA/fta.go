@@ -132,7 +132,7 @@ func (f fta_rest_workspace) Children(params ...interface{}) (children []FTAObjec
 			children = append(children, v)
 			offset++
 		}
-		if offset < 20 {
+		if len(WS.Result.ItemList.Files) < 20 && len(WS.Result.ItemList.Folders) < 20 {
 			break
 		}
 	}

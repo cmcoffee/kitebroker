@@ -64,16 +64,16 @@ func (T ListTask) displayResult(object...KiteObject) {
 // Main function, Passport hands off KWAPI Session, a Database and a TaskReport object.
 func (T *ListTask) Main(passport Passport) (err error) {
 	T.ppt = passport
-	Log("\n")
+	Info("\n")
 	if IsBlank(T.input.folder) {
-		Log("-- 'kiteworks Files' --")
+		Info("-- 'kiteworks Files' --")
 		folders, err := T.ppt.TopFolders()
 		if err != nil {
 			return err
 		}
 		T.displayResult(folders[0:]...)
 	} else {
-		Log("-- '%s' --", T.input.folder)
+		Info("-- '%s' --", T.input.folder)
 		f, err := T.ppt.Folder(0).Find(T.input.folder)
 		if err != nil {
 			return err

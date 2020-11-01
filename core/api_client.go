@@ -34,7 +34,6 @@ type APIClient struct {
 	secrets         api_secrets                          // Encrypted config options such as signature token, client secret key.
 	limiter         chan struct{}                        // Implements a limiter for API calls/transfers to/from appliance.
 	trans_limiter   chan struct{}                        // Implements a file transfer limiter.
-	ModifyRequest   func(req *http.Request)              // Modify the upcoming request after it is signed.
 	NewToken        func(username string) (*Auth, error) // Provides new access_token.
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)

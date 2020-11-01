@@ -292,16 +292,22 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 }
 
 // Creates a new upload for a folder.
-func (S kw_rest_folder) NewUpload(file os.FileInfo) (int, error) {
+func (S kw_rest_folder) NewUpload(file os.FileInfo, filename ...string) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
+	}
+
+	file_name := file.Name()
+
+	if len(filename) > 0 {
+		file_name = filename[0]
 	}
 
 	if err := S.Call(APIRequest{
 		//Version: 5,
 		Method: "POST",
 		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", S.folder_id),
-		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
+		Params: SetParams(PostJSON{"filename": file_name, "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
 		Output: &upload,
 	}); err != nil {
 		return -1, err

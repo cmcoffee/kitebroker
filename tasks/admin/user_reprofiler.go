@@ -127,7 +127,8 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 				if user.UserTypeID != T.old_profile_id {
 					return
 				}
-				last_active_time, err := T.lastActivity(user.ID, Query{"startDate": DateString(date.UTC()), "endDate": DateString(time.Now().UTC())})
+				
+				last_active_time, err := T.lastActivity(user.ID, Query{"startDate": DateString(date.UTC()), "endDate": DateString(time.Now().Add(time.Duration(time.Hour * 24)).UTC())})
 				if err != nil {
 					Err(err)
 					return
@@ -171,9 +172,9 @@ func (T *UserProfilerTask) lastActivity(user_id int, params ...interface{}) (las
 	err = T.dli_admin.DataCall(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/dli/users/%d/activities", user_id),
-		Params: SetParams(params),
+		Params: SetParams(params, Query{"orderBy": "created:desc"}),
 		Output: &activities,
-	}, -1, 1000)
+	}, 0, 1)
 	for _, k := range activities {
 		la, err := ReadKWTime(k.Created)
 		if err != nil {

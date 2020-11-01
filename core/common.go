@@ -26,6 +26,15 @@ type FlagSet struct {
 	*eflag.EFlagSet
 }
 
+// Allows overriding of the Filename.
+func (F FileInfo) Name() string {
+	if F.string != NONE {
+		return F.string
+	} else {
+		return F.FileInfo.Name()
+	}
+}
+
 // Parse flags assocaited with task.
 func (f *FlagSet) Parse() (err error) {
 	if err = f.EFlagSet.Parse(f.FlagArgs[0:]); err != nil {
@@ -72,6 +81,7 @@ var (
 	NewLimitGroup   = xsync.NewLimitGroup
 	FormatPath      = filepath.FromSlash
 	GetPath         = filepath.ToSlash
+	Info            = nfo.Aux
 )
 
 var (
@@ -145,8 +155,8 @@ func SplitPath(path string) (folder_path []string) {
 }
 
 type FileInfo struct {
-	Info os.FileInfo
 	string
+	os.FileInfo
 }
 
 // Returns please wait prompt back to default setting.
@@ -185,7 +195,7 @@ func ScanPath(parent_folder string) (folders []string, files []FileInfo) {
 			if finfo.IsDir() {
 				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
 			} else {
-				files = append(files, FileInfo{finfo, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name())})
+				files = append(files, FileInfo{fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()), finfo})
 			}
 		}
 	}
@@ -271,7 +281,7 @@ func CompressFolder(input_folder, dest_file string) (err error) {
 			return err
 		}
 
-		tm := transferMonitor(fmt.Sprintf("%s", file.Info.Name()), file.Info.Size(), noRate, r)
+		tm := transferMonitor(fmt.Sprintf("%s", file.Name()), file.Size(), noRate, r)
 		_, err = io.CopyBuffer(z, tm, buf)
 		tm.Close()
 

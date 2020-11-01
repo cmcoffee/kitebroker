@@ -5,15 +5,11 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"text/tabwriter"
 	"time"
 )
-
-/*
-func ResetErrorCount() {
-	atomic.StoreUint32(&error_counter, 0)
-}*/
 
 // Create New Task Report.
 func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
@@ -28,6 +24,7 @@ func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
 
 // TraskReport
 type TaskReport struct {
+	lock       sync.Mutex
 	name       string
 	file       string
 	flags      *FlagSet
@@ -37,11 +34,14 @@ type TaskReport struct {
 
 // Generates Summary Report
 func (t *TaskReport) Summary(errors uint32) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+
 	var buffer bytes.Buffer
 	text := tabwriter.NewWriter(&buffer, 0, 0, 1, ' ', tabwriter.AlignRight)
 	end_time := time.Now()
 
-	Log("\n")
+	Info("\n")
 
 	if t.file != "cli" {
 		fmt.Fprintf(text, "\tFile: \t%s\n", t.file)
@@ -58,6 +58,8 @@ func (t *TaskReport) Summary(errors uint32) {
 			case "debug":
 				return
 			case "pause":
+				return
+			case "quiet":
 				return
 			}
 			if first {
@@ -90,7 +92,7 @@ func (t *TaskReport) Summary(errors uint32) {
 
 	text.Flush()
 	for _, t := range strings.Split(buffer.String(), "\n") {
-		Log(t)
+		Info(t)
 	}
 	return
 }
@@ -104,6 +106,9 @@ type Tally struct {
 
 // Generates a new Tally for the TaskReport
 func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
 	for i := 0; i < len(r.tallys); i++ {
 		if name == r.tallys[i].name {
 			return *r.tallys[i]
@@ -122,39 +127,9 @@ func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	return
 }
 
-// ImportTally is to allow bringining in an outside Tally.
-func (r *TaskReport) ImportTally(name string, tally *Tally) {
-	var tmp []*Tally
-	for i := 0; i < len(r.tallys); i++ {
-		if name != r.tallys[i].name {
-			tmp = append(tmp, r.tallys[i])
-		}
-	}
-	r.tallys = tmp
-
-	new_tally := new(Tally)
-	new_tally.name = name
-	new_tally.count = tally.count
-
-	if tally.Format == nil {
-		new_tally.Format = func(val int64) string {
-			return fmt.Sprintf("%d", val)
-		}
-	} else {
-		new_tally.Format = tally.Format
-	}
-	r.tallys = append(r.tallys, new_tally)
-	return
-}
-
-// Looks up Tally
-func (c *TaskReport) FindTally(name string) int64 {
-	for _, v := range c.tallys {
-		if v.name == name {
-			return *v.count
-		}
-	}
-	return 0
+// Gets name from Tally
+func (c Tally) Name() string {
+	return c.name
 }
 
 // Add to Tally

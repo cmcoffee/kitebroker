@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "20.09.08"
+	VERSION = "20.11.01"
 )
 
 const (
@@ -34,15 +34,10 @@ var global struct {
 	setup     bool
 	snoop     bool
 	debug     bool
-	pause     bool
+	sysmode   bool
 }
 
 func init() {
-	nfo.SignalCallback(syscall.SIGINT, func() bool {
-		Log("Application interrupt received. (shutting down)")
-		return true
-	})
-
 	exec, err := os.Executable()
 	Critical(err)
 
@@ -90,8 +85,8 @@ func main() {
 	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
 	version := flags.Bool("version", false, "")
-	flags.BoolVar(&global.pause, "pause", false, "Pause after execution.")
-	flags.Order("task", "repeat", "setup", "pause")
+	flags.BoolVar(&global.sysmode, "quiet", false, "Minimal output for non-interactive processes.")
+	flags.Order("task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
 
 	flags.BoolVar(&global.debug, "debug", false, NONE)
@@ -109,6 +104,18 @@ func main() {
 
 	if global.debug || global.snoop {
 		enable_debug()
+	}
+
+	if global.sysmode && !*setup {
+		nfo.Animations = false
+		nfo.SignalCallback(syscall.SIGINT, func() bool {
+			return true
+		})
+	} else {
+		nfo.SignalCallback(syscall.SIGINT, func() bool {
+			Log("Application interrupt received. (shutting down)")
+			return true
+		})
 	}
 
 	// We need to do a quick look to see what commands we display for --help
@@ -172,10 +179,5 @@ func main() {
 		} else {
 			Exit(1)
 		}
-	}
-
-	if global.pause {
-		PleaseWait.Hide()
-		pause()
 	}
 }

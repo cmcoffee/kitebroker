@@ -85,7 +85,7 @@ func (d dbCFG) set_chunk_size_mb(max int) {
 func (d dbCFG) chunk_size_mb() (max int) {
 	found := global.db.Get("kitebroker", "chunk_size_mb", &max)
 	if !found {
-		return 68
+		return 65
 	}
 	return
 }
@@ -216,9 +216,14 @@ func SecureDatabase(file string) (*DBase, error) {
 func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
-	nfo.SetFile(nfo.STD, file)
+	nfo.SetFile(nfo.STD|nfo.AUX, file)
+	if global.sysmode {
+		nfo.SetOutput(nfo.STD, os.Stderr)
+		nfo.SetOutput(nfo.INFO, os.Stdout)
+		nfo.SetOutput(nfo.AUX|nfo.WARN|nfo.NOTICE, nfo.None)
+	}
 	if global.debug || global.snoop {
-		nfo.SetOutput(nfo.DEBUG, os.Stdout)
+		nfo.SetOutput(nfo.DEBUG, os.Stderr)
 		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 	}
 }
@@ -302,6 +307,8 @@ func pause() {
 // Configuration Menu for API Settings
 func config_api(configure_api bool) {
 
+	var bad_test bool
+
 	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
@@ -350,7 +357,7 @@ func config_api(configure_api bool) {
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
 	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 5)
-	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 68", 1, 68)
+	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 65", 1, 65)
 
 	setup.Options("Advanced", advanced, false)
 
@@ -470,14 +477,15 @@ func config_api(configure_api bool) {
 		})
 
 		if err != nil {
-			Stdout("")
 			Stdout("[ERROR] %s", err.Error())
 			pause()
+			bad_test = true
 			return false
 		}
 		tested = true
 		Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)
 		pause()
+		bad_test = false
 		return true
 	}
 
@@ -489,7 +497,7 @@ func config_api(configure_api bool) {
 			tested = false
 			if setup.Select(true) {
 				*server = strings.TrimPrefix(strings.ToLower(*server), "https://")
-				if load_api() && !tested && nfo.GetConfirm("\nWould you like validate changes with a quick test?") {
+				if load_api() && !tested && nfo.GetConfirm("\nWould you like to validate changes with a quick test?") {
 					Stdout("\n")
 					if test_api() {
 						save_config()
@@ -500,6 +508,13 @@ func config_api(configure_api bool) {
 				} else {
 					save_config()
 					break
+				}
+			} else if bad_test {
+				if nfo.GetConfirm("\nCould not succesfully validate settings, save anyway?") {
+					save_config()
+					break
+				} else {
+					continue
 				}
 			}
 			break

@@ -80,8 +80,8 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
+	my_entry.flags.BoolVar(&global.sysmode, "quiet", global.sysmode, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
-	my_entry.flags.BoolVar(&global.pause, "pause", global.pause, NONE)
 	if admin_task {
 		m.admin_tasks = append(m.admin_tasks, name)
 	} else {
@@ -220,9 +220,11 @@ func (m *menu) Select(input [][]string) (err error) {
 	}
 
 	init_kw_api()
-	nfo.ShowTS()
-	Log("### %s v%s ###", APPNAME, VERSION)
-	Log(NONE)
+	if !global.sysmode {
+		nfo.ShowTS()
+	}
+	Info("### %s v%s ###", APPNAME, VERSION)
+	Info(NONE)
 
 	// Main task loop.
 	for {
@@ -239,9 +241,9 @@ func (m *menu) Select(input [][]string) (err error) {
 					source := args[len(args)-1]
 					pre_errors := ErrCount()
 					if source == "cli" {
-						Log("<-- task '%s' started. -->", name)
+						Info("<-- task '%s' started. -->", name)
 					} else {
-						Log("<-- task '%s' (%s) started. -->", name, source)
+						Info("<-- task '%s' (%s) started. -->", name, source)
 					}
 
 					var db SubStore
@@ -263,12 +265,12 @@ func (m *menu) Select(input [][]string) (err error) {
 					DefaultPleaseWait()
 					report()
 					if source == "cli" {
-						Log("<-- task '%s' stopped. -->", name)
+						Info("<-- task '%s' stopped. -->", name)
 					} else {
-						Log("<-- task '%s' (%s) stopped. -->", name, source)
+						Info("<-- task '%s' (%s) stopped. -->", name, source)
 					}
 					if i < task_count {
-						Log(NONE)
+						Info(NONE)
 					}
 				}
 			}
@@ -286,8 +288,8 @@ func (m *menu) Select(input [][]string) (err error) {
 
 		// Task Loop
 		if ctime := time.Now().Add(time.Duration(tasks_loop_start.Round(time.Second).Sub(time.Now().Round(time.Second)) + global.freq)).Round(time.Second); ctime.Unix() > time.Now().Round(time.Second).Unix() && ctime.Sub(time.Now().Round(time.Second)) >= time.Second {
-			Log(NONE)
-			Log("Next task cycle will begin at %s.", ctime)
+			Info(NONE)
+			Info("Next task cycle will begin at %s.", ctime)
 			for time.Now().Sub(tasks_loop_start) < global.freq {
 				ctime := time.Duration(global.freq - time.Now().Round(time.Second).Sub(tasks_loop_start)).Round(time.Second)
 				Flash("* Task cycle will restart in %s.", ctime.String())
@@ -299,8 +301,8 @@ func (m *menu) Select(input [][]string) (err error) {
 				}
 			}
 		}
-		Log("Restarting task cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start).Round(time.Second))
-		Log(NONE)
+		Info("Restarting task cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start).Round(time.Second))
+		Info(NONE)
 	}
 	return nil
 }
