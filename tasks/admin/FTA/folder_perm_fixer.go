@@ -35,6 +35,7 @@ type FolderPermissionFixer struct {
 	wg           LimitGroup
 	folders      Tally
 	perm_updates Tally
+	create 		 bool
 }
 
 func (T FolderPermissionFixer) New() Task {
@@ -72,12 +73,15 @@ func read_csv(file string) (output map[string]map[string]int, err error) {
 
 		output[o[ws_path]] = make(map[string]int)
 
+		var owner string
+
 		if o[ws_owner] != NONE {
-			output[o[ws_path]][o[ws_owner]] = MANAGER
+			output[o[ws_path]][o[ws_owner]] = OWNER
+			owner = o[ws_owner]
 		}
 
 		for _, v := range strings.Split(o[ws_manager], ", ") {
-			if v != NONE {
+			if v != NONE && v != owner {
 				output[o[ws_path]][v] = MANAGER
 			}
 		}
@@ -101,13 +105,15 @@ func read_csv(file string) (output map[string]map[string]int, err error) {
 	return
 }
 
-func (T *FolderPermissionFixer) GetMembers(in_map map[string]int, role int) (output []string) {
+func (T *FolderPermissionFixer) GetMembers(in_map map[string]int, role...int) (output []string) {
 	T.map_lock.Lock()
 	defer T.map_lock.Unlock()
 
 	for k, v := range in_map {
-		if v == role {
-			output = append(output, k)
+		for _, r := range role {
+			if v == r {
+				output = append(output, k)
+			}
 		}
 	}
 	return
@@ -117,6 +123,7 @@ func (T *FolderPermissionFixer) Init(flags *FlagSet) (err error) {
 	csv := flags.String("csv", "<workspace_list.csv>", "FTA CSV File")
 	flags.ArrayVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
 	flags.SplitVar(&T.managers, "manager", "<manager>", "Override managers from CSV for folder.")
+	flags.BoolVar(&T.create, "create", false, "Create missing folders based on CSV.")
 	if err := flags.Parse(); err != nil {
 		return err
 	}
@@ -305,8 +312,62 @@ func (T *FolderPermissionFixer) MakeManager(user string) {
 	return 
 }
 
+// Creates Paths if Folder is to be created.
+func (T *FolderPermissionFixer) CreatePaths(user, folder string) (kw_user string, kw_folder *KiteObject, err error) {
+	Log("Resolving folder '%s'.", folder)
+	if user == NONE {
+		users := T.GetMembers(T.perm_map[folder], OWNER)
+		if len(users) == 0 {
+			return NONE, nil, fmt.Errorf("%s: No owner assigned in CSV.", folder)
+		}
+		kw_user = users[0]
+		T.MakeManager(kw_user)
+	} else {
+		kw_user = user
+	}
+
+	base, err := T.ppt.Session(kw_user).Folder(0).ResolvePath(folder)
+	if err != nil {
+		return NONE, nil, fmt.Errorf("%s: %s: %v", folder, kw_user, err)
+	}
+
+	kw_folder = &base
+
+	kwcache := make(map[string]*KiteObject)
+
+	find_parent := func(folder string) (base_id int, new_folder string) {
+		split := strings.Split(folder, "/")
+		if len(split) < 2 {
+			return 0, folder
+		}
+
+		parent := strings.Join(split[0:len(split)-1], "/")
+		if v, ok := kwcache[parent]; ok {
+			return v.ID, strings.TrimPrefix(folder, fmt.Sprintf("%s/", parent))
+		}
+
+		return 0, folder
+	}
+
+	for k, _ := range T.perm_map {
+		f := strings.Split(k, "/")
+		if f != nil && len(f) > 0 {
+			if f[0] == folder {
+				base_id, new_folder := find_parent(k)
+				if kwf, err := T.ppt.Session(kw_user).Folder(base_id).ResolvePath(new_folder); err != nil {
+					Err("%s: %v", k, err)
+				} else {
+					kwcache[k] = &kwf
+				}
+			}
+		}
+	}
+
+	return 
+}
+
 func (T *FolderPermissionFixer) FindManager(folder string) (kw_user string, kw_folder *KiteObject, err error) {
-	fta_managers := T.GetMembers(T.perm_map[folder], MANAGER)
+	fta_managers := T.GetMembers(T.perm_map[folder], OWNER, MANAGER)
 
 	if len(T.managers) > 0 {
 		fta_managers = append(T.managers, fta_managers[0:]...)
@@ -327,7 +388,7 @@ func (T *FolderPermissionFixer) FindManager(folder string) (kw_user string, kw_f
 		if result, err := sess.Folder(0).Find(folder); err != nil {
 			if err != ErrNotFound  {
 				Err("%s: (%s): %v", folder, u, err)
-			}
+			} 
 			continue
 		} else {
 			if result.ID != folder_id && folder_id != 0 {
@@ -346,7 +407,13 @@ func (T *FolderPermissionFixer) FindManager(folder string) (kw_user string, kw_f
 		}
 	}
 	if len(managers) > 0 {
+		if T.create {
+			T.CreatePaths(managers[0], folder)
+		}
 		return managers[0], &kw_f, nil
+	}
+	if T.create {
+		return T.CreatePaths(NONE, folder)
 	}
 	return NONE, nil, fmt.Errorf("No viable managers were found in kiteworks for folder!")
 }
