@@ -11,7 +11,7 @@ type ListTask struct {
 		folder string
 		human_readable bool
 	}
-	ppt        Passport
+	KiteBrokerTask
 }
 
 // Task objects need to be able create a new copy of themself.
@@ -20,15 +20,15 @@ func (T *ListTask) New() Task {
 }
 
 // Task init function, should parse flag, do pre-checks.
-func (T *ListTask) Init(flag *FlagSet) (err error) {
-	flag.BoolVar(&T.input.human_readable, "human_readable", false, "Present sizes in human-readable format.")
-	flag.Alias("human_readable", "h")
-	err = flag.Parse()
+func (T *ListTask) Init() (err error) {
+	T.Flags.BoolVar(&T.input.human_readable, "human_readable", false, "Present sizes in human-readable format.")
+	T.Flags.Alias("human_readable", "h")
+	err = T.Flags.Parse()
 	if err != nil {
 		return err
 	}
-	if len(flag.Args()) > 0 {
-		T.input.folder = flag.Args()[0]
+	if len(T.Flags.Args()) > 0 {
+		T.input.folder = T.Flags.Args()[0]
 	}
 
 
@@ -62,19 +62,18 @@ func (T ListTask) displayResult(object...KiteObject) {
 }
 
 // Main function, Passport hands off KWAPI Session, a Database and a TaskReport object.
-func (T *ListTask) Main(passport Passport) (err error) {
-	T.ppt = passport
+func (T *ListTask) Main() (err error) {
 	Info("\n")
 	if IsBlank(T.input.folder) {
 		Info("-- 'kiteworks Files' --")
-		folders, err := T.ppt.TopFolders()
+		folders, err := T.KW.TopFolders()
 		if err != nil {
 			return err
 		}
 		T.displayResult(folders[0:]...)
 	} else {
 		Info("-- '%s' --", T.input.folder)
-		f, err := T.ppt.Folder(0).Find(T.input.folder)
+		f, err := T.KW.Folder(0).Find(T.input.folder)
 		if err != nil {
 			return err
 		}
@@ -82,7 +81,7 @@ func (T *ListTask) Main(passport Passport) (err error) {
 			T.displayResult(f)
 			return nil
 		}
-		childs, err := T.ppt.Folder(f.ID).Contents()
+		childs, err := T.KW.Folder(f.ID).Contents()
 		if err != nil {
 			return err
 		}

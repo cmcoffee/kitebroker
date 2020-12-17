@@ -25,27 +25,27 @@ type FolderFileExpiryTask struct {
 	limiter      LimitGroup
 	user_count   Tally
 	folder_count Tally
-	ppt          Passport
+	KiteBrokerTask
 }
 
 func (T *FolderFileExpiryTask) New() Task {
 	return new(FolderFileExpiryTask)
 }
 
-func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
-	all_users := flag.Bool("all_users", false, "Apply folder and file limits to everyone in all profiles.")
-	flag.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", false, "Exclude adding expirations to files in My Folder.")
-	flag.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
-	flag.SplitVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
-	flag.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
-	flag.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
-	flag.ArrayVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
-	flag.BoolVar(&T.input.resume, "resume", false, "Resume previous update of folder/file expiration.")
-	flag.BoolVar(&T.input.recover_deleted, "undelete_all", false, "Undelete all deleted folders and files.")
-	flag.BoolVar(&T.input.dont_extend, "dont_extend", false, "Don't extend expiration of individual files.")
-	flag.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", false, "Don't modify folder properties.")
-	flag.Order("folder_days", "file_days")
-	if err := flag.Parse(); err != nil {
+func (T *FolderFileExpiryTask) Init() (err error) {
+	all_users := T.Flags.Bool("all_users", false, "Apply folder and file limits to everyone in all profiles.")
+	T.Flags.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", false, "Exclude adding expirations to files in My Folder.")
+	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
+	T.Flags.SplitVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	T.Flags.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
+	T.Flags.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
+	T.Flags.ArrayVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
+	T.Flags.BoolVar(&T.input.resume, "resume", false, "Resume previous update of folder/file expiration.")
+	T.Flags.BoolVar(&T.input.recover_deleted, "undelete_all", false, "Undelete all deleted folders and files.")
+	T.Flags.BoolVar(&T.input.dont_extend, "dont_extend", false, "Don't extend expiration of individual files.")
+	T.Flags.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", false, "Don't modify folder properties.")
+	T.Flags.Order("folder_days", "file_days")
+	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
 
@@ -71,17 +71,15 @@ func (T *FolderFileExpiryTask) Init(flag *FlagSet) (err error) {
 	return
 }
 
-func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
-	T.ppt = ppt
-
+func (T *FolderFileExpiryTask) Main() (err error) {
 	type Folder struct {
 		ID              int            `json:"ID"`
 		CurrentUserRole KitePermission `json:"currentUserRole"`
 	}
 
-	T.user_count = T.ppt.Tally("Analyzed Users")
-	T.folder_count = T.ppt.Tally("Folders Updated")
-	T.users = T.ppt.Table("users")
+	T.user_count = T.Report.Tally("Analyzed Users")
+	T.folder_count = T.Report.Tally("Folders Updated")
+	T.users = T.DB.Table("users")
 	T.profiles = OpenCache().Table("profiles")
 
 	T.limiter = NewLimitGroup(50)
@@ -89,14 +87,14 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
 
 	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
-		user_emails, err := T.ppt.Admin().FindProfileUsers(T.input.profile_id, params)
+		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
 		if err != nil {
 			return err
 		}
 		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
 	}
 
-	user_count, err := T.ppt.Admin().UserCount(T.input.user_emails, params)
+	user_count, err := T.KW.Admin().UserCount(T.input.user_emails, params)
 	if err != nil {
 		return err
 	}
@@ -108,7 +106,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
 
-	user_getter := T.ppt.Admin().Users(T.input.user_emails, params)
+	user_getter := T.KW.Admin().Users(T.input.user_emails, params)
 
 	for {
 		users, err := user_getter.Next()
@@ -130,7 +128,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 			}
 			Log("Updating folders for %s ..", user.Email)
 			var folders []*KiteObject
-			sess := T.ppt.Session(user.Email)
+			sess := T.KW.Session(user.Email)
 			if len(T.input.folders) == 0 {
 				if err := sess.DataCall(APIRequest{
 					Method: "GET",
@@ -170,7 +168,7 @@ func (T *FolderFileExpiryTask) Main(ppt Passport) (err error) {
 	}
 	// If we didn't have any errors, we don't need to resume.
 	if ErrCount() == 0 {
-		ppt.Drop("users")
+		T.DB.Drop("users")
 	}
 	return nil
 }
@@ -188,7 +186,7 @@ func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expi
 		return profile.Features.FolderTime, profile.Features.FileTime, nil
 	}
 
-	err = T.ppt.Session(user.Email).Call(APIRequest{
+	err = T.KW.Session(user.Email).Call(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/profiles/%d", user.UserTypeID),
 		Output: &profile,

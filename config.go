@@ -96,9 +96,6 @@ func init_kw_api() {
 		return
 	}
 
-	// Initilize database
-	init_database()
-
 	if !global.cfg.Exists("do_not_modify") {
 		Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
 	}
@@ -309,7 +306,7 @@ func config_api(configure_api bool) {
 
 	var bad_test bool
 
-	setup := options.NewOptions("--- kiteworks API coniguration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := options.NewOptions("--- kiteworks API configuration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
@@ -370,7 +367,7 @@ func config_api(configure_api bool) {
 		set_api_configs(client_app_id, client_app_secret)
 		Critical(global.cfg.Save())
 		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
-			global.db.Set("kitebroker", "signature", &signature)
+			global.db.CryptSet("kitebroker", "signature", &signature)
 		}
 		dbConfig.set_user(account)
 		dbConfig.set_connect_timeout_secs(*connect_timeout_secs)
@@ -400,7 +397,7 @@ func config_api(configure_api bool) {
 
 	// Loads API Configuration
 	load_api := func() bool {
-		if IsBlank(*server) || IsBlank(redirect_uri) || IsBlank(client_app_id) || IsBlank(client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
+		if IsBlank(*server, redirect_uri, client_app_id, client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
 			return false
 		}
 		kw := &KWAPI{new(APIClient)}

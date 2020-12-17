@@ -1,8 +1,8 @@
 module github.com/cmcoffee/kitebroker
 
-go 1.14
+go 1.15
 
 require (
-	github.com/cmcoffee/go-snuglib v1.0.6
-	github.com/cmcoffee/kitebroker/core v0.0.0-20201101222430-294666d1bdc4
+	github.com/cmcoffee/go-snuglib v1.0.7
+	github.com/cmcoffee/kitebroker/core v0.0.0-20201110080300-38b9da83ea7f
 )

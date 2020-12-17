@@ -6,21 +6,13 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
 )
-
-// Creates passport to send to task module.
-func NewPassport(task_name string, source string, flags *FlagSet, user KWSession, db SubStore) Passport {
-	return Passport{
-		NewTaskReport(task_name, source, flags),
-		user,
-		db,
-	}
-}
 
 var command menu
 
@@ -31,6 +23,23 @@ type menu struct {
 	entries     map[string]*menu_elem
 	tasks       []string
 	admin_tasks []string
+}
+
+func (m *menu) CopyTask(input Task) Task {
+
+	//new(KiteBrokerTask)
+
+	var t KiteBrokerTask
+
+	r := reflect.New(reflect.TypeOf(input).Elem())
+	rfv := r.Elem()
+	for i := 0; i < rfv.NumField(); i++ {
+		if reflect.TypeOf(t) == rfv.Field(i).Type() {
+			rfv.Field(i).Set(reflect.ValueOf(t))
+		}
+	}
+
+	return r.Interface().(Task)
 }
 
 // Write out menu item.
@@ -134,6 +143,14 @@ func (m *menu) Show() {
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any task, type %s <command> --help.\n", os.Args[0])))
 }
 
+func get_taskstore(name string, is_admin bool) SubStore {
+	if is_admin {
+		return global.db.Shared(name)
+	} else {
+		return global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name))
+	}
+}
+
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
 		return eflag.ErrHelp
@@ -157,7 +174,11 @@ func (m *menu) Select(input [][]string) (err error) {
 			if len(x.flags.FlagArgs) == 0 {
 				show_help = true
 			}
-			if err := x.task.Init(x.flags); err != nil {
+
+			x.task.KiteBrokerTask_init_db(get_taskstore(strings.Split(x.name, ":")[0], x.admin))
+			x.task.KiteBrokerTask_init_flags(*x.flags)
+
+			if err := x.task.Init(); err != nil {
 				if show_help {
 					x.flags.Usage()
 					Exit(0)
@@ -181,6 +202,9 @@ func (m *menu) Select(input [][]string) (err error) {
 		}
 		return nil
 	}
+
+	// Initilize database
+	init_database()
 
 	// Initialize all tasks from task files and cli arguments.
 	for n, args := range input {
@@ -246,20 +270,13 @@ func (m *menu) Select(input [][]string) (err error) {
 						Info("<-- task '%s' (%s) started. -->", name, source)
 					}
 
-					var db SubStore
-
-					if x.admin {
-						db = global.db.Shared(name)
-					} else {
-						db = global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name))
-					}
-
-					passport := NewPassport(name, source, x.flags, global.user, db)
+					x.task.KiteBrokerTask_init_session(global.user)
+					x.task.KiteBrokerTask_init_report(name, source)
 					report := Defer(func() error {
-						passport.Summary(ErrCount() - pre_errors)
+						x.task.KiteBrokerTask_report_summary(ErrCount() - pre_errors)
 						return nil
 					})
-					if err := x.task.Main(passport); err != nil {
+					if err := x.task.Main(); err != nil {
 						Err(err)
 					}
 					DefaultPleaseWait()

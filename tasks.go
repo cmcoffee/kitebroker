@@ -19,8 +19,7 @@ func init() {
 
 	// Register Signature Only Tasks:
 	command.RegisterAdmin("folder_file_expiry", "Modifies the folder and file expiry.", new(admin.FolderFileExpiryTask))
-	command.RegisterAdmin("user_reprofiler", "Change user profile based on last activity date.", new(admin.UserProfilerTask))
+	command.RegisterAdmin("user_reprofiler", "Change user profiles.", new(admin.UserProfilerTask))
 	command.RegisterAdmin("mail_cleanup", "Expire email drafts and attachments older than specified date.", new(admin.EmailDraftExpiryTask))
-	command.RegisterAdmin("ftabroker", "Assists with the migration of FTA workspaces.", new(FTA.Broker))
-	command.RegisterAdmin("fta_perm_helper", "Repair permissions on kiteworks folders based on FTA CSV export.", new(FTA.FolderPermissionFixer))
+	command.RegisterAdmin("ftabroker", "Transfer files/repair permissions on kiteworks folders based on FTA CSV export.", new(FTA.Broker))
 }

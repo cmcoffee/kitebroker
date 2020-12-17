@@ -11,14 +11,14 @@ func (T Broker) TestKWUser(email string) bool {
 	if found := T.cache.Get("kw_user_test", strings.ToLower(email), nil); found {
 		return true
 	} else {
-		err := T.ppt.Session(email).Call(APIRequest{
+		err := T.KW.Session(email).Call(APIRequest{
 			Method: "GET",
 			Path:   "/rest/users/me",
 		})
 		if err != nil {
 			T.cache.Unset("kw_users", email)
-			T.ppt.Unset("temp_kw_users", email)
-			T.ppt.Unset("perm_kw_users", email)
+			T.DB.Unset("temp_kw_users", email)
+			T.DB.Unset("perm_kw_users", email)
 			return false
 		}
 		T.cache.Set("kw_user_test", strings.ToLower(email), 1)
@@ -32,8 +32,8 @@ func (T Broker) KWUser(email string, permanent, notify bool) (kw_user *KiteUser,
 	// First check if we have this user already in our database.
 	if found := T.cache.Get("kw_users", email, &kw_user); found && kw_user != nil {
 		if permanent {
-			T.ppt.Unset("temp_kw_users", kw_user.Email)
-			T.ppt.Set("perm_kw_users", kw_user.Email, kw_user.ID)
+			T.DB.Unset("temp_kw_users", kw_user.Email)
+			T.DB.Set("perm_kw_users", kw_user.Email, kw_user.ID)
 		}
 		if kw_user.Verified == false {
 			if err := T.activate_kw_user(kw_user); err != nil {
@@ -59,12 +59,12 @@ func (T Broker) KWUser(email string, permanent, notify bool) (kw_user *KiteUser,
 			}
 			// We found the user, if non-permanent add to temp_kw_users.
 			if !permanent && !kw_user.Verified {
-				if found := T.ppt.Get("perm_kw_users", kw_user.Email, nil); !found {
-					T.ppt.Set("temp_kw_users", kw_user.Email, kw_user.ID)
+				if found := T.DB.Get("perm_kw_users", kw_user.Email, nil); !found {
+					T.DB.Set("temp_kw_users", kw_user.Email, kw_user.ID)
 				}
 			} else if permanent { // If permanent flag is set, remove from temp_kw_users which is used for cleanup after.
-				T.ppt.Set("perm_kw_users", kw_user.Email, kw_user.ID)
-				T.ppt.Unset("temp_kw_users", kw_user.Email)
+				T.DB.Set("perm_kw_users", kw_user.Email, kw_user.ID)
+				T.DB.Unset("temp_kw_users", kw_user.Email)
 			}
 			kw_user.Verified = true
 			kw_user.Active = true
@@ -79,7 +79,7 @@ func (T Broker) KWUser(email string, permanent, notify bool) (kw_user *KiteUser,
 	}
 
 	// We have not found the user, it's time to create a user at this point.
-	if err := T.ppt.Call(APIRequest{
+	if err := T.KW.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/users",
 		Params: SetParams(PostJSON{"email": email, "verified": true, "sendNotification": notify, "active": true}, Query{"returnEntity": true}),
@@ -88,15 +88,15 @@ func (T Broker) KWUser(email string, permanent, notify bool) (kw_user *KiteUser,
 		return nil, fmt.Errorf("Error initializing user %s: %s", email, err.Error())
 	}
 
-	_, err = T.ppt.Session(kw_user.Email).MyUser()
+	_, err = T.KW.Session(kw_user.Email).MyUser()
 	if err != nil {
 		return nil, err
 	}
 
 	if permanent {
-		T.ppt.Set("perm_kw_users", kw_user.Email, kw_user.ID)
+		T.DB.Set("perm_kw_users", kw_user.Email, kw_user.ID)
 	} else {
-		T.ppt.Set("temp_kw_users", kw_user.Email, kw_user.ID)
+		T.DB.Set("temp_kw_users", kw_user.Email, kw_user.ID)
 	}
 
 	T.cache.Set("kw_users", kw_user.Email, &kw_user)
@@ -122,7 +122,7 @@ func (T Broker) find_kw_user(user_email string) (kw_user *KiteUser, err error) {
 		Output: &users,
 	}
 
-	if err := T.ppt.Call(req); err != nil {
+	if err := T.KW.Call(req); err != nil {
 		return nil, err
 	}
 
@@ -138,10 +138,10 @@ func (T Broker) find_kw_user(user_email string) (kw_user *KiteUser, err error) {
 // Clean Temp KW Users
 func (T Broker) RemoveTempUsers() {
 	var user_id int
-	keys := T.ppt.Keys("temp_kw_users")
+	keys := T.DB.Keys("temp_kw_users")
 	for _, login := range keys {
-		T.ppt.Get("temp_kw_users", login, &user_id)
-		err := T.ppt.Call(APIRequest{
+		T.DB.Get("temp_kw_users", login, &user_id)
+		err := T.KW.Call(APIRequest{
 			Method: "DELETE",
 			Path:   SetPath("/rest/admin/users/%d", user_id),
 			Params: SetParams(Query{"retainData": false, "retainPermissionToSharedData": false, "deleteUnsharedData": true}),
@@ -149,7 +149,7 @@ func (T Broker) RemoveTempUsers() {
 		if err != nil {
 			Err("Failure cleaning up temporary kiteworks user %s: %s", login, err.Error())
 		} else {
-			T.ppt.Unset("temp_kw_users", login)
+			T.DB.Unset("temp_kw_users", login)
 		}
 	}
 }
@@ -162,7 +162,7 @@ func (T Broker) activate_kw_user(kw_user *KiteUser) (err error) {
 			Path:   SetPath("/rest/admin/users/%d", kw_user.ID),
 			Params: SetParams(PostJSON{"suspended": false, "verified": true}),
 		}
-		return T.ppt.Call(req)
+		return T.KW.Call(req)
 	}
 
 	return nil

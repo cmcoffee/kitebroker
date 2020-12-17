@@ -1,8 +1,6 @@
 package core
 
 import (
-	"archive/zip"
-	"compress/flate"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,7 +10,6 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/xsync"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,16 +20,38 @@ import (
 // Menu item flags
 type FlagSet struct {
 	FlagArgs []string
+	SubStore
 	*eflag.EFlagSet
 }
 
-// Allows overriding of the Filename.
-func (F FileInfo) Name() string {
-	if F.string != NONE {
-		return F.string
-	} else {
-		return F.FileInfo.Name()
+type KiteBrokerTask struct {
+	Flags  FlagSet
+	DB     SubStore
+	Report *TaskReport
+	KW     KWSession
+}
+
+func (T *KiteBrokerTask) KiteBrokerTask_init_flags(Flags FlagSet) {
+	T.Flags = Flags
+}
+
+func (T *KiteBrokerTask) KiteBrokerTask_init_db(DB SubStore) {
+	T.DB = DB
+}
+
+func (T *KiteBrokerTask) KiteBrokerTask_init_report(task_name string, source string) {
+	T.Report = NewTaskReport(task_name, source, &T.Flags)
+}
+
+func (T *KiteBrokerTask) KiteBrokerTask_init_session(user KWSession) {
+	T.KW = user
+}
+
+func (T *KiteBrokerTask) KiteBrokerTask_report_summary(errors uint32) {
+	if T.Report == nil {
+		return
 	}
+	T.Report.Summary(errors)
 }
 
 // Parse flags assocaited with task.
@@ -43,18 +62,16 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
-// Passport is the handoff to the task including a task report, a session and a database.
-type Passport struct {
-	*TaskReport
-	KWSession
-	SubStore
-}
-
 // Task Interface
 type Task interface {
-	Init(*FlagSet) error
-	Main(Passport) error
+	Init() error
+	Main() error
 	New() Task
+	KiteBrokerTask_init_flags(Flags FlagSet)
+	KiteBrokerTask_init_db(DB SubStore)
+	KiteBrokerTask_init_report(task_name string, source string)
+	KiteBrokerTask_init_session(user KWSession)
+	KiteBrokerTask_report_summary(error uint32)
 }
 
 const (
@@ -154,53 +171,9 @@ func SplitPath(path string) (folder_path []string) {
 	return
 }
 
-type FileInfo struct {
-	string
-	os.FileInfo
-}
-
 // Returns please wait prompt back to default setting.
 func DefaultPleaseWait() {
 	PleaseWait.Set(func() string { return "Please wait ..." }, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
-}
-
-// Scans parent_folder for all subfolders and files.
-func ScanPath(parent_folder string) (folders []string, files []FileInfo) {
-	parent_folder, _ = filepath.Abs(parent_folder)
-	folders = []string{parent_folder}
-
-	var n int
-	nextFolder := func() (output string) {
-		if n < len(folders) {
-			output = folders[n]
-			n++
-			return
-		}
-		return NONE
-	}
-
-	files = make([]FileInfo, 0)
-
-	for {
-		folder := nextFolder()
-		if folder == NONE {
-			break
-		}
-		data, err := ioutil.ReadDir(folder)
-		if err != nil && !os.IsNotExist(err) {
-			Err(err)
-			continue
-		}
-		for _, finfo := range data {
-			if finfo.IsDir() {
-				folders = append(folders, fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()))
-			} else {
-				files = append(files, FileInfo{fmt.Sprintf("%s%s%s", folder, SLASH, finfo.Name()), finfo})
-			}
-		}
-	}
-
-	return folders, files
 }
 
 // MD5Sum function for checking files against appliance.
@@ -246,52 +219,6 @@ func MD5Sum(filename string) (sum string, err error) {
 	hex.Encode(s, md5sum)
 
 	return string(s), nil
-}
-
-// Compresses Folder to File
-func CompressFolder(input_folder, dest_file string) (err error) {
-	input_folder, err = filepath.Abs(input_folder)
-	if err != nil {
-		return err
-	}
-	_, files := ScanPath(input_folder)
-
-	f, err := os.OpenFile(dest_file, os.O_CREATE|os.O_RDWR, 0755)
-	if err != nil {
-		return err
-	}
-
-	w := zip.NewWriter(f)
-	w.RegisterCompressor(zip.Deflate, func(out io.Writer) (io.WriteCloser, error) {
-		return flate.NewWriter(out, flate.NoCompression)
-	})
-
-	buf := make([]byte, 4096)
-
-	for _, file := range files {
-		Log("Flattening %s -> %s ...", file.string, dest_file)
-
-		z, err := w.Create(file.string)
-		if err != nil {
-			return err
-		}
-
-		r, err := os.Open(file.string)
-		if err != nil {
-			return err
-		}
-
-		tm := transferMonitor(fmt.Sprintf("%s", file.Name()), file.Size(), noRate, r)
-		_, err = io.CopyBuffer(z, tm, buf)
-		tm.Close()
-
-		if err != nil {
-			nfo.Err(err)
-			continue
-		}
-	}
-	w.Close()
-	return
 }
 
 // Generates a random byte slice of length specified.
@@ -405,8 +332,13 @@ func Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
-func IsBlank(input string) bool {
-	return len(input) == 0
+func IsBlank(input ...string) bool {
+	for _, v := range input {
+		if len(v) == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func Dequote(input *string) {

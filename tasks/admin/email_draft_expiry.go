@@ -15,22 +15,22 @@ type EmailDraftExpiryTask struct {
 	size         Tally
 	expire       time.Time
 	dry_run      bool
-	ppt          Passport
 	users        Table
 	user_counter Tally
+	KiteBrokerTask
 }
 
 func (T *EmailDraftExpiryTask) New() Task {
 	return new(EmailDraftExpiryTask)
 }
 
-func (T *EmailDraftExpiryTask) Init(flag *FlagSet) (err error) {
-	flag.BoolVar(&T.resume, "resume", false, "Resume previous cleanup.")
-	expiry := flag.String("expiry", "<YYYY-MM-DD>", "Expire drafts and their files older than specified date.")
-	flag.BoolVar(&T.dry_run, "dry-run", false, "Don't delete just display what would be deleted.")
-	flag.SplitVar(&T.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
-	flag.Order("expiry", "users", "dry-run", "resume")
-	if err := flag.Parse(); err != nil {
+func (T *EmailDraftExpiryTask) Init() (err error) {
+	T.Flags.BoolVar(&T.resume, "resume", false, "Resume previous cleanup.")
+	expiry := T.Flags.String("expiry", "<YYYY-MM-DD>", "Expire drafts and their files older than specified date.")
+	T.Flags.BoolVar(&T.dry_run, "dry-run", false, "Don't delete just display what would be deleted.")
+	T.Flags.SplitVar(&T.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	T.Flags.Order("expiry", "users", "dry-run", "resume")
+	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
 
@@ -45,9 +45,7 @@ func (T *EmailDraftExpiryTask) Init(flag *FlagSet) (err error) {
 	return
 }
 
-func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
-	T.ppt = passport
-
+func (T *EmailDraftExpiryTask) Main() (err error) {
 	T.limiter = NewLimitGroup(5)
 
 	report_bool := func(input int64) string {
@@ -58,19 +56,19 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 		}
 	}
 
-	T.users = T.ppt.Table("users")
-	T.user_counter = T.ppt.Tally("Users")
-	T.drafts = T.ppt.Tally("Drafts")
-	T.attachments = T.ppt.Tally("Attachments")
-	T.size = T.ppt.Tally("Attachment Size", HumanSize)
-	report := T.ppt.Tally("Dry-Run", report_bool)
+	T.users = T.DB.Table("users")
+	T.user_counter = T.Report.Tally("Users")
+	T.drafts = T.Report.Tally("Drafts")
+	T.attachments = T.Report.Tally("Attachments")
+	T.size = T.Report.Tally("Attachment Size", HumanSize)
+	report := T.Report.Tally("Dry-Run", report_bool)
 	if T.dry_run {
 		report.Add(1)
 	}
 
 	params := Query{"active": true, "verified": true}
 
-	user_count, err := T.ppt.Admin().UserCount(T.user_emails, params)
+	user_count, err := T.KW.Admin().UserCount(T.user_emails, params)
 	if err != nil {
 		return err
 	}
@@ -78,7 +76,7 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 	ProgressBar.New("users", user_count)
 	defer ProgressBar.Done()
 
-	user_getter := T.ppt.Admin().Users(T.user_emails, params)
+	user_getter := T.KW.Admin().Users(T.user_emails, params)
 
 	for {
 		users, err := user_getter.Next()
@@ -112,14 +110,14 @@ func (T *EmailDraftExpiryTask) Main(passport Passport) (err error) {
 	T.limiter.Wait()
 
 	if ErrCount() == 0 {
-		passport.Drop("users")
+		T.DB.Drop("users")
 	}
 
 	return
 }
 
 func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
-	sess := T.ppt.Session(user)
+	sess := T.KW.Session(user)
 	type kite_mail struct {
 		ID     int `json:"ID"`
 		Sender struct {

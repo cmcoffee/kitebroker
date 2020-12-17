@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // base64 decoder
@@ -61,8 +62,16 @@ func (s FTASession) Workspace(workspace_id string) fta_rest_workspace {
 	}
 }
 
-func (s FTASession) Find(workspace string) (result FTAObject, err error) {
+func (T Broker) Find(s *FTASession, workspace string) (result FTAObject, err error) {
+
 	workspaces := SplitPath(workspace)
+	//var parent_ws, parent_id string
+
+	//if len(workspaces) > 1 {
+	//	parent_ws = strings.Join(workspaces[0:len(workspaces)-2], "/")
+	//}
+
+	//T.cache.Get("workspaces", parent_ws, &parent_id)
 
 	current, err := s.Workspace(NONE).Children()
 	if err != nil {
@@ -72,7 +81,14 @@ func (s FTASession) Find(workspace string) (result FTAObject, err error) {
 	for i, v := range workspaces {
 		found := false
 		for _, ws := range current {
-			if ws.Name == v {
+			//parent_ws = strings.Join(workspaces[0:i], "/")
+			//if parent_ws != NONE {
+			//	Log("%s:%s", fmt.Sprintf("%s/%s", parent_ws, ws.Name()), ws.ID)
+			//	T.cache.Set("workspaces", fmt.Sprintf("%s/%s", parent_ws, ws.Name()), ws.ID)
+			//} else {
+			//	T.cache.Set("workspaces", ws.Name(), ws.ID)
+			//}
+			if ws.Name() == v {
 				if i == len(workspaces)-1 {
 					ws.full_path = workspace
 					return ws, nil
@@ -125,7 +141,6 @@ func (f fta_rest_workspace) Children(params ...interface{}) (children []FTAObjec
 		}
 		for _, v := range WS.Result.ItemList.Files {
 			v.Type = "f"
-			v.Name = b64decode(v.Name)
 			v.Desc = b64decode(v.Desc)
 			v.FileHandle = b64decode(v.FileHandle)
 			v.Creator = b64decode(v.Owner)
@@ -188,16 +203,34 @@ type FTAUser struct {
 
 type FTAObject struct {
 	ID             string `json:"id"`
-	Name           string `json:"name`
+	RawName        string `json:"name"`
 	Desc           string `json:"description"`
 	FileHandle     string `json:"file_handle"`
 	ParentID       string `json:"parent_id"`
-	Size           string `json:"size"`
+	SizeStr        string `json:"size"`
 	Type           string `json:"result_type"`
 	Owner          string `json:"owner"`
 	Creator        string `json:"creator"`
-	LastUpdateTime string `json:"last_update_time"`
+	ModTimeStr     string `json:"last_update_time"`
 	full_path      string `json:"full_path,omit_empty"`
+}
+
+func (T FTAObject) Name() string {
+	if T.Type == "f" {
+		return b64decode(T.RawName)
+	}
+	return T.RawName
+}
+
+func (T FTAObject) Size() int64 {
+	i, _ := strconv.ParseInt(T.SizeStr, 10, 64)
+	return i
+}
+
+func (T FTAObject) ModTime() time.Time {
+	time_split := strings.Split(T.ModTimeStr, " ")
+	t, _ := time.Parse(time.RFC3339, fmt.Sprintf("%sZ", strings.Join(time_split,"T")))
+	return t
 }
 
 // Get all comments for workspace file.

@@ -5,22 +5,18 @@ import (
 	. "github.com/cmcoffee/kitebroker/core"
 	"strings"
 	"sync"
-	"time"
 )
 
 type UserProfilerTask struct {
-	cut_off_days   int
 	new_profile_id int
 	old_profile_id int
-	dli_email      string
-	dli_admin      *KWSession
 	user_emails    []string
 	filter         string
 	unverified     bool
 	deactivated    bool
 	user_changed   Tally
 	user_count     Tally
-	ppt            Passport
+	KiteBrokerTask
 }
 
 func (T *UserProfilerTask) New() Task {
@@ -28,22 +24,24 @@ func (T *UserProfilerTask) New() Task {
 }
 
 // Init function.
-func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
-	flag.StringVar(&T.dli_email, "dli_admin", "<dliadmin@domain.com>", "Admin used for activities lookup.")
-	flag.IntVar(&T.cut_off_days, "older_than", 90, "Number of days since last activity.")
-	flag.IntVar(&T.new_profile_id, "new_profile_id", 0, "Profile ID for users to be migrated to.")
-	flag.IntVar(&T.old_profile_id, "old_profile_id", 0, "Profile ID of users to match against.")
-	flag.SplitVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check, multiple entries seperated by comma.")
-	flag.BoolVar(&T.deactivated, "deactivated", false, "Filter out accounts that are deactivated.")
-	flag.BoolVar(&T.unverified, "unverified", false, "Filter out accounts that are unverfied.")
-	flag.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
-
-	if err = flag.Parse(); err != nil {
+func (T *UserProfilerTask) Init() (err error) {
+	T.Flags.IntVar(&T.new_profile_id, "new_profile_id", 0, "Profile ID for users to be migrated to.")
+	T.Flags.IntVar(&T.old_profile_id, "old_profile_id", 0, "Profile ID of users to match against.")
+	T.Flags.SplitVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check, multiple entries seperated by comma.")
+	T.Flags.BoolVar(&T.deactivated, "deactivated", false, "Apply only to users that are deactivated.")
+	T.Flags.BoolVar(&T.unverified, "unverified", false, "Apply only to users that are unverfied.")
+	T.Flags.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
+	T.Flags.Order("new_profile_id", "old_profile_id","deactivated","unverified","domain_filter","users")
+	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
 
-	if T.new_profile_id == 0 || T.old_profile_id == 0 {
-		return fmt.Errorf("--new_profile_id and --old_profile_id are required.")
+	if T.old_profile_id == 0 && !T.deactivated && !T.unverified && T.filter == NONE && len(T.user_emails) == 0 { 
+		return fmt.Errorf("You must provide some type of user filter: --deactivated, --unverified, --old_profile_id, --users or --domain_filter.")
+	}
+
+	if T.new_profile_id == 0 {
+		return fmt.Errorf("You must provide a new profile id to assign users to: --new_profile_id")
 	}
 
 	T.filter = strings.TrimPrefix(T.filter, "@")
@@ -53,27 +51,9 @@ func (T *UserProfilerTask) Init(flag *FlagSet) (err error) {
 }
 
 // Main function
-func (T *UserProfilerTask) Main(passport Passport) (err error) {
-	T.ppt = passport
-
-	T.user_count = T.ppt.Tally("Analyzed Users")
-	T.user_changed = T.ppt.Tally("Modified Users")
-
-	if T.dli_email == NONE {
-		T.dli_email = T.ppt.KWSession.Username
-		T.dli_admin = &T.ppt.KWSession
-	}
-
-	if T.dli_admin == nil {
-		dli_admin_session, err := T.ppt.Authenticate(T.dli_email)
-		if err != nil {
-			return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
-		}
-		T.dli_admin = dli_admin_session
-	}
-	day := time.Duration(time.Hour * 24)
-	date := time.Now().Add((day * time.Duration(T.cut_off_days)) * -1)
-	date = date.UTC()
+func (T *UserProfilerTask) Main() (err error) {
+	T.user_count = T.Report.Tally("Analyzed Users")
+	T.user_changed = T.Report.Tally("Modified Users")
 
 	params := SetParams(Query{"active": true, "deleted": false, "email:contains": T.filter})
 	if T.unverified {
@@ -83,7 +63,7 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 	var user_count int
 	var users []KiteUser
 
-	user_count, err = T.ppt.Admin().UserCount(T.user_emails, params)
+	user_count, err = T.KW.Admin().UserCount(T.user_emails, params)
 	if err != nil {
 		return err
 	}
@@ -95,9 +75,7 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 	var wg sync.WaitGroup
 	limiter := make(chan struct{}, 100)
 
-	var tested bool
-
-	user_getter := T.ppt.Admin().Users(T.user_emails, params, Query{"email:contains": T.filter})
+	user_getter := T.KW.Admin().Users(T.user_emails, params, Query{"email:contains": T.filter})
 
 	for {
 		users, err = user_getter.Next()
@@ -106,13 +84,6 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 		}
 		if len(users) == 0 {
 			break
-		}
-		if !tested {
-			test_date := DateString(time.Now().UTC())
-			if _, err := T.lastActivity(users[0].ID, Query{"startDate": test_date, "endDate": test_date}); err != nil {
-				return fmt.Errorf("DLI Admin Error - (%s): %s", T.dli_email, err.Error())
-			}
-			tested = true
 		}
 		for _, user := range users {
 			limiter <- struct{}{}
@@ -124,26 +95,15 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 				if T.deactivated && user.Deactivated == false {
 					return
 				}
-				if user.UserTypeID != T.old_profile_id {
+				if T.old_profile_id != 0 && user.UserTypeID != T.old_profile_id {
 					return
 				}
 				
-				last_active_time, err := T.lastActivity(user.ID, Query{"startDate": DateString(date.UTC()), "endDate": DateString(time.Now().Add(time.Duration(time.Hour * 24)).UTC())})
-				if err != nil {
-					Err(err)
-					return
-				}
-				if last_active_time.Unix() < date.Unix() {
-					if err := T.change_profile(user.ID); err != nil {
-						Err("%s: %s", user.Email, err.Error())
-					} else {
-						T.user_changed.Add(1)
-						Log("%s: profile updated to profile id %d.", user.Email, T.new_profile_id)
-					}
+				if err := T.change_profile(user.ID); err != nil {
+					Err("%s: %s", user.Email, err.Error())
 				} else {
-					if T.user_emails != nil && T.user_emails[0] != NONE {
-						Log("%s: Last active time is newer than cut-off date: %v", user.Email, last_active_time.In(time.Local))
-					}
+					T.user_changed.Add(1)
+					Log("%s: profile updated to profile id %d.", user.Email, T.new_profile_id)
 				}
 			}(user)
 		}
@@ -156,35 +116,10 @@ func (T *UserProfilerTask) Main(passport Passport) (err error) {
 
 // Changes the profile.
 func (T *UserProfilerTask) change_profile(user_id int) (err error) {
-	return T.ppt.Call(APIRequest{
+	return T.KW.Call(APIRequest{
 		Method: "PUT",
 		Path:   SetPath("/rest/admin/profiles/%d/users", T.new_profile_id),
 		Params: SetParams(Query{"id:in": user_id}),
 		Output: nil,
 	})
-}
-
-// Grab last activity.
-func (T *UserProfilerTask) lastActivity(user_id int, params ...interface{}) (last_activity time.Time, err error) {
-	var activities []struct {
-		Created string `json:"created"`
-	}
-	err = T.dli_admin.DataCall(APIRequest{
-		Method: "GET",
-		Path:   SetPath("/rest/dli/users/%d/activities", user_id),
-		Params: SetParams(params, Query{"orderBy": "created:desc"}),
-		Output: &activities,
-	}, 0, 1)
-	for _, k := range activities {
-		la, err := ReadKWTime(k.Created)
-		if err != nil {
-			Err(err)
-			err = nil
-			continue
-		}
-		if la.Unix() > last_activity.Unix() {
-			last_activity = la
-		}
-	}
-	return
 }

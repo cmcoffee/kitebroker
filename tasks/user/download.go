@@ -31,7 +31,7 @@ type FolderDownloadTask struct {
 	transfered       Tally
 	files_downloaded Tally
 	dwnld_chan       chan *download
-	ppt              Passport
+	KiteBrokerTask
 }
 
 type download struct {
@@ -44,14 +44,14 @@ func (T *FolderDownloadTask) New() Task {
 }
 
 // Init function.
-func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
-	flag.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
-	flag.ArrayVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
-	flag.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
-	flag.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
-	flag.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
-	flag.Order("src", "dst", "redownload", "move")
-	if err = flag.Parse(); err != nil {
+func (T *FolderDownloadTask) Init() (err error) {
+	T.Flags.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
+	T.Flags.ArrayVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
+	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
+	T.Flags.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
+	T.Flags.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
+	T.Flags.Order("src", "dst", "redownload", "move")
+	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
 
@@ -63,14 +63,12 @@ func (T *FolderDownloadTask) Init(flag *FlagSet) (err error) {
 }
 
 // Main function
-func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
-	T.ppt = ppt
-
+func (T *FolderDownloadTask) Main() (err error) {
 	T.crawl_limiter = NewLimitGroup(50)
 	T.dwnld_limiter = NewLimitGroup(50)
 
-	T.db.downloads = T.ppt.Table("downloads")
-	T.db.files = T.ppt.Shared(fmt.Sprintf("sync:%s:%s", ppt.Username, T.input.dst)).Table("downloads")
+	T.db.downloads = T.DB.Table("downloads")
+	T.db.files = T.DB.Shared(fmt.Sprintf("sync:%s:%s", T.KW.Username, T.input.dst)).Table("downloads")
 	T.db.files.Drop()
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
@@ -78,10 +76,10 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 		return err
 	}
 
-	T.folder_count = T.ppt.Tally("Folders Analyzed")
-	T.file_count = T.ppt.Tally("Files Analyzed")
-	T.files_downloaded = T.ppt.Tally("Files Downloaded")
-	T.transfered = T.ppt.Tally("Transfered", HumanSize)
+	T.folder_count = T.Report.Tally("Folders Analyzed")
+	T.file_count = T.Report.Tally("Files Analyzed")
+	T.files_downloaded = T.Report.Tally("Files Downloaded")
+	T.transfered = T.Report.Tally("Transfered", HumanSize)
 
 	message := func() string {
 		return fmt.Sprintf("Please wait ... [files: %d/folders: %d]", T.file_count.Value(), T.folder_count.Value())
@@ -92,7 +90,7 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	var folders []KiteObject
 
 	for _, f := range T.input.src {
-		folder, err := T.ppt.Folder(0).Find(f)
+		folder, err := T.KW.Folder(0).Find(f)
 		if err != nil {
 			Err("%s: %v", f, err)
 			continue
@@ -101,7 +99,7 @@ func (T *FolderDownloadTask) Main(ppt Passport) (err error) {
 	}
 
 	if T.input.src == nil {
-		folders, err = T.ppt.TopFolders()
+		folders, err = T.KW.TopFolders()
 		if err != nil {
 			return err
 		}
@@ -200,7 +198,7 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 				continue
 			}
 			if obj.Secure {
-				folder, err := T.ppt.Folder(obj.ID).Info()
+				folder, err := T.KW.Folder(obj.ID).Info()
 				if err != nil {
 					Err("%s: %v", obj.Name, err)
 					n++
@@ -219,7 +217,7 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 				n++
 				continue
 			}
-			objs, err := T.ppt.Folder(obj.ID).Contents()
+			objs, err := T.KW.Folder(obj.ID).Contents()
 			if err != nil {
 				Err(err)
 				n++
@@ -291,7 +289,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	mark_complete := func() (err error) {
 		clear_from_db(file.ID)
 		if T.input.move {
-			return T.ppt.File(file.ID).Delete()
+			return T.KW.File(file.ID).Delete()
 		}
 		flag.Set(complete)
 		T.db.downloads.Set(download_record_name, &flag)
@@ -308,7 +306,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		return mark_complete()
 	}
 
-	f, err := T.ppt.FileDownload(file)
+	f, err := T.KW.FileDownload(file)
 	if err != nil {
 		return err
 	}

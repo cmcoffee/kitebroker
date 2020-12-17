@@ -3,13 +3,18 @@ package core
 import (
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"time"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
+
+type FileInfo interface {
+	Name() string
+	Size() int64
+	ModTime() time.Time
+}
 
 type KiteMember struct {
 	ID     int            `json:"objectId"`
@@ -119,19 +124,15 @@ func (s kw_rest_folder) ResolvePath(path string) (result KiteObject, err error) 
 
 	var current KiteObject
 
-	for i, f := range folder_path {
+	for _, f := range folder_path {
 		current, err = s.Folder(current_id).Find(f)
 		if err != nil {
 			if err == ErrNotFound {
-				for _, v := range folder_path[i:] {
-					current, err = s.Folder(current_id).NewFolder(v)
-					if err != nil {
-						return
-					}
-					current_id = current.ID
+				current, err = s.Folder(current_id).NewFolder(f)
+				if err != nil {
+					return
 				}
-			} else {
-				return
+				current_id = current.ID
 			}
 		}
 		current_id = current.ID
@@ -252,7 +253,7 @@ func (s kw_rest_file) PermDelete() (err error) {
 }
 
 // Create a new file version for an existing file.
-func (S kw_rest_file) NewVersion(file os.FileInfo) (int, error) {
+func (S kw_rest_file) NewVersion(file FileInfo) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
@@ -292,7 +293,7 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 }
 
 // Creates a new upload for a folder.
-func (S kw_rest_folder) NewUpload(file os.FileInfo, filename ...string) (int, error) {
+func (S kw_rest_folder) NewUpload(file FileInfo, filename ...string) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
