@@ -20,10 +20,10 @@ import (
 // Menu item flags
 type FlagSet struct {
 	FlagArgs []string
-	SubStore
 	*eflag.EFlagSet
 }
 
+// Required for each task object.
 type KiteBrokerTask struct {
 	Flags  FlagSet
 	DB     SubStore
@@ -31,22 +31,27 @@ type KiteBrokerTask struct {
 	KW     KWSession
 }
 
-func (T *KiteBrokerTask) KiteBrokerTask_init_flags(Flags FlagSet) {
+// Sets the flags for the task.
+func (T *KiteBrokerTask) KiteBrokerTask_set_flags(Flags FlagSet) {
 	T.Flags = Flags
 }
 
-func (T *KiteBrokerTask) KiteBrokerTask_init_db(DB SubStore) {
+// Initializes the task's database
+func (T *KiteBrokerTask) KiteBrokerTask_set_db(DB SubStore) {
 	T.DB = DB
 }
 
-func (T *KiteBrokerTask) KiteBrokerTask_init_report(task_name string, source string) {
-	T.Report = NewTaskReport(task_name, source, &T.Flags)
+// Sets a report for the task.
+func (T *KiteBrokerTask) KiteBrokerTask_set_report(input *TaskReport) {
+	T.Report = input
 }
 
-func (T *KiteBrokerTask) KiteBrokerTask_init_session(user KWSession) {
+// Sets the kw api session for the task
+func (T *KiteBrokerTask) KiteBrokerTask_set_session(user KWSession) {
 	T.KW = user
 }
 
+// Provides summary of the task after completion.
 func (T *KiteBrokerTask) KiteBrokerTask_report_summary(errors uint32) {
 	if T.Report == nil {
 		return
@@ -64,14 +69,60 @@ func (f *FlagSet) Parse() (err error) {
 
 // Task Interface
 type Task interface {
+	New() Task
+	Name() string
+	Desc() string
 	Init() error
 	Main() error
-	New() Task
-	KiteBrokerTask_init_flags(Flags FlagSet)
-	KiteBrokerTask_init_db(DB SubStore)
-	KiteBrokerTask_init_report(task_name string, source string)
-	KiteBrokerTask_init_session(user KWSession)
+	KiteBrokerTask_set_flags(Flags FlagSet)
+	KiteBrokerTask_set_db(DB SubStore)
+	KiteBrokerTask_set_report(*TaskReport)
+	KiteBrokerTask_set_session(user KWSession)
 	KiteBrokerTask_report_summary(error uint32)
+}
+
+type TaskArgs map[string]interface{}
+
+// Allows a KitebrokerTask to launch another KiteBrokerTask.
+func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...map[string]interface{}) (err error) {
+	var arg_string []string
+	for _, arg := range args {
+		for k, v := range arg {
+			var dash string
+			if len(k) == 1 {
+				dash = "-"
+			} else {
+					dash = "--"
+			}
+			switch x := v.(type) {
+				case string:
+					if k == "args" {
+						arg_string = append(arg_string, x)
+					} else {
+						arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, x))
+					}
+				case []string:
+					for _, line := range x {
+						arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, line))
+					}
+				default:
+					arg_string = append(arg_string, fmt.Sprintf("%s%s=%v", dash, k, v))
+			}
+		}
+	}
+	input.KiteBrokerTask_set_db(db.(SubStore))
+	flags := FlagSet{EFlagSet: eflag.NewFlagSet("SubTask", eflag.ReturnErrorOnly)}
+	flags.FlagArgs = arg_string
+	input.KiteBrokerTask_set_flags(flags)
+	if err = input.Init(); err != nil {
+		return err
+	}
+	input.KiteBrokerTask_set_session(T)
+	input.KiteBrokerTask_set_report(report)
+	if err = input.Main(); err != nil {
+		return err
+	}
+	return nil
 }
 
 const (

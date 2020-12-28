@@ -28,18 +28,26 @@ type FolderFileExpiryTask struct {
 	KiteBrokerTask
 }
 
-func (T *FolderFileExpiryTask) New() Task {
+func (T FolderFileExpiryTask) New() Task {
 	return new(FolderFileExpiryTask)
+}
+
+func (T FolderFileExpiryTask) Name() string {
+	return "folder_file_expiry"
+}
+
+func (T FolderFileExpiryTask) Desc() string {
+	return "Modifies the folder and file expiry."
 }
 
 func (T *FolderFileExpiryTask) Init() (err error) {
 	all_users := T.Flags.Bool("all_users", false, "Apply folder and file limits to everyone in all profiles.")
 	T.Flags.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", false, "Exclude adding expirations to files in My Folder.")
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
-	T.Flags.SplitVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	T.Flags.MultiVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify.")
 	T.Flags.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
 	T.Flags.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
-	T.Flags.ArrayVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
+	T.Flags.MultiVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
 	T.Flags.BoolVar(&T.input.resume, "resume", false, "Resume previous update of folder/file expiration.")
 	T.Flags.BoolVar(&T.input.recover_deleted, "undelete_all", false, "Undelete all deleted folders and files.")
 	T.Flags.BoolVar(&T.input.dont_extend, "dont_extend", false, "Don't extend expiration of individual files.")

@@ -20,15 +20,23 @@ type EmailDraftExpiryTask struct {
 	KiteBrokerTask
 }
 
-func (T *EmailDraftExpiryTask) New() Task {
+func (T EmailDraftExpiryTask) New() Task {
 	return new(EmailDraftExpiryTask)
+}
+
+func (T EmailDraftExpiryTask) Name() string {
+	return "email_draft_expiry"
+}
+
+func (T EmailDraftExpiryTask) Desc() string {
+	return "Expire email drafts and attachments older than specified date."
 }
 
 func (T *EmailDraftExpiryTask) Init() (err error) {
 	T.Flags.BoolVar(&T.resume, "resume", false, "Resume previous cleanup.")
 	expiry := T.Flags.String("expiry", "<YYYY-MM-DD>", "Expire drafts and their files older than specified date.")
 	T.Flags.BoolVar(&T.dry_run, "dry-run", false, "Don't delete just display what would be deleted.")
-	T.Flags.SplitVar(&T.user_emails, "users", "user@domain.com", "Users to specify, specify multiple users with comma.")
+	T.Flags.MultiVar(&T.user_emails, "users", "user@domain.com", "Users to specify.")
 	T.Flags.Order("expiry", "users", "dry-run", "resume")
 	if err := T.Flags.Parse(); err != nil {
 		return err

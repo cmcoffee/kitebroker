@@ -20,18 +20,26 @@ type SendFileTask struct {
 	KiteBrokerTask
 }
 
-func (T *SendFileTask) New() Task {
+func (T SendFileTask) New() Task {
 	return new(SendFileTask)
+}
+
+func (T SendFileTask) Name() string {
+	return "send_file"
+}
+
+func (T SendFileTask) Desc() string {
+	return "Send files/folders in kiteworks."
 }
 
 // Task init function, should parse flag, do pre-checks.
 func (T *SendFileTask) Init() (err error) {
-	T.Flags.SplitVar(&T.in.to, "to", "<email addresses>", "Recipient(s) to send file to.")
-	T.Flags.SplitVar(&T.in.cc, "cc", "<email addresses>", "Recipient(s) to carbon copy send file to.")
-	T.Flags.SplitVar(&T.in.bcc, "bcc", "<email addresses>", "Recipient(s) to blind carbon copy send file to.")
+	T.Flags.MultiVar(&T.in.to, "to", "<email addresses>", "Recipient(s) to send file to.")
+	T.Flags.MultiVar(&T.in.cc, "cc", "<email addresses>", "Recipient(s) to carbon copy send file to.")
+	T.Flags.MultiVar(&T.in.bcc, "bcc", "<email addresses>", "Recipient(s) to blind carbon copy send file to.")
 	T.Flags.StringVar(&T.in.subj, "subj", "<email subject>", "Subject of send file email.")
 	T.Flags.StringVar(&T.in.body, "body", "<message body>", "Body of send file email.")
-	T.Flags.ArrayVar(&T.in.src, "src", "<folder/file>", "Folder or file you wish to send.")
+	T.Flags.MultiVar(&T.in.src, "src", "<folder/file>", "Folder or file you wish to send.")
 	T.Flags.BoolVar(&T.in.empty, "allow_empty", false, "Allow email to be sent without files.")
 	T.Flags.Order("to","cc","bcc","subj","body")
 

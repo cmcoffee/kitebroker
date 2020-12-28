@@ -37,9 +37,17 @@ func (T *FolderUploadTask) New() Task {
 	return new(FolderUploadTask)
 }
 
+func (T FolderUploadTask) Name() string {
+	return "upload"
+}
+
+func (T FolderUploadTask) Desc() string {
+	return "Upload folders and/or files to kiteworks."
+}
+
 func (T *FolderUploadTask) Init() (err error) {
 	T.Flags.StringVar(&T.input.dst, "dst", "<remote folder>", "Specify kiteworks folder you wish to upload to.")
-	T.Flags.ArrayVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.")
+	T.Flags.MultiVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.")
 	T.Flags.BoolVar(&T.input.overwrite_newer, "overwrite_newer", false, "Overwrite newer files on server.")
 	T.Flags.BoolVar(&T.input.move, "move", false, "Remove source files upon succesful upload.")
 	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", false, "Do not upload file if file exists on server already.")

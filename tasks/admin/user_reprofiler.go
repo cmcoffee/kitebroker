@@ -23,11 +23,19 @@ func (T *UserProfilerTask) New() Task {
 	return new(UserProfilerTask)
 }
 
+func (T UserProfilerTask) Name() string {
+	return "user_reprofiler"
+}
+
+func (T UserProfilerTask) Desc() string {
+	return "Change user profiles."
+}
+
 // Init function.
 func (T *UserProfilerTask) Init() (err error) {
 	T.Flags.IntVar(&T.new_profile_id, "new_profile_id", 0, "Profile ID for users to be migrated to.")
 	T.Flags.IntVar(&T.old_profile_id, "old_profile_id", 0, "Profile ID of users to match against.")
-	T.Flags.SplitVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check, multiple entries seperated by comma.")
+	T.Flags.MultiVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check.")
 	T.Flags.BoolVar(&T.deactivated, "deactivated", false, "Apply only to users that are deactivated.")
 	T.Flags.BoolVar(&T.unverified, "unverified", false, "Apply only to users that are unverfied.")
 	T.Flags.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")

@@ -39,18 +39,26 @@ type download struct {
 	file *KiteObject
 }
 
-func (T *FolderDownloadTask) New() Task {
+func (T FolderDownloadTask) New() Task {
 	return new(FolderDownloadTask)
+}
+
+func (T FolderDownloadTask) Name() string {
+	return "download"
+}
+
+func (T FolderDownloadTask) Desc() string {
+	return "Download folders and/or files from kiteworks."
 }
 
 // Init function.
 func (T *FolderDownloadTask) Init() (err error) {
-	T.Flags.BoolVar(&T.input.owned_only, "owned_folders_only", false, NONE)
-	T.Flags.ArrayVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
+	T.Flags.BoolVar(&T.input.owned_only, "owner", false, "Download folders and files from owned folders only.")
+	T.Flags.MultiVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
 	T.Flags.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
 	T.Flags.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
-	T.Flags.Order("src", "dst", "redownload", "move")
+	T.Flags.Order("src", "dst", "redownload", "owner", "move")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}

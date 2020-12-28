@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "20.12.17"
+	VERSION = "20.12.28"
 )
 
 const (
@@ -35,6 +35,7 @@ var global struct {
 	snoop     bool
 	debug     bool
 	sysmode   bool
+	new_task_file bool
 }
 
 func init() {
@@ -82,7 +83,7 @@ func main() {
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
 	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
-	task_files := flags.Array("task", "<task_file.tsk>", "Load a task file.")
+	task_files := flags.Multi("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
 	version := flags.Bool("version", false, "")
 	flags.BoolVar(&global.sysmode, "quiet", false, "Minimal output for non-interactive processes.")
@@ -92,6 +93,7 @@ func main() {
 	flags.BoolVar(&global.debug, "debug", false, NONE)
 	flags.BoolVar(&global.snoop, "snoop", false, NONE)
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
+	flags.BoolVar(&global.new_task_file, "new_task", false, "Creates a task file template for loading with --task.")
 
 	f_err := flags.Parse(os.Args[1:])
 

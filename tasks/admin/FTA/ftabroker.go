@@ -63,6 +63,14 @@ func (T Broker) New() Task {
 	return new(Broker)
 }
 
+func (T Broker) Name() string {
+	return "ftabroker"
+}
+
+func (T Broker) Desc() string {
+	return "Transfer files/repair permissions on kiteworks folders based on FTA CSV export."
+}
+
 // Parse CSV file from FTA.
 func (T *Broker) read_csv(file string) (output map[string]map[string]int, err error) {
 
@@ -201,12 +209,12 @@ func (T *Broker) configure_api(enter_setup bool, db Table) {
 
 func (T *Broker) Init() (err error) {
 	csv := T.Flags.String("csv", "<workspace_list.csv>", "FTA CSV File")
-	T.Flags.ArrayVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
+	T.Flags.MultiVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
 	T.Flags.StringVar(&T.manager, "manager", "<manager>", "Fallback manager to create folder if folder does not exist.")
 	T.Flags.BoolVar(&T.files, "files", false, "Copy files from FTA system.")
 	//flags.BoolVar(&T.kitedrive, "kitedrive", false, "Copy kitedrive folders over.")
 	setup := T.Flags.Bool("setup", false, "Configure FTA API settings. (required for --files)")
-	T.Flags.SplitVar(&T.user_list, "filter_users", "<users>", "Only work when manager/owner is in provided users.")
+	T.Flags.MultiVar(&T.user_list, "filter_users", "<users>", "Only work when manager/owner is in provided users.")
 	T.Flags.BoolVar(&T.elevate, "auto_elevate", false, "Automatiaclly elevate managers to owners, if no owner is assigned.")
 	T.Flags.IntVar(&T.standard_profile_id, "standard_profile_id", 1, "Standard user profile id.")
 	if err := T.Flags.Parse(); err != nil {

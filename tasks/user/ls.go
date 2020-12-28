@@ -15,19 +15,28 @@ type ListTask struct {
 }
 
 // Task objects need to be able create a new copy of themself.
-func (T *ListTask) New() Task {
+func (T ListTask) New() Task {
 	return new(ListTask)
+}
+
+func (T ListTask) Name() string {
+	return "ls"
+}
+
+func (T ListTask) Desc() string { 
+	return "List folders and/or files in kiteworks."
 }
 
 // Task init function, should parse flag, do pre-checks.
 func (T *ListTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.human_readable, "human_readable", false, "Present sizes in human-readable format.")
 	T.Flags.Alias("human_readable", "h")
+	T.Flags.StringVar(&T.input.folder, "dest", "<destination file/folder>", "Folder/Files you want to list.")
 	err = T.Flags.Parse()
 	if err != nil {
 		return err
 	}
-	if len(T.Flags.Args()) > 0 {
+	if len(T.input.folder) == 0 && len(T.Flags.Args()) > 0 {
 		T.input.folder = T.Flags.Args()[0]
 	}
 

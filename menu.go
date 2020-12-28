@@ -6,7 +6,6 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
-	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -18,28 +17,12 @@ var command menu
 
 // Menu for tasks.
 type menu struct {
-	mutex       sync.RWMutex
-	text        *tabwriter.Writer
-	entries     map[string]*menu_elem
-	tasks       []string
-	admin_tasks []string
-}
-
-func (m *menu) CopyTask(input Task) Task {
-
-	//new(KiteBrokerTask)
-
-	var t KiteBrokerTask
-
-	r := reflect.New(reflect.TypeOf(input).Elem())
-	rfv := r.Elem()
-	for i := 0; i < rfv.NumField(); i++ {
-		if reflect.TypeOf(t) == rfv.Field(i).Type() {
-			rfv.Field(i).Set(reflect.ValueOf(t))
-		}
-	}
-
-	return r.Interface().(Task)
+	mutex        sync.RWMutex
+	text         *tabwriter.Writer
+	entries      map[string]*menu_elem
+	tasks        []string
+	admin_tasks  []string
+	hidden_tasks []string
 }
 
 // Write out menu item.
@@ -47,28 +30,44 @@ func (m *menu) cmd_text(cmd string, desc string) {
 	m.text.Write([]byte(fmt.Sprintf("  %s \t \"%s\"\n", cmd, desc)))
 }
 
+const (
+	_normal_task = 1 << iota
+	_admin_task 
+	_hidden_task
+)
+
 // Menu item.
 type menu_elem struct {
 	name   string
 	desc   string
 	parsed bool
-	admin  bool
+	t_flag uint
 	task   Task
 	flags  *FlagSet
 }
 
 // Registers an admin task.
-func (m *menu) RegisterAdmin(name, desc string, task Task) {
-	m.register(name, desc, true, task)
+func (m *menu) RegisterAdmin(task Task) {
+	m.register(task.Name(), _admin_task, task)
 }
 
 // Registers an admin task.
-func (m *menu) Register(name, desc string, task Task) {
-	m.register(name, desc, false, task)
+func (m *menu) Register(task Task) {
+	m.register(task.Name(), _normal_task, task)
+}
+
+func (m *menu) RegisterName(name string, task Task) {
+	m.register(name, _hidden_task, task)
+}
+
+func (m *menu) RegisterHidden(task Task) {
+	m.register(task.Name(), _hidden_task, task)
 }
 
 // Registers a task with the task menu.
-func (m *menu) register(name, desc string, admin_task bool, task Task) {
+func (m *menu) register(name string, t_flag uint, task Task) {
+	desc := task.Desc()
+
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	if m.entries == nil {
@@ -80,21 +79,26 @@ func (m *menu) register(name, desc string, admin_task bool, task Task) {
 	m.entries[name] = &menu_elem{
 		name:   name,
 		desc:   desc,
-		admin:  admin_task,
+		t_flag: t_flag,
 		task:   task,
 		flags:  flags,
 		parsed: false,
 	}
 	my_entry := m.entries[name]
-	my_entry.flags.Header = fmt.Sprintf("desc: \"%s\"\n", desc)
+	my_entry.flags.Header = fmt.Sprintf("[%s]: \"%s\"\n", strings.Split(fmt.Sprintf("%s", name), ":")[0], desc)
 	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
 	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
 	my_entry.flags.BoolVar(&global.sysmode, "quiet", global.sysmode, NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
-	if admin_task {
-		m.admin_tasks = append(m.admin_tasks, name)
-	} else {
-		m.tasks = append(m.tasks, name)
+	my_entry.flags.BoolVar(&global.new_task_file, "new_task", false, NONE)
+
+	switch t_flag {
+		case _admin_task:
+			m.admin_tasks = append(m.admin_tasks, name)
+		case _hidden_task:
+			m.hidden_tasks = append(m.hidden_tasks, name)
+		default:
+			m.tasks = append(m.tasks, name)
 	}
 }
 
@@ -151,6 +155,20 @@ func get_taskstore(name string, is_admin bool) SubStore {
 	}
 }
 
+func write_task_file(name, desc string, flags *FlagSet) {
+	Stdout("[%s]", name)
+	Stdout("\n")
+	get_flag := func(input *eflag.Flag) {
+		if input.Name == "debug" || input.Name == "new_task" || input.Name == "quiet" || input.Name == "repeat" || input.Name == "snoop" || len(input.Name) == 1 {
+			return
+		}
+		Stdout("# %s\n", input.Usage)
+		Stdout("%s=%s", input.Name, input.Value)
+		Stdout("\n")
+	}
+	flags.VisitAll(get_flag)
+}
+
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
 		return eflag.ErrHelp
@@ -171,16 +189,20 @@ func (m *menu) Select(input [][]string) (err error) {
 		if x, ok := m.entries[args[0]]; ok {
 			x.flags.FlagArgs = args[1 : len(args)-1]
 			var show_help bool
-			if len(x.flags.FlagArgs) == 0 {
+			if len(x.flags.FlagArgs) == 0 && !global.new_task_file {
 				show_help = true
 			}
 
-			x.task.KiteBrokerTask_init_db(get_taskstore(strings.Split(x.name, ":")[0], x.admin))
-			x.task.KiteBrokerTask_init_flags(*x.flags)
+			x.task.KiteBrokerTask_set_db(get_taskstore(strings.Split(x.name, ":")[0], x.t_flag != _normal_task))
+			x.task.KiteBrokerTask_set_flags(*x.flags)
 
 			if err := x.task.Init(); err != nil {
-				if show_help {
+				if show_help || err == eflag.ErrHelp {
 					x.flags.Usage()
+					Exit(0)
+				}
+				if len(x.flags.Args()) == 0 && global.new_task_file {
+					write_task_file(x.name, x.desc, x.flags)
 					Exit(0)
 				}
 				if err != eflag.ErrHelp {
@@ -191,12 +213,12 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 				}
 				x.flags.Usage()
-				if err == eflag.ErrHelp {
-					Exit(0)
-				} else {
-					Exit(1)
-				}
+				Exit(1)
 			} else {
+				if global.new_task_file {
+					write_task_file(x.name, x.desc, x.flags)
+					Exit(0)
+				}
 				x.parsed = true
 			}
 		}
@@ -224,7 +246,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				new_name := fmt.Sprintf("%s:%d", x.name, i)
 				new_task := x.task.New()
 				m.mutex.RUnlock()
-				command.Register(new_name, x.desc, new_task)
+				command.RegisterName(new_name, new_task)
 				m.mutex.RLock()
 				input[n][0] = new_name
 				init(args)
@@ -270,8 +292,8 @@ func (m *menu) Select(input [][]string) (err error) {
 						Info("<-- task '%s' (%s) started. -->", name, source)
 					}
 
-					x.task.KiteBrokerTask_init_session(global.user)
-					x.task.KiteBrokerTask_init_report(name, source)
+					x.task.KiteBrokerTask_set_session(global.user)
+					x.task.KiteBrokerTask_set_report(NewTaskReport(name, source, x.flags))
 					report := Defer(func() error {
 						x.task.KiteBrokerTask_report_summary(ErrCount() - pre_errors)
 						return nil
