@@ -1,20 +1,13 @@
 package core
 
 import (
-	"fmt"
 	"github.com/cmcoffee/go-snuglib/kvlite"
-	"strings"
 )
 
-// SubStore is a TaskStore, a database with a prefix in the table.
-type SubStore struct {
-	prefix string
-	db     DBase
-}
-
 type Database interface {
-	Sub(prefix string) SubStore
-	Shared(table string) SubStore
+	Buckets(limit bool) ([]string)
+	Sub(prefix string) Database
+	Shared(table string) Database
 	Drop(table string)
 	CryptSet(table, key string, value interface{})
 	Set(table, key string, value interface{})
@@ -26,93 +19,6 @@ type Database interface {
 	Table(table string) Table
 }
 
-// Spins off a new shared table.
-func (d *DBase) Shared(table string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("-shared.%s.", table),
-		db:     *d,
-	}
-}
-func (d *DBase) Sub(prefix string) SubStore {
-	return SubStore{fmt.Sprintf("%s.", prefix), *d}
-}
-
-// applies prefix of table to calls.
-func (d SubStore) apply_prefix(table string) string {
-	return fmt.Sprintf("%s%s", d.prefix, table)
-}
-
-// Applies additional prefix to table.
-func (d SubStore) Sub(prefix string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("%s%s.", d.prefix, prefix),
-		db:     d.db,
-	}
-}
-
-// Spins off a new shared table.
-func (d SubStore) Shared(table string) SubStore {
-	return SubStore{
-		prefix: fmt.Sprintf("-shared.%s.", table),
-		db:     d.db,
-	}
-}
-
-// DB Wrappers to perform fatal error checks on each call.
-func (d SubStore) Drop(table string) {
-	d.db.Drop(d.apply_prefix(table))
-}
-
-// Encrypt value to go-kvlie, fatal on error.
-func (d SubStore) CryptSet(table, key string, value interface{}) {
-	d.db.CryptSet(d.apply_prefix(table), key, value)
-}
-
-// Save value to go-kvlite.
-func (d SubStore) Set(table, key string, value interface{}) {
-	d.db.Set(d.apply_prefix(table), key, value)
-}
-
-// Retrieve value from go-kvlite.
-func (d SubStore) Get(table, key string, output interface{}) bool {
-	found := d.db.Get(d.apply_prefix(table), key, output)
-	return found
-}
-
-// List keys in go-kvlite.
-func (d SubStore) Keys(table string) []string {
-	keylist := d.db.Keys(d.apply_prefix(table))
-	return keylist
-}
-
-// Count keys in table.
-func (d SubStore) CountKeys(table string) int {
-	count := d.db.CountKeys(d.apply_prefix(table))
-	return count
-}
-
-// List Tables in DB
-func (d SubStore) Tables() []string {
-	var tables []string
-
-	for _, t := range d.db.Tables() {
-		if strings.HasPrefix(t, d.prefix) {
-			tables = append(tables, strings.TrimPrefix(t, d.prefix))
-		}
-	}
-	return tables
-}
-
-// Delete value from go-kvlite.
-func (d SubStore) Unset(table, key string) {
-	d.db.Unset(d.apply_prefix(table), key)
-}
-
-// Drill in to specific table.
-func (d SubStore) Table(table string) Table {
-	return d.db.Table(d.apply_prefix(table))
-}
-
 // Wrapper around go-kvlite.
 type DBase struct {
 	Store kvlite.Store
@@ -120,6 +26,12 @@ type DBase struct {
 
 type Table struct {
 	table kvlite.Table
+}
+
+func (d DBase) Buckets(limit bool) ([]string) {
+	b, err := d.Store.Buckets(limit)
+	Critical(err)
+	return b
 }
 
 func (t Table) Drop() {
@@ -157,8 +69,16 @@ func (t Table) CountKeys() int {
 }
 
 // Open a memory-only go-kvlite store.
-func OpenCache() *DBase {
+func OpenCache() Database {
 	return &DBase{kvlite.MemStore()}
+}
+
+func (d DBase) Shared(table string) Database {
+	return &DBase{d.Store.Shared(table)}
+}
+
+func (d DBase) Sub(table string) Database {
+	return &DBase{d.Store.Sub(table)}
 }
 
 // DB Wrappers to perform fatal error checks on each call.

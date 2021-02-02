@@ -35,11 +35,12 @@ func (T UserProfilerTask) Desc() string {
 func (T *UserProfilerTask) Init() (err error) {
 	T.Flags.IntVar(&T.new_profile_id, "new_profile_id", 0, "Profile ID for users to be migrated to.")
 	T.Flags.IntVar(&T.old_profile_id, "old_profile_id", 0, "Profile ID of users to match against.")
-	T.Flags.MultiVar(&T.user_emails, "users", "<email@domain.com>", "Specific users to check.")
-	T.Flags.BoolVar(&T.deactivated, "deactivated", false, "Apply only to users that are deactivated.")
-	T.Flags.BoolVar(&T.unverified, "unverified", false, "Apply only to users that are unverfied.")
+	T.Flags.MultiVar(&T.user_emails, "users", "<user_account@domain.com>", "Specific users to check.")
+	T.Flags.BoolVar(&T.deactivated, "deactivated", "Apply only to users that are deactivated.")
+	T.Flags.BoolVar(&T.unverified, "unverified", "Apply only to users that are unverfied.")
 	T.Flags.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
 	T.Flags.Order("new_profile_id", "old_profile_id","deactivated","unverified","domain_filter","users")
+	T.Flags.CLIArgs("users")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -76,7 +77,7 @@ func (T *UserProfilerTask) Main() (err error) {
 		return err
 	}
 
-	T.user_count.Add(int64(user_count))
+	T.user_count.Add(user_count)
 	ProgressBar.New("Users Processed", user_count)
 	defer ProgressBar.Done()
 

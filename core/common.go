@@ -9,6 +9,7 @@ import (
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/xsync"
+	"github.com/cmcoffee/go-snuglib/kvlite"
 	"io"
 	"os"
 	"path/filepath"
@@ -23,21 +24,86 @@ type FlagSet struct {
 	*eflag.EFlagSet
 }
 
+
 // Required for each task object.
 type KiteBrokerTask struct {
 	Flags  FlagSet
-	DB     SubStore
+	DB     Database
 	Report *TaskReport
 	KW     KWSession
 }
 
+const _sf_started = 1 << iota
+
+type sourceFile struct {
+	name string
+	size int64
+	mod_time time.Time
+	ReadSeekCloser
+}
+
+func (s sourceFile) ModTime() time.Time {
+	return s.mod_time
+}
+
+func (s sourceFile) Name() string {
+	return s.name
+}
+
+func (s sourceFile) Size() int64 {
+	return s.size
+}
+
+func (s sourceFile) String() string {
+	return fmt.Sprintf("%s:%d:%v", s.name, s.size, s.mod_time)
+}
+
+func (s sourceFile) LocalFile(local_path string) (err error) {
+	s.ReadSeekCloser, err = os.Open(local_path)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type SourceFile interface {
+	String() string
+	Name() string
+	Size() int64
+	ModTime() time.Time
+	Seek(offset int64, whence int) (int64, error)
+	Read(p []byte) (n int, err error)
+	Close() error
+}
+/*
+func LocalSourceFile(path string) (SourceFile, error) {
+
+}*/
+
+// Creates a new source file.
+func NewSourceFile(name string, size int64, mod_time time.Time, source ReadSeekCloser) SourceFile {
+	return &sourceFile {
+		name: name,
+		size: size,
+		mod_time: mod_time,
+		ReadSeekCloser: source,
+	}
+}
+
+/*
+func (T *KiteBrokerTask) KWUploader(file FileInfo, target KiteObject, sess KWSession, source ReadSeekCloser) (*KiteObject, error) {
+
+}
+
+func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error)
+*/
 // Sets the flags for the task.
 func (T *KiteBrokerTask) KiteBrokerTask_set_flags(Flags FlagSet) {
 	T.Flags = Flags
 }
 
 // Initializes the task's database
-func (T *KiteBrokerTask) KiteBrokerTask_set_db(DB SubStore) {
+func (T *KiteBrokerTask) KiteBrokerTask_set_db(DB Database) {
 	T.DB = DB
 }
 
@@ -75,7 +141,7 @@ type Task interface {
 	Init() error
 	Main() error
 	KiteBrokerTask_set_flags(Flags FlagSet)
-	KiteBrokerTask_set_db(DB SubStore)
+	KiteBrokerTask_set_db(DB Database)
 	KiteBrokerTask_set_report(*TaskReport)
 	KiteBrokerTask_set_session(user KWSession)
 	KiteBrokerTask_report_summary(error uint32)
@@ -110,7 +176,7 @@ func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...m
 			}
 		}
 	}
-	input.KiteBrokerTask_set_db(db.(SubStore))
+	input.KiteBrokerTask_set_db(db)
 	flags := FlagSet{EFlagSet: eflag.NewFlagSet("SubTask", eflag.ReturnErrorOnly)}
 	flags.FlagArgs = arg_string
 	input.KiteBrokerTask_set_flags(flags)
@@ -150,7 +216,14 @@ var (
 	FormatPath      = filepath.FromSlash
 	GetPath         = filepath.ToSlash
 	Info            = nfo.Aux
+	HumanSize       = nfo.HumanSize
 )
+
+var KiteBrokerApp = struct{
+	ErrBadPadlock error
+}{
+	ErrBadPadlock: kvlite.ErrBadPadlock,
+}
 
 var (
 	transferMonitor = nfo.TransferMonitor
@@ -160,10 +233,10 @@ var (
 )
 
 type (
-	ReadSeekCloser = nfo.ReadSeekCloser
-	BitFlag        = xsync.BitFlag
-	LimitGroup     = xsync.LimitGroup
-	ConfigStore    = cfg.Store
+	BitFlag         = xsync.BitFlag
+	LimitGroup      = xsync.LimitGroup
+	ConfigStore     = cfg.Store
+	ReadSeekCloser  = nfo.ReadSeekCloser
 )
 
 var error_counter uint32
@@ -356,27 +429,6 @@ func CombinePath(name ...string) string {
 		return name[0]
 	}
 	return fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH))
-}
-
-// Provides human readable file sizes.
-func HumanSize(bytes int64) string {
-
-	names := []string{
-		"Bytes",
-		"KB",
-		"MB",
-		"GB",
-	}
-
-	suffix := 0
-	size := float64(bytes)
-
-	for size >= 1000 && suffix < len(names)-1 {
-		size = size / 1000
-		suffix++
-	}
-
-	return fmt.Sprintf("%.1f%s", size, names[suffix])
 }
 
 func Rename(oldpath, newpath string) error {

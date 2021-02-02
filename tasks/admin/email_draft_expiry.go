@@ -33,10 +33,10 @@ func (T EmailDraftExpiryTask) Desc() string {
 }
 
 func (T *EmailDraftExpiryTask) Init() (err error) {
-	T.Flags.BoolVar(&T.resume, "resume", false, "Resume previous cleanup.")
+	T.Flags.BoolVar(&T.resume, "resume", "Resume previous cleanup.")
 	expiry := T.Flags.String("expiry", "<YYYY-MM-DD>", "Expire drafts and their files older than specified date.")
-	T.Flags.BoolVar(&T.dry_run, "dry-run", false, "Don't delete just display what would be deleted.")
-	T.Flags.MultiVar(&T.user_emails, "users", "user@domain.com", "Users to specify.")
+	T.Flags.BoolVar(&T.dry_run, "dry-run", "Don't delete just display what would be deleted.")
+	T.Flags.MultiVar(&T.user_emails, "users", "<user@domain.com>", "Users to specify.")
 	T.Flags.Order("expiry", "users", "dry-run", "resume")
 	if err := T.Flags.Parse(); err != nil {
 		return err
@@ -150,7 +150,7 @@ func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
 		if err != nil {
 			return err
 		}
-		T.drafts.Add(int64(len(mail_ids)))
+		T.drafts.Add(len(mail_ids))
 		if len(mail_ids) == 0 {
 			break
 		}
@@ -196,7 +196,7 @@ func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (er
 		return err
 	}
 
-	T.attachments.Add(int64(len(attachments)))
+	T.attachments.Add(len(attachments))
 	if len(attachments) == 0 {
 		return ErrNotFound
 	}
@@ -210,7 +210,7 @@ func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (er
 		}
 		created, _ := ReadKWTime(finfo.Created)
 		Log("[%d] User: %s, Filename: %s, Size: %s, Created: %v", mail_id, sess.Username, finfo.Name, HumanSize(finfo.Size), created.Local())
-		T.size.Add(finfo.Size)
+		T.size.Add64(finfo.Size)
 	}
 
 	return
@@ -228,7 +228,7 @@ func (T *EmailDraftExpiryTask) CleanMailDir(sess *KWSession) (err error) {
 	for _, f := range files {
 		created, _ := ReadKWTime(f.Created)
 		Log("[Deleted Mail File] User: %s, Filename: %s, Size: %s, Created: %v", my_user.Email, f.Name, HumanSize(f.Size), created.Local())
-		T.size.Add(f.Size)
+		T.size.Add64(f.Size)
 		if !T.dry_run {
 			if err := sess.File(f.ID).PermDelete(); err != nil {
 				Err("%s: %v", f.Name, err)

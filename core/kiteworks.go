@@ -107,8 +107,8 @@ func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err
 	}, -1, 1000)
 }
 
-func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, params ...interface{}) (err error) {
-	params = SetParams(PostJSON{"notify": false, "notifyFileAdded": false, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
+func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bool, params ...interface{}) (err error) {
+	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": false, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
 	err = s.Call(APIRequest{
 		Method: "POST",
 		Path:   SetPath("/rest/folders/%d/members", s.folder_id),
@@ -197,6 +197,18 @@ func (s KWSession) Admin() kw_rest_admin {
 	return kw_rest_admin{&s}
 }
 
+// Creates a new user on the system.
+func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify bool) (user *KiteUser, err error) {
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   "/rest/users",
+		Params: SetParams(PostJSON{"email": user_email, "userTypeId": type_id, "verified": verified, "sendNotification": notify}, Query{"returnEntity": true}),
+		Output: &user,
+	})
+
+	return user, err
+}
+
 func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (emails []string, err error) {
 	var users []struct {
 		Email string `json:"email"`
@@ -252,22 +264,6 @@ func (s kw_rest_file) PermDelete() (err error) {
 	return
 }
 
-// Create a new file version for an existing file.
-func (S kw_rest_file) NewVersion(file FileInfo) (int, error) {
-	var upload struct {
-		ID int `json:"id"`
-	}
-
-	if err := S.Call(APIRequest{
-		Method: "POST",
-		Path:   SetPath("/rest/files/%d/actions/initiateUpload", S.file_id),
-		Params: SetParams(PostJSON{"filename": file.Name(), "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
-		Output: &upload,
-	}); err != nil {
-		return -1, err
-	}
-	return upload.ID, nil
-}
 
 /*
 // Drills down specific folder and returns all results.
@@ -292,30 +288,109 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 	return
 }
 
-// Creates a new upload for a folder.
-func (S kw_rest_folder) NewUpload(file FileInfo, filename ...string) (int, error) {
-	var upload struct {
-		ID int `json:"id"`
+/*
+// File Uploader
+func (S kw_rest_folder) Upload(src SourceFile, overwrite_newer, version bool, count_cb func(num int)) (error) {
+
+	if S.folder_id == 0 {
+		Notice("%s: Uploading files to base path is not permitted, ignoring file.", src.Name())
+		return nil
 	}
 
-	file_name := file.Name()
-
-	if len(filename) > 0 {
-		file_name = filename[0]
+	var UploadRecord struct {
+		Name string
+		ID int
+		ClientModified time.Time
+		Size int64
+		Created time.Time
 	}
 
-	if err := S.Call(APIRequest{
-		//Version: 5,
-		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", S.folder_id),
-		Params: SetParams(PostJSON{"filename": file_name, "totalSize": file.Size(), "clientModified": WriteKWTime(file.ModTime().UTC()), "totalChunks": S.Chunks(file.Size())}, Query{"returnEntity": true}),
-		Output: &upload,
-	}); err != nil {
-		return -1, err
+	if count_cb == nil {
+		count_cb = func(num int) {
+			return
+		}
 	}
-	return upload.ID, nil
+
+	transfer_file := func(src SourceFile, uid int) (err error) {
+		defer src.Close()
+
+		x := TransferCounter(src, count_cb)
+		_, err = S.KWSession.Upload(src.Name(), uid, x)
+		return
+	}
+
+	target := fmt.Sprintf("%d:%s", S.folder_id, src.String())
+	uploads := S.db.Table("uploads")
+	if uploads.Get(target, &UploadRecord) {
+		if err := transfer_file(src, UploadRecord.ID); err != nil {
+			Debug("Error attempting to resume file: %s", err.Error())
+		} else {
+			uploads.Unset(target)
+			return nil
+		}
+	}
+	 
+
+	kw_file_info, err := S.Folder(S.folder_id).Find(src.Name())
+	if err != nil && err != ErrNotFound {
+		return err
+	}
+
+	var uid int
+
+	if kw_file_info.ID > 0 {
+		modified, _ := ReadKWTime(kw_file_info.ClientModified)
+
+		// File on kiteworks is newer than local file.
+		if modified.UTC().Unix() > src.ModTime().UTC().Unix() {
+			if overwrite_newer {
+				uid, err = S.File(kw_file_info.ID).NewVersion(src)
+				if err != nil {
+					return err
+				}
+			} else {
+				uploads.Unset(target)
+				return nil
+			}
+			// Local file is newer than kiteworks file.
+		} else if modified.UTC().Unix() < src.ModTime().UTC().Unix() {
+				uid, err = S.File(kw_file_info.ID).NewVersion(src, PostJSON{"disableAutoVersion": !version})
+				if err != nil {
+					return err
+				}
+		} else {
+			return nil
+		}
+	} else {
+		uid, err = S.Folder(S.folder_id).NewUpload(src)
+		if err != nil {
+			return err
+		}
+	}
+
+	UploadRecord.Name = src.Name()
+	UploadRecord.ID = uid
+	UploadRecord.ClientModified = src.ModTime()
+	UploadRecord.Size = src.Size()
+	uploads.Set(target, &UploadRecord)
+
+	for i := uint(0); i <= S.Retries; i++ {
+		err = transfer_file(src, uid)
+		if err == nil || IsAPIError(err) {
+			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
+				Debug("[%d]%s: %s (%d/%d)", uid, UploadRecord.Name, err.Error(), i+1, S.Retries+1)
+				S.BackoffTimer(i)
+				continue
+			}
+			uploads.Unset(target)
+			return err
+		}
+		break
+	}
+
+	return nil
 }
-
+*/
 // Returns all items with listed folder_id.
 func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {

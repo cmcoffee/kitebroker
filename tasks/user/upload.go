@@ -46,18 +46,19 @@ func (T FolderUploadTask) Desc() string {
 }
 
 func (T *FolderUploadTask) Init() (err error) {
-	T.Flags.StringVar(&T.input.dst, "dst", "<remote folder>", "Specify kiteworks folder you wish to upload to.")
+	T.Flags.StringVar(&T.input.dst, "remote_kw_folder", "<remote folder>", "Specify kiteworks folder you wish to upload to.")
 	T.Flags.MultiVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.")
-	T.Flags.BoolVar(&T.input.overwrite_newer, "overwrite_newer", false, "Overwrite newer files on server.")
-	T.Flags.BoolVar(&T.input.move, "move", false, "Remove source files upon succesful upload.")
-	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", false, "Do not upload file if file exists on server already.")
-	T.Flags.Order("src", "dst", "overwrite-newer", "move")
+	T.Flags.BoolVar(&T.input.overwrite_newer, "overwrite_newer", "Overwrite newer files on server.")
+	T.Flags.BoolVar(&T.input.move, "move", "Remove source files upon succesful upload.")
+	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", "Do not upload file if file exists on server already.")
+	T.Flags.Order("overwrite_newer", "move")
+	T.Flags.CLIArgs("src", "remote_kw_folder")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
 
 	if len(T.input.src) == 0 {
-		return fmt.Errorf("please provide a --src for upload.")
+		return fmt.Errorf("please provide a local folder/file for upload.")
 	}
 
 	return nil
@@ -154,6 +155,21 @@ func (T *FolderUploadTask) Main() (err error) {
 
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
 	defer T.file_count.Add(1)
+	
+	f, err := os.Open(local_path)
+	if err != nil {
+		return err
+	}
+	x := TransferCounter(f, T.transfered.Add)
+	defer f.Close()
+
+	_, err = T.KW.Upload(finfo.Name(), finfo.Size(), finfo.ModTime(), T.input.overwrite_newer, !T.input.dont_overwrite, *folder, x)
+	return
+}
+
+/*
+func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
+	defer T.file_count.Add(1)
 	if folder.ID == 0 {
 		Notice("%s: Uploading files to base path is not permitted, ignoring file.", local_path)
 		return nil
@@ -218,7 +234,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		// File on kiteworks is newer than local file.
 		if modified.UTC().Unix() > finfo.ModTime().UTC().Unix() {
 			if T.input.overwrite_newer {
-				uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo)
+				uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo.Name(), finfo.Size(), finfo.ModTime())
 				if err != nil {
 					return err
 				}
@@ -228,7 +244,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 			}
 			// Local file is newer than kiteworks file.
 		} else if modified.UTC().Unix() < finfo.ModTime().UTC().Unix() {
-			uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo)
+			uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo.Name(), finfo.Size(), finfo.ModTime())
 			if err != nil {
 				return err
 			}
@@ -244,7 +260,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 			}
 		}
 	} else {
-		uid, err = T.KW.Folder(folder.ID).NewUpload(finfo)
+		uid, err = T.KW.Folder(folder.ID).NewUpload(finfo.Name(), finfo.Size(), finfo.ModTime())
 		if err != nil {
 			return err
 		}
@@ -270,6 +286,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 	}
 	return
 }
+*/
 
 func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) (err error) {
 

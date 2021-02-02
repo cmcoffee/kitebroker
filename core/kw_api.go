@@ -62,12 +62,13 @@ type KWAPI struct {
 // kiteworks Session.
 type KWSession struct {
 	Username string
+	db Database
 	*KWAPI
 }
 
 // Wraps a session for specfiied user.
 func (K *KWAPI) Session(username string) KWSession {
-	return KWSession{username, K}
+	return KWSession{username, K.db.Sub(username), K}
 }
 
 // Wrapper around Call to provide username.

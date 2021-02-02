@@ -29,15 +29,16 @@ func (T ListTask) Desc() string {
 
 // Task init function, should parse flag, do pre-checks.
 func (T *ListTask) Init() (err error) {
-	T.Flags.BoolVar(&T.input.human_readable, "human_readable", false, "Present sizes in human-readable format.")
-	T.Flags.Alias("human_readable", "h")
-	T.Flags.StringVar(&T.input.folder, "dest", "<destination file/folder>", "Folder/Files you want to list.")
+	T.Flags.BoolVar(&T.input.human_readable, "human_readable", "Present sizes in human-readable format.")
+	T.Flags.Shorten("human_readable", 'h')
+	
+	T.Flags.StringVar(&T.input.folder, "path", "<remote file/folder>", "Folder/Files you want to list.")
+
+	T.Flags.CLIArgs("path")
+
 	err = T.Flags.Parse()
 	if err != nil {
 		return err
-	}
-	if len(T.input.folder) == 0 && len(T.Flags.Args()) > 0 {
-		T.input.folder = T.Flags.Args()[0]
 	}
 
 
@@ -72,7 +73,6 @@ func (T ListTask) displayResult(object...KiteObject) {
 
 // Main function, Passport hands off KWAPI Session, a Database and a TaskReport object.
 func (T *ListTask) Main() (err error) {
-	Info("\n")
 	if IsBlank(T.input.folder) {
 		Info("-- 'kiteworks Files' --")
 		folders, err := T.KW.TopFolders()

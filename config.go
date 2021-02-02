@@ -104,16 +104,29 @@ func init_kw_api() {
 
 	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
 	username := dbConfig.user()
+	if global.as_user != NONE {
+		username = global.as_user
+	}
 	user, err := global.kw.Login(username)
 	if err != nil {
+		if !IsAPIError(err) {
+			Fatal(err)
+		} else {
+			if global.as_user != NONE {
+				Fatal(err)
+			}
+		}
 		Err(err)
 		Log("\n")
 		config_api(true)
 		return
 	}
 	global.user = *user
-	dbConfig.set_user(string(user.Username))
-
+	if global.auth_mode != SIGNATURE_AUTH {
+		dbConfig.set_user(string(user.Username))
+	} else if global.as_user != NONE {
+		global.kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, dbConfig.user())
+	}
 	init_logging()
 }
 
@@ -331,7 +344,7 @@ func config_api(configure_api bool) {
 	} else {
 		setup.Func("Reset user credentials", func() bool {
 			kw := new(APIClient)
-			kw.TokenStore = KVLiteStore(global.db)
+			kw.SetDatabase(global.db.Sub("KWAPI"))
 			kw.TokenStore.Delete(account)
 			account = NONE
 			dbConfig.set_user(account)
@@ -411,7 +424,7 @@ func config_api(configure_api bool) {
 			kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
 		}
 		kw.APIClient.NewToken = kw.KWNewToken
-		kw.TokenStore = KVLiteStore(global.db)
+		kw.SetDatabase(global.db.Sub("KWAPI"))
 		kw.RedirectURI = redirect_uri
 		kw.ProxyURI = proxy.Get().(string)
 		kw.VerifySSL = *ssl_verify

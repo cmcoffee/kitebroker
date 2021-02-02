@@ -23,7 +23,7 @@ var ErrNoUploadID = errors.New("Upload ID not found.")
 var ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
 
 // Returns chunk_size, total number of chunks and last chunk size.
-func (K *APIClient) Chunks(total_size int64) (total_chunks int64) {
+func (K *APIClient) chunksCalc(total_size int64) (total_chunks int64) {
 	chunk_size := K.MaxChunkSize
 
 	if chunk_size == 0 || chunk_size > kw_chunk_size_max {
@@ -237,7 +237,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error) {
+func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -389,3 +389,155 @@ func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeek
 
 	return resp_data, nil
 }
+
+// Create a new file version for an existing file.
+func (S KWSession) newFileVersion(file_id int, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+	var upload struct {
+		ID int `json:"id"`
+	}
+
+	if err := S.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/files/%d/actions/initiateUpload", file_id),
+		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
+		Output: &upload,
+	}); err != nil {
+		return -1, err
+	}
+	return upload.ID, nil
+}
+
+// Creates a new upload for a folder.
+func (S KWSession) newFolderUpload(folder_id int, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+	var upload struct {
+		ID int `json:"id"`
+	}
+
+	if err := S.Call(APIRequest{
+		//Version: 5,
+		Method: "POST",
+		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
+		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
+		Output: &upload,
+	}); err != nil {
+		return -1, err
+	}
+	return upload.ID, nil
+}
+
+// Uploads file from specific local path, uploads in chunks, allows resume.
+func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
+	var flags BitFlag
+
+	const (
+		IsFolder = 1 << iota
+		IsFile
+		OverwriteFile
+		VersionFile
+	)
+
+	switch dst.Type {
+		case "d":
+			flags.Set(IsFolder)
+		case "f":
+			flags.Set(IsFile)
+	}
+
+	if overwrite_newer {
+		flags.Set(OverwriteFile)
+	}
+
+	if auto_version {
+		flags.Set(VersionFile)
+	}
+
+	var UploadRecord struct {
+		Name string
+		ID int
+		ClientModified time.Time
+		Size int64
+		Created time.Time
+	}
+
+	target := fmt.Sprintf("%d:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
+	uploads := s.db.Table("uploads")
+
+	var uid int
+
+	if uploads.Get(target, &UploadRecord) {
+		if output, err := s.uploadFile(filename, UploadRecord.ID, src); err != nil {
+			Debug("Error attempting to resume file: %s", err.Error())
+			s.Call(APIRequest{
+				Method: "DELETE",
+				Path: SetPath("/rest/uploads/%d", UploadRecord.ID),
+			})
+			uploads.Unset(target)
+		} else {
+			uploads.Unset(target)
+			return output, err
+		}
+	}
+
+	var kw_file_info KiteObject
+
+	if flags.Has(IsFile) {
+		kw_file_info = dst
+		dst, err = s.Folder(0).Find(dst.Path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		kw_file_info, err = s.Folder(dst.ID).Find(filename)
+		if err != nil && err != ErrNotFound {
+			return nil, err
+		}
+	} 
+
+	if kw_file_info.ID > 0 {
+		modified, _ := ReadKWTime(kw_file_info.ClientModified)
+
+		if modified.UTC().Unix() > mod_time.UTC().Unix() {
+			if flags.Has(OverwriteFile) {
+				uid, err = s.newFileVersion(kw_file_info.ID, filename, size, mod_time)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				uploads.Unset(target)
+				return nil, nil
+			}
+		} else {
+			if kw_file_info.Size == size {
+				uploads.Unset(target)
+				return nil, nil
+			}
+		}
+	} else {
+		uid, err = s.newFolderUpload(dst.ID, filename, size, mod_time)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	UploadRecord.Name = filename
+	UploadRecord.ID = uid
+	UploadRecord.ClientModified = mod_time
+	UploadRecord.Size = size
+	uploads.Set(target, &UploadRecord)
+
+	for i := uint(0); i <= s.Retries; i++ {
+		file, err = s.uploadFile(filename, uid, src)
+		if err == nil || IsAPIError(err) {
+			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
+				Debug("%s/%s: %s (%d/%d)", dst.Path, UploadRecord.Name, err.Error(), i+1, s.Retries+1)
+				s.BackoffTimer(i)
+				continue
+			}
+			uploads.Unset(target)
+		}
+		break
+	}
+
+	return
+}
+

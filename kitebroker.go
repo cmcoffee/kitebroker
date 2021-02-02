@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "20.12.28"
+	VERSION = "21.02.01"
 )
 
 const (
@@ -36,6 +36,8 @@ var global struct {
 	debug     bool
 	sysmode   bool
 	new_task_file bool
+	pause     bool
+	as_user   string
 }
 
 func init() {
@@ -80,20 +82,29 @@ func main() {
 	nfo.HideTS()
 	defer Exit(0)
 
+	cfg_err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
+
 	// Initial modifier flags and flag aliases.
 	flags := eflag.NewFlagSet(NONE, eflag.ReturnErrorOnly)
-	setup := flags.Bool("setup", false, "kiteworks API Configuration.")
+	setup := flags.Bool("setup", "kiteworks API Configuration.")
 	task_files := flags.Multi("task", "<task_file.tsk>", "Load a task file.")
 	flags.DurationVar(&global.freq, "repeat", 0, "How often to repeat task, 0s = single run.")
-	version := flags.Bool("version", false, "")
-	flags.BoolVar(&global.sysmode, "quiet", false, "Minimal output for non-interactive processes.")
-	flags.Order("task", "repeat", "setup", "quiet", "pause")
+	version := flags.Bool("version", "")
+	flags.BoolVar(&global.sysmode, "quiet", "Minimal output for non-interactive processes.")
+	flags.BoolVar(&global.pause, "pause", "Pause after execution.")
+
+	if global.cfg.Get("configuration", "auth_flow") == "signature" {
+		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")
+	}
+
+	flags.Order("task", "new_task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
 
-	flags.BoolVar(&global.debug, "debug", false, NONE)
-	flags.BoolVar(&global.snoop, "snoop", false, NONE)
+
+	flags.BoolVar(&global.debug, "debug", NONE)
+	flags.BoolVar(&global.snoop, "snoop", NONE)
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
-	flags.BoolVar(&global.new_task_file, "new_task", false, "Creates a task file template for loading with --task.")
+	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
 	f_err := flags.Parse(os.Args[1:])
 
@@ -103,6 +114,12 @@ func main() {
 		Stdout("Written by Craig M. Coffee. (craig@snuglab.com)")
 		Exit(0)
 	}
+
+	Defer(func() {
+		if global.pause {
+			pause()
+		}
+	})
 
 	if global.debug || global.snoop {
 		enable_debug()
@@ -122,7 +139,7 @@ func main() {
 
 	// We need to do a quick look to see what commands we display for --help
 
-	err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
+	//err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
 		if f_err != eflag.ErrHelp {
@@ -135,8 +152,8 @@ func main() {
 	}
 
 	// Now we will go crtical on the config file not loading.
-	if err != nil {
-		Critical(err)
+	if cfg_err != nil {
+		Critical(cfg_err)
 	}
 
 	if *setup {

@@ -6,11 +6,11 @@ import (
 	"encoding/csv"
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"github.com/cmcoffee/go-snuglib/options"
 	"os"
 	"strings"
 	"sync"
-	"time"
+	//"time"
+	"io"
 )
 
 const (
@@ -56,6 +56,7 @@ type Broker struct {
 	cache        Database
 	uploads      Table
 	api          *FTAClient
+	notify 		 bool
 	KiteBrokerTask
 }
 
@@ -92,10 +93,14 @@ func (T *Broker) read_csv(file string) (output map[string]map[string]int, err er
 		line++
 		raw_text := s.Text()
 		r := csv.NewReader(bytes.NewReader([]byte(raw_text)))
+		r.LazyQuotes = true
 		o, err := r.Read()
 		if err != nil {
+			if err == io.EOF {
+				continue
+			}
 			return nil, fmt.Errorf("%s: %s '%s'", file, strings.Replace(err.Error(), "line 1", fmt.Sprintf("line %d", line), 1), raw_text)
-		}
+		} 
 		if len(o) >= 10 {
 			if o[ws_expiry] == "Available Until" {
 				continue
@@ -157,49 +162,31 @@ func (T *Broker) GetMembers(in_map map[string]int, role...int) (output []string)
 	return
 }
 
-func (T *Broker) configure_api(enter_setup bool, db Table) {
-	var server, app_id, client_secret, signature, redirect_uri string
+func (T *Broker) configure_api(server,client_id,client_secret,signature,redirect_uri string) {
 
-	setup := options.NewOptions("--- FTA API configuration ---", "(selection or 'q' to save & exit)", 'q')
-
-	load_api := func() {
-		db.Get("server", &server)
-		db.Get("app_id", &app_id)
-		db.Get("client_secret", &client_secret)
-		db.Get("signature", &signature)
-		db.Get("redirect_uri", &redirect_uri)
-
+	if IsBlank(server, client_id, client_secret, signature, redirect_uri) {
+		var blank_str []string
+		if IsBlank(server) {
+			blank_str = append(blank_str, "--server")
+		}
+		if IsBlank(client_id) {
+			blank_str = append(blank_str, "--client_id")
+		}
+		if IsBlank(client_secret) {
+			blank_str = append(blank_str, "--secret_key")
+		}
+		if IsBlank(signature) {
+			blank_str = append(blank_str, "--signature_key")
+		}
 		if IsBlank(redirect_uri) {
-			redirect_uri = "https://kitebroker/"
+			blank_str = append(blank_str, "--redirect_uri")
 		}
-	}
-
-	save_api := func() {
-		db.Set("server", &server)
-		db.Set("app_id", &app_id)
-		db.CryptSet("client_secret", &client_secret)
-		db.CryptSet("signature", &signature)
-		db.Set("redirect_uri", &redirect_uri)
-	}
-
-	load_api()
-	if IsBlank(server, app_id, client_secret, signature, redirect_uri) || enter_setup {
-		setup.StringVar(&server, "FTA Server", server, NONE, false)
-		setup.StringVar(&app_id, "Client Application ID", app_id, NONE, false)
-		setup.StringVar(&client_secret, "Client Secret Key", client_secret, NONE, true)
-		setup.StringVar(&signature, "Signature Secret", signature, NONE, true)
-		setup.StringVar(&redirect_uri, "Redirect URI", redirect_uri, "Redirect URI should simply match setting in kiteworks admin, default: https://kitebroker", false)
-		setup.Select(false)
-		server = strings.TrimPrefix(strings.ToLower(server), "https://")
-		save_api()
-		if IsBlank(server, app_id, client_secret, signature, redirect_uri) || enter_setup {
-			Exit(0)
-		}
+		Fatal("Missing required parameters for: %s", strings.Join(blank_str, ", "))
 	}
 
 	T.api = &FTAClient{new(APIClient)}
 	T.api.Server = server
-	T.api.ApplicationID = app_id
+	T.api.ApplicationID = client_id
 	T.api.ClientSecret(client_secret)
 	T.api.Signature(signature)
 	T.api.VerifySSL = false
@@ -208,22 +195,24 @@ func (T *Broker) configure_api(enter_setup bool, db Table) {
 }
 
 func (T *Broker) Init() (err error) {
+	server := T.Flags.String("server", "<FTA Server>", "Server for FTA System")
+	client_id := T.Flags.String("client_id", "<client_id>", "Client ID for FTA API.")
+	secret_key := T.Flags.String("secret_key", "<secret_key>", "Secret Key for FTA API.")
+	signature_key := T.Flags.String("signature_key", "<signature_key>", "Signature key for FTA API.")
+	redirect_uri := T.Flags.String("redirect_uri", "https://kitebroker/", "Redirect URI for FTA API.")
+
 	csv := T.Flags.String("csv", "<workspace_list.csv>", "FTA CSV File")
 	T.Flags.MultiVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
 	T.Flags.StringVar(&T.manager, "manager", "<manager>", "Fallback manager to create folder if folder does not exist.")
-	T.Flags.BoolVar(&T.files, "files", false, "Copy files from FTA system.")
+	T.Flags.BoolVar(&T.files, "files", "Copy files from FTA system.")
 	//flags.BoolVar(&T.kitedrive, "kitedrive", false, "Copy kitedrive folders over.")
-	setup := T.Flags.Bool("setup", false, "Configure FTA API settings. (required for --files)")
+	T.Flags.BoolVar(&T.notify, "notify", "Send notifications to users added.")
 	T.Flags.MultiVar(&T.user_list, "filter_users", "<users>", "Only work when manager/owner is in provided users.")
-	T.Flags.BoolVar(&T.elevate, "auto_elevate", false, "Automatiaclly elevate managers to owners, if no owner is assigned.")
+	T.Flags.BoolVar(&T.elevate, "auto_elevate", "Automatiaclly elevate managers to owners, if no owner is assigned.")
 	T.Flags.IntVar(&T.standard_profile_id, "standard_profile_id", 1, "Standard user profile id.")
+	T.Flags.Order("csv", "manager", "folder","filter_users","auto_elevate","standard_profile_id","files","server","client_id","secert_key","signature_key","redirect_uri")
 	if err := T.Flags.Parse(); err != nil {
 		return err
-	}
-
-	if *setup {
-		T.configure_api(*setup, T.DB.Table("FTA.API"))
-		Exit(0)
 	}
 
 	for _, v := range T.workspace {
@@ -237,7 +226,7 @@ func (T *Broker) Init() (err error) {
 	}
 
 	if T.files {
-		T.configure_api(false, T.DB.Table("FTA.API"))
+		T.configure_api(*server,*client_id,*secret_key,*signature_key,*redirect_uri)
 	}
 
 	T.perm_map, err = T.read_csv(*csv)
@@ -427,8 +416,8 @@ func (T *Broker) CreateUser(user string) (err error) {
 	if err := T.KW.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/users",
-		Params: SetParams(PostJSON{"email": user, "userTypeId": T.standard_profile_id, "verified": true, "sendNotification": false, "active": true}, Query{"returnEntity": false}),
-	}); err != nil {
+		Params: SetParams(PostJSON{"email": user, "userTypeId": T.standard_profile_id, "verified": true, "sendNotification": T.notify, "active": true}, Query{"returnEntity": false}),
+	}); err != nil && !IsAPIError(err, "ERR_ENTITY_EXISTS") {
 		return fmt.Errorf("Error initializing user %s: %s", user, err.Error())
 	}
 	return nil
@@ -489,14 +478,16 @@ func (T *Broker) MakeManager(user string) (err error) {
 func (T *Broker) CreatePaths(user, folder string) (kw_user string, kw_folder *KiteObject, err error) {
 	if user == NONE {
 		users := T.GetMembers(T.perm_map[folder], OWNER)
-		if len(users) == 0 && !T.elevate {
-			return NONE, nil, fmt.Errorf("%s: No owner assigned in CSV.", folder)
-		} else if T.elevate {
-			users = T.GetMembers(T.perm_map[folder], MANAGER)
-			if len(users) == 0 {
-				return NONE, nil, fmt.Errorf("%s: No owner or managers assigned in CSV.", folder)
+		if len(users) == 0 {
+			if !T.elevate {
+				return NONE, nil, fmt.Errorf("%s: No owner assigned in CSV.", folder)
 			} else {
-				Log("%s: Elevating to owner of '%s' as no owner was assigned.", users[0], folder)
+				users = T.GetMembers(T.perm_map[folder], MANAGER)
+				if len(users) == 0 {
+					return NONE, nil, fmt.Errorf("%s: No owner or managers assigned in CSV.", folder)
+				} else {
+					Log("%s: Elevating to owner of '%s' as no owner was assigned.", users[0], folder)
+				}
 			}
 		}
 		kw_user = users[0]
@@ -560,7 +551,7 @@ func (T *Broker) FindManager(folder string) (kw_user string, kw_folder *KiteObje
 	fta_managers := T.GetMembers(T.perm_map[folder], OWNER, MANAGER)
 
 	if T.manager != NONE {
-		fta_managers = append([]string{T.manager}, fta_managers[0:]...)
+		fta_managers = append(fta_managers, T.manager)
 	}
 
 	var new_managers []string
@@ -607,7 +598,6 @@ func (T *Broker) FindManager(folder string) (kw_user string, kw_folder *KiteObje
 			} else {
 				folder_id = result.ID
 			}
-	
 			if result.CurrentUserRole.Rank >= 400000 {
 				if _, err = sess.Folder(folder_id).Members(); err == nil {
 					managers = append(managers, fta_managers[i])
@@ -665,10 +655,16 @@ func (T *Broker) SetPermissions(kw_user string, target KiteObject) {
 
 	set_perm := func(kw_sess KWSession, users []string, role_id int, target KiteObject) (err error) {
 		if len(users) > 0 {
-			if len(users) == 1 && users[0] == NONE {
+			if (len(users) == 1 && users[0] == NONE) || len(users) == 0 {
 				return
 			}
-			if err := kw_sess.Folder(target.ID).AddUsersToFolder(users, role_id); err != nil {
+			for _, u := range users {
+				if found := T.cache.Get("created", u, nil); !found {
+					T.CreateUser(u)
+					T.cache.Set("created", u, 0)
+				} 
+			}
+			if err := kw_sess.Folder(target.ID).AddUsersToFolder(users, role_id, T.notify); err != nil {
 				if !IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED", "ERR_ENTITY_IS_OWNER", "ERR_ENTITY_USER_HAS_INSUFFICIENT_PERMISSIONS") {
 					return err
 				}
@@ -744,7 +740,17 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 		Notice("%s: Uploading files to base path is not permitted, ignoring file.", source.Name())
 		return nil
 	}
+	file, err := T.api.Session(user).File(source.ID).Download()
+	if err != nil { 
+		return err
+	}
+	x := TransferCounter(file, T.transfered.Add)
 
+
+	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, *folder, x)
+	return
+} 
+/*
 	var UploadRecord struct {
 		Name string
 		ID int
@@ -754,7 +760,7 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 
 	transfer_file := func(user, fta_id string, uid int) (err error) {
 		upload_counter := func(num int) {
-			T.transfered.Add(int64(num))
+			T.transfered.Add(num)
 		}
 
 		file, err := T.api.Session(user).File(fta_id).Download()
@@ -796,7 +802,7 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 				return nil
 			// Local file is newer than kiteworks file.
 		} else if modified.UTC().Unix() < source.ModTime().UTC().Unix() {
-			uid, err = T.KW.File(kw_file_info.ID).NewVersion(source)
+			uid, err = T.KW.File(kw_file_info.ID).NewVersion(source.Name(), source.Size(), source.ModTime())
 			if err != nil {
 				return err
 			}
@@ -808,7 +814,7 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 			}
 		}
 	} else {
-		uid, err = T.KW.Session(user).Folder(folder.ID).NewUpload(source)
+		uid, err = T.KW.Session(user).Folder(folder.ID).NewUpload(source.Name(), source.Size(), source.ModTime())
 		if err != nil {
 			return err
 		}
@@ -834,7 +840,7 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 	}
 	return
 }
-
+*/
 type ftacopy struct {
 	user string
 	src *FTAObject
@@ -877,11 +883,11 @@ func (T *Broker) CopyFiles(kw_user string, folder KiteObject) {
 		Log("(FTA) %s[%s]: %v", folder.Path, folder.ID, err)
 		return
 	}
-	for _, c := range children {
+	for i, c := range children {
 		if c.Type == "f" {
 			T.filemover<-&ftacopy{
 				user: kw_user,
-				src: &c,
+				src: &children[i],
 				dst: &folder,
 			}
 		}

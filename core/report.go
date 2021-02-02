@@ -133,7 +133,12 @@ func (c Tally) Name() string {
 }
 
 // Add to Tally
-func (c Tally) Add(num int64) {
+func (c Tally) Add(num int) {
+	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+int64(num))
+}
+
+// Add to Tally
+func (c Tally) Add64(num int64) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
 }
 

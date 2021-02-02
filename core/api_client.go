@@ -31,6 +31,7 @@ type APIClient struct {
 	MaxChunkSize    int64                                // Max Upload Chunksize in bytes, min = 1M, max = 68M
 	Retries         uint                                 // Max retries on a failed call
 	TokenStore      TokenStore                           // TokenStore for reading and writing auth tokens securely.
+	db              Database                             // Database for APIClient.
 	secrets         api_secrets                          // Encrypted config options such as signature token, client secret key.
 	limiter         chan struct{}                        // Implements a limiter for API calls/transfers to/from appliance.
 	trans_limiter   chan struct{}                        // Implements a file transfer limiter.
@@ -38,6 +39,12 @@ type APIClient struct {
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
+}
+
+// Configures a database for the API Client
+func (K *APIClient) SetDatabase(db Database) {
+	K.db = db
+	K.TokenStore = KVLiteStore(db.Sub("tokens"))
 }
 
 // Configures maximum number of simultaneous api calls.
@@ -81,7 +88,7 @@ type kvLiteStore struct {
 
 // Wraps KVLite Databse as a auth token store.
 func KVLiteStore(input Database) *kvLiteStore {
-	return &kvLiteStore{input.Table("KWAPI.tokens")}
+	return &kvLiteStore{input.Table("tokens")}
 }
 
 // Save token to TokenStore

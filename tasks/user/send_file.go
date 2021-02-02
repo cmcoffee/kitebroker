@@ -40,7 +40,7 @@ func (T *SendFileTask) Init() (err error) {
 	T.Flags.StringVar(&T.in.subj, "subj", "<email subject>", "Subject of send file email.")
 	T.Flags.StringVar(&T.in.body, "body", "<message body>", "Body of send file email.")
 	T.Flags.MultiVar(&T.in.src, "src", "<folder/file>", "Folder or file you wish to send.")
-	T.Flags.BoolVar(&T.in.empty, "allow_empty", false, "Allow email to be sent without files.")
+	T.Flags.BoolVar(&T.in.empty, "allow_empty", "Allow email to be sent without files.")
 	T.Flags.Order("to","cc","bcc","subj","body")
 
 	err = T.Flags.Parse()

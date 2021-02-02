@@ -15,7 +15,7 @@ type FolderDownloadTask struct {
 	input struct {
 		src        []string
 		dst        string
-		redownload bool
+		track bool
 		owned_only bool
 		move       bool
 	}
@@ -53,12 +53,13 @@ func (T FolderDownloadTask) Desc() string {
 
 // Init function.
 func (T *FolderDownloadTask) Init() (err error) {
-	T.Flags.BoolVar(&T.input.owned_only, "owner", false, "Download folders and files from owned folders only.")
+	T.Flags.BoolVar(&T.input.owned_only, "owner", "Download folders and files from owned folders only.")
 	T.Flags.MultiVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
-	T.Flags.BoolVar(&T.input.redownload, "redownload", false, "Redownload previously downloaded files.")
-	T.Flags.BoolVar(&T.input.move, "move", false, "Remove sources files from kiteworks upon succesful download.")
-	T.Flags.Order("src", "dst", "redownload", "owner", "move")
+	T.Flags.BoolVar(&T.input.track, "track", "Track downloads. (Prevents files from being redownloaded)")
+	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon succesful download.")
+	T.Flags.Order("src", "dst", "track", "owner", "move")
+	T.Flags.CLIArgs("src","dst")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -269,7 +270,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	found := T.db.downloads.Get(download_record_name, &flag)
 
-	if !T.input.redownload && found && flag.Has(complete) {
+	if T.input.track && found && flag.Has(complete) {
 		if T.input.move {
 			clear_from_db(file.ID)
 		} else {
@@ -352,7 +353,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	if fstat == nil || fstat.Size() != file.Size {
 		update_transfer := func(num int) {
-			T.transfered.Add(int64(num))
+			T.transfered.Add(num)
 		}
 		f = TransferCounter(f, update_transfer)
 		_, err := io.Copy(dst, f)

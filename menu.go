@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/nfo"
+	//"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"runtime"
@@ -73,7 +73,10 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	if m.entries == nil {
 		m.entries = make(map[string]*menu_elem)
 	}
-	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(strings.Split(fmt.Sprintf("%s", name), ":")[0], eflag.ReturnErrorOnly)}
+	cmd_name := strings.Split(name, ":")[0]
+	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(cmd_name, eflag.ReturnErrorOnly)}
+	flags.SyntaxName(fmt.Sprintf("%s %s", os.Args[0], cmd_name))
+	flags.ShowSyntax = true
 	flags.AdaptArgs = true
 
 	m.entries[name] = &menu_elem{
@@ -85,12 +88,17 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 		parsed: false,
 	}
 	my_entry := m.entries[name]
-	my_entry.flags.Header = fmt.Sprintf("[%s]: \"%s\"\n", strings.Split(fmt.Sprintf("%s", name), ":")[0], desc)
-	my_entry.flags.BoolVar(&global.debug, "debug", global.debug, NONE)
-	my_entry.flags.BoolVar(&global.snoop, "snoop", global.snoop, NONE)
-	my_entry.flags.BoolVar(&global.sysmode, "quiet", global.sysmode, NONE)
+
+	//my_entry.flags.Header = fmt.Sprintf("[%s]: \"%s\"\n", strings.Split(fmt.Sprintf("%s", name), ":")[0], desc)
+	my_entry.flags.BoolVar(&global.debug, "debug", NONE)
+	my_entry.flags.BoolVar(&global.snoop, "snoop", NONE)
+	my_entry.flags.BoolVar(&global.sysmode, "quiet", NONE)
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
-	my_entry.flags.BoolVar(&global.new_task_file, "new_task", false, NONE)
+	my_entry.flags.BoolVar(&global.new_task_file, "new_task", NONE)
+	my_entry.flags.BoolVar(&global.pause, "pause", NONE)
+	if global.auth_mode == SIGNATURE_AUTH {
+		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", NONE)
+	}
 
 	switch t_flag {
 		case _admin_task:
@@ -147,11 +155,12 @@ func (m *menu) Show() {
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any task, type %s <command> --help.\n", os.Args[0])))
 }
 
-func get_taskstore(name string, is_admin bool) SubStore {
+func get_taskstore(name string, is_admin bool) Database {
 	if is_admin {
 		return global.db.Shared(name)
 	} else {
-		return global.db.Sub(fmt.Sprintf("%s.%s", global.user.Username, name))
+		global.db.Get("kitebroker", "account", &global.user.Username)
+		return global.db.Sub(global.user.Username).Sub(name)
 	}
 }
 
@@ -159,11 +168,19 @@ func write_task_file(name, desc string, flags *FlagSet) {
 	Stdout("[%s]", name)
 	Stdout("\n")
 	get_flag := func(input *eflag.Flag) {
-		if input.Name == "debug" || input.Name == "new_task" || input.Name == "quiet" || input.Name == "repeat" || input.Name == "snoop" || len(input.Name) == 1 {
+		if input.Usage == NONE {
 			return
 		}
-		Stdout("# %s\n", input.Usage)
-		Stdout("%s=%s", input.Name, input.Value)
+		Stdout("# %s\n#\n", input.Usage)
+		if len(input.Value.String()) == 0 {
+			if input.DefValue[0] == '"' {
+				Stdout("#%s = \"%s\"", input.Name, input.DefValue[2:len(input.DefValue)-2])
+			} else {
+				Stdout("#%s = \"%s\"", input.Name, input.DefValue[1:len(input.DefValue)-1])
+			}
+		} else {
+			Stdout("%s = %s", input.Name, input.Value.String())
+		}
 		Stdout("\n")
 	}
 	flags.VisitAll(get_flag)
@@ -266,9 +283,9 @@ func (m *menu) Select(input [][]string) (err error) {
 	}
 
 	init_kw_api()
-	if !global.sysmode {
+	/*if !global.sysmode {
 		nfo.ShowTS()
-	}
+	}*/
 	Info("### %s v%s ###", APPNAME, VERSION)
 	Info(NONE)
 
@@ -287,10 +304,11 @@ func (m *menu) Select(input [][]string) (err error) {
 					source := args[len(args)-1]
 					pre_errors := ErrCount()
 					if source == "cli" {
-						Info("<-- task '%s' started. -->", name)
+						Info("<-- task '%s' started -->", name)
 					} else {
-						Info("<-- task '%s' (%s) started. -->", name, source)
+						Info("<-- task '%s' (%s) started -->", name, source)
 					}
+					Info("\n")
 
 					x.task.KiteBrokerTask_set_session(global.user)
 					x.task.KiteBrokerTask_set_report(NewTaskReport(name, source, x.flags))
@@ -304,9 +322,9 @@ func (m *menu) Select(input [][]string) (err error) {
 					DefaultPleaseWait()
 					report()
 					if source == "cli" {
-						Info("<-- task '%s' stopped. -->", name)
+						Info("<-- task '%s' stopped -->", name)
 					} else {
-						Info("<-- task '%s' (%s) stopped. -->", name, source)
+						Info("<-- task '%s' (%s) stopped -->", name, source)
 					}
 					if i < task_count {
 						Info(NONE)

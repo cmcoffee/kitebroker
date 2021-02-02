@@ -41,17 +41,17 @@ func (T FolderFileExpiryTask) Desc() string {
 }
 
 func (T *FolderFileExpiryTask) Init() (err error) {
-	all_users := T.Flags.Bool("all_users", false, "Apply folder and file limits to everyone in all profiles.")
-	T.Flags.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", false, "Exclude adding expirations to files in My Folder.")
+	all_users := T.Flags.Bool("all_users", "Apply folder and file limits to everyone in all profiles.")
+	T.Flags.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", "Exclude adding expirations to files in My Folder.")
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
-	T.Flags.MultiVar(&T.input.user_emails, "users", "user@domain.com", "Users to specify.")
+	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Users to specify.")
 	T.Flags.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
 	T.Flags.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
 	T.Flags.MultiVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
-	T.Flags.BoolVar(&T.input.resume, "resume", false, "Resume previous update of folder/file expiration.")
-	T.Flags.BoolVar(&T.input.recover_deleted, "undelete_all", false, "Undelete all deleted folders and files.")
-	T.Flags.BoolVar(&T.input.dont_extend, "dont_extend", false, "Don't extend expiration of individual files.")
-	T.Flags.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", false, "Don't modify folder properties.")
+	T.Flags.BoolVar(&T.input.resume, "resume", "Resume previous update of folder/file expiration.")
+	T.Flags.BoolVar(&T.input.recover_deleted, "undelete_all", "Undelete all deleted folders and files.")
+	T.Flags.BoolVar(&T.input.dont_extend, "dont_extend", "Don't extend expiration of individual files.")
+	T.Flags.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", "Don't modify folder properties.")
 	T.Flags.Order("folder_days", "file_days")
 	if err := T.Flags.Parse(); err != nil {
 		return err
