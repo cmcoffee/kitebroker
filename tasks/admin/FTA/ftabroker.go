@@ -747,7 +747,7 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 	x := TransferCounter(file, T.transfered.Add)
 
 
-	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, *folder, x)
+	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, false, *folder, x)
 	return
 } 
 /*

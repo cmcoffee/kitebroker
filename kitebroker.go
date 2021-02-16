@@ -153,12 +153,15 @@ func main() {
 
 	// Now we will go crtical on the config file not loading.
 	if cfg_err != nil {
-		Critical(cfg_err)
+		Notice("No config file found at %s, creating new configuration file.", FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
+		global.cfg.Save()
+		*setup = true
+		//Critical(cfg_err)
 	}
 
 	if *setup {
 		init_database()
-		config_api(true)
+		config_api(true, false)
 		return
 	}
 

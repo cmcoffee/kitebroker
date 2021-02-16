@@ -163,7 +163,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 	x := TransferCounter(f, T.transfered.Add)
 	defer f.Close()
 
-	_, err = T.KW.Upload(finfo.Name(), finfo.Size(), finfo.ModTime(), T.input.overwrite_newer, !T.input.dont_overwrite, *folder, x)
+	_, err = T.KW.Upload(finfo.Name(), finfo.Size(), finfo.ModTime(), T.input.overwrite_newer, !T.input.dont_overwrite, true, *folder, x)
 	return
 }
 

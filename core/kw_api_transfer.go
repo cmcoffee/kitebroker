@@ -426,7 +426,7 @@ func (S KWSession) newFolderUpload(folder_id int, filename string, size int64, m
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
+func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version, resume bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
 	var flags BitFlag
 
 	const (
@@ -462,16 +462,26 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	target := fmt.Sprintf("%d:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
 	uploads := s.db.Table("uploads")
 
-	var uid int
-
-	if uploads.Get(target, &UploadRecord) {
-		if output, err := s.uploadFile(filename, UploadRecord.ID, src); err != nil {
-			Debug("Error attempting to resume file: %s", err.Error())
+	delete_upload := func(target string) {
+		if uploads.Get(target, &UploadRecord) {
 			s.Call(APIRequest{
 				Method: "DELETE",
 				Path: SetPath("/rest/uploads/%d", UploadRecord.ID),
 			})
 			uploads.Unset(target)
+		}
+	}
+
+	if !resume {
+		delete_upload(target)
+	}
+
+	var uid int
+
+	if uploads.Get(target, &UploadRecord) {
+		if output, err := s.uploadFile(filename, UploadRecord.ID, src); err != nil {
+			Debug("Error attempting to resume file: %s", err.Error())
+			delete_upload(target)
 		} else {
 			uploads.Unset(target)
 			return output, err
