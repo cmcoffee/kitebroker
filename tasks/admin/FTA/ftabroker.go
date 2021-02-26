@@ -350,6 +350,10 @@ func (T *Broker) FixFolder(folder string) {
 	if err == nil && kw_user == NONE {
 		return
 	}
+	if T.manager != NONE {
+		kw_user = T.manager
+		Log("Override given for manager: %s", T.manager)
+	}
 	Log("Processing folder '%s' as '%s'.", folder, kw_user)
 	T.ProcessFolders(kw_user, *target)
 }
@@ -551,7 +555,17 @@ func (T *Broker) FindManager(folder string) (kw_user string, kw_folder *KiteObje
 	fta_managers := T.GetMembers(T.perm_map[folder], OWNER, MANAGER)
 
 	if T.manager != NONE {
-		fta_managers = append(fta_managers, T.manager)
+		found := false 
+		mgr := strings.ToLower(T.manager)
+		for _, v := range fta_managers {
+			if strings.ToLower(v) == mgr {
+				found = true
+			}
+		}
+		if !found {
+			return NONE, nil, nil
+		} 
+		fta_managers = append([]string{T.manager}, fta_managers[0:]...)
 	}
 
 	var new_managers []string
@@ -727,7 +741,7 @@ func (T *Broker) FileMover() {
 			defer wg.Done()
 			err := T.UploadFile(msg.user, msg.src, msg.dst)
 			if err != nil {
-				Err("(kiteworks) %s: %v", msg.src.Name(), err)
+				Err("(%s) %s: %v", msg.user, msg.src.Name(), err)
 			}
 		}()
 
@@ -865,6 +879,7 @@ func (T *Broker) CopyFiles(kw_user string, folder KiteObject) {
 	if !T.files {
 		return
 	}
+
 	fta_user, err := T.FindDownloader(folder.Path)
 	if err != nil {
 		Err(err)

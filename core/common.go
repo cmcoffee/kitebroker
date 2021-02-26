@@ -10,6 +10,7 @@ import (
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/xsync"
 	"github.com/cmcoffee/go-snuglib/kvlite"
+	"github.com/cmcoffee/go-snuglib/options"
 	"io"
 	"os"
 	"path/filepath"
@@ -219,10 +220,36 @@ var (
 	HumanSize       = nfo.HumanSize
 )
 
-var KiteBrokerApp = struct{
+var KiteBrokerCore = struct{
 	ErrBadPadlock error
+	OpenDB func(filename string, padlock ...byte) (kvlite.Store, error)
+	CryptReset func(filename string) (err error)
+	LogFile func(filename string, max_size_mb uint, max_rotation uint) (io.Writer, error) 
+	SetFile func(flag uint32, input io.Writer)
+	SetLogOutput func(flag uint32, w io.Writer)
+	LOG_FLAG_STD uint32
+	LOG_FLAG_AUX uint32
+	LOG_FLAG_DEBUG uint32
+	LOG_FLAG_ERROR uint32
+	LOG_FLAG_NOTICE uint32
+	LOG_FLAG_INFO uint32
+	LOG_FLAG_WARN uint32
+	Options func(header, footer string, exit_char rune) *options.Options
 }{
 	ErrBadPadlock: kvlite.ErrBadPadlock,
+	OpenDB:     kvlite.Open,
+	CryptReset: kvlite.CryptReset,
+	LogFile:    nfo.LogFile,
+	SetFile:    nfo.SetFile,
+	SetLogOutput: nfo.SetOutput,
+	LOG_FLAG_STD:   nfo.STD,
+	LOG_FLAG_AUX:   nfo.AUX,
+	LOG_FLAG_DEBUG: nfo.DEBUG,
+	LOG_FLAG_ERROR: nfo.ERROR,
+	LOG_FLAG_NOTICE: nfo.NOTICE,
+	LOG_FLAG_INFO: nfo.INFO,
+	LOG_FLAG_WARN: nfo.WARN,
+	Options: options.NewOptions,
 }
 
 var (
