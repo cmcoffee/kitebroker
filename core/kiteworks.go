@@ -107,8 +107,8 @@ func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err
 	}, -1, 1000)
 }
 
-func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bool, params ...interface{}) (err error) {
-	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": false, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
+func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bool, notify_files_added bool, params ...interface{}) (err error) {
+	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": notify_files_added, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
 	err = s.Call(APIRequest{
 		Method: "POST",
 		Path:   SetPath("/rest/folders/%d/members", s.folder_id),

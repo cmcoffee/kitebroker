@@ -115,6 +115,7 @@ func (W *web_downloader) Close() error {
 	return nil
 }
 
+// Seek an offset within the download, added Range header to request.
 func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 	if offset < 0 {
 		return 0, fmt.Errorf("Can't read before the start of the file.")
@@ -178,7 +179,6 @@ func (S *APIClient) Download(req *http.Request, reqs ...*http.Request) ReadSeekC
 type streamReadCloser struct {
 	chunkSize int64
 	size      int64
-	r_buff    []byte
 	w_buff    *bytes.Buffer
 	source    io.ReadCloser
 	eof       bool
@@ -186,54 +186,67 @@ type streamReadCloser struct {
 	mwrite    *multipart.Writer
 }
 
+// Dummy close function for requst.Body.
 func (s *streamReadCloser) Close() (err error) {
-	return s.mwrite.Close()
+	return nil
 }
 
-// Read function fro streamReadCloser, reads triggers a read from source->writes to bytes buffer via multipart writer->reads from bytes buffer.
+// Reads bytes from source, pushes through mimewriter to bytes.Buffer, and reads from bytes.Buffer.
 func (s *streamReadCloser) Read(p []byte) (n int, err error) {
-	buf_len := s.w_buff.Len()
-
-	if buf_len > 0 {
-		n, err = s.w_buff.Read(p)
-		return
+	
+	// If we have stuff in our output buffer, read from there.
+	// If not, reset the bytes buffer and read from source.
+	if s.w_buff.Len() > 0 {
+		return s.w_buff.Read(p)
+	} else {
+		s.w_buff.Reset()
 	}
 
-	// Clear our output buffer.
-	s.w_buff.Truncate(0)
-
+	// We've reached the EOF, return to process.
 	if s.eof {
-		s.mwrite.Close()
 		return 0, io.EOF
 	}
 
-	if !s.eof && s.chunkSize-s.size <= 4096 {
-		s.r_buff = s.r_buff[0 : s.chunkSize-s.size]
-		s.eof = true
-	}
+	// Get length of incoming []byte slice.
+	p_len := int64(len(p))
 
-	n, err = s.source.Read(s.r_buff)
-	if err != nil && err == io.EOF {
-		s.eof = true
-	} else if err != nil {
-		return -1, err
-	}
+	if sz := s.chunkSize-s.size; sz > 0 {
+		if sz > p_len {
+			sz = p_len
+		}
 
-	s.size = s.size + int64(n)
-	if n > 0 {
-		n, err = s.f_writer.Write(s.r_buff[0:n])
+		// Read into the byte slice provided from source.
+		n, err := s.source.Read(p[0:sz])
+		if err != nil {
+			if err == io.EOF {
+				s.eof = true
+			} else {
+				return -1, err
+			}
+		}
+	
+		// We're writing to a bytes.Buffer.
+		_, err = s.f_writer.Write(p[0:n])
 		if err != nil {
 			return -1, err
 		}
-		if s.eof {
-			s.mwrite.Close()
+
+		// Clear out the []byte slice provided.
+		for i := 0; i < n; i++ {
+			p[i] = 0
 		}
-		for i := 0; i < len(s.r_buff); i++ {
-			s.r_buff[i] = 0
-		}
+
+		s.size = s.size + int64(n)
+	} else {
+		s.eof = true
 	}
-	n, err = s.w_buff.Read(p)
-	return
+
+	// Close out the mime stream.
+	if s.eof {
+		s.mwrite.Close()
+	}
+
+	return s.w_buff.Read(p)
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
@@ -356,7 +369,6 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		post := &streamReadCloser{
 			ChunkSize,
 			0,
-			make([]byte, 4096),
 			w_buff,
 			iotimeout.NewReadCloser(src, s.RequestTimeout),
 			false,
@@ -365,17 +377,25 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		}
 
 		req.Body = post
-		defer req.Body.Close()
+
+		close_req := func(req *http.Request) {
+			if req.Body != nil {
+				req.Body.Close()
+			}
+		}
 
 		resp, err := s.Do(req)
 		if err != nil {
+			close_req(req)
 			return nil, err
 		}
 
 		if err := s.DecodeJSON(resp, &resp_data); err != nil {
+			close_req(req)
 			return nil, err
 		}
 
+		close_req(req)
 		ChunkIndex++
 		transfered_bytes = transfered_bytes + ChunkSize
 		if total_bytes == 0 {

@@ -438,7 +438,11 @@ func config_api(configure_api, test_required bool) {
 			kw.SetLimiter(1)
 			kw.SetTransferLimiter(1)
 		} else {
-			kw.SetLimiter(*max_api_calls)
+			if !global.debug {
+				kw.SetLimiter(*max_api_calls)
+			} else {
+				kw.SetLimiter(1)
+			}
 			kw.SetTransferLimiter(*max_file_transfer)
 		}
 		global.kw = kw

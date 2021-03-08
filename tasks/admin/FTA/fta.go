@@ -63,34 +63,47 @@ func (s FTASession) Workspace(workspace_id string) fta_rest_workspace {
 }
 
 func (T Broker) Find(s *FTASession, workspace string) (result FTAObject, err error) {
-
 	workspaces := SplitPath(workspace)
-	//var parent_ws, parent_id string
-
-	//if len(workspaces) > 1 {
-	//	parent_ws = strings.Join(workspaces[0:len(workspaces)-2], "/")
-	//}
-
-	//T.cache.Get("workspaces", parent_ws, &parent_id)
 
 	current, err := s.Workspace(NONE).Children()
 	if err != nil {
 		return
 	}
 
+	// Need to look for nested workspaces from users who weren't added at the top-level.
+	if len(workspaces) > 1 {
+		for _, v := range current {
+			found := false
+			if v.Path == workspace {
+				return v, nil
+			}
+			split_path := strings.Split(v.Path, "/")
+			for i, p := range split_path {
+				if workspaces[0] == p {
+					if len(workspaces) > 1 {
+						found = true
+						workspaces = append(workspaces[:0], workspaces[1:]...)
+					} else if i == len(split_path) - 1 {
+							return v, nil
+					}
+				}
+			}
+			if found {
+				current, err = s.Workspace(v.ID).Children()
+				if err != nil {
+					return
+				}
+				break
+			}
+		}
+	}
+
+	// Search for workspace path.
 	for i, v := range workspaces {
 		found := false
 		for _, ws := range current {
-			//parent_ws = strings.Join(workspaces[0:i], "/")
-			//if parent_ws != NONE {
-			//	Log("%s:%s", fmt.Sprintf("%s/%s", parent_ws, ws.Name()), ws.ID)
-			//	T.cache.Set("workspaces", fmt.Sprintf("%s/%s", parent_ws, ws.Name()), ws.ID)
-			//} else {
-			//	T.cache.Set("workspaces", ws.Name(), ws.ID)
-			//}
 			if ws.Name() == v {
 				if i == len(workspaces)-1 {
-					ws.full_path = workspace
 					return ws, nil
 				}
 				current, err = s.Workspace(ws.ID).Children()
@@ -98,6 +111,7 @@ func (T Broker) Find(s *FTASession, workspace string) (result FTAObject, err err
 					return
 				}
 				found = true
+				break
 			}
 		}
 		if found == false {
@@ -127,7 +141,7 @@ func (f fta_rest_workspace) Children(params ...interface{}) (children []FTAObjec
 			Method: "POST",
 			Path:   "/seos/workspaces/list",
 			Output: &WS,
-			Params: SetParams(params, PostForm{"id": f.workspace_id, "return_fields": "id,name,description,file_handle,size,owner,creator,parent_id,last_update_time", "return_items": "all", "order_by": "id", "order_type": "asc", "offset": offset, "limit": 20}),
+			Params: SetParams(params, PostForm{"id": f.workspace_id, "return_fields": "id,name,description,file_handle,size,owner,creator,parent_id,last_update_time,path", "return_items": "all", "order_by": "id", "order_type": "asc", "offset": offset, "limit": 20}),
 		})
 		if err != nil {
 			return
@@ -212,7 +226,7 @@ type FTAObject struct {
 	Owner          string `json:"owner"`
 	Creator        string `json:"creator"`
 	ModTimeStr     string `json:"last_update_time"`
-	full_path      string `json:"full_path,omit_empty"`
+	Path           string `json:"path"`
 }
 
 func (T FTAObject) Name() string {

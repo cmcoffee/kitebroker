@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
-	//"time"
+	"time"
 	"io"
 )
 
@@ -109,6 +109,19 @@ func (T *Broker) read_csv(file string) (output map[string]map[string]int, err er
 			continue
 		}
 
+		if len(T.workspace) > 0 {
+			found := false
+			for _, v := range T.workspace {
+				if strings.Split(o[ws_path], "/")[0] == v {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+
 		output[o[ws_path]] = make(map[string]int)
 
 		var owner string
@@ -142,6 +155,10 @@ func (T *Broker) read_csv(file string) (output map[string]map[string]int, err er
 				output[o[ws_path]][v] = DOWNLOADER
 				T.cache.Set("all_users", v, 1)
 			}
+		}
+
+		if len(output[o[ws_path]]) == 0 {
+			Debug("%s: No users, %v.", o[ws_path], raw_text)
 		}
 	}
 
@@ -246,10 +263,11 @@ func (T *Broker) Main() (err error) {
 		T.api.Snoop = T.KW.Snoop
 		T.api.ProxyURI = T.KW.ProxyURI
 		T.api.AgentString = T.KW.AgentString
-		T.api.RequestTimeout = T.KW.RequestTimeout
-		T.api.ConnectTimeout = T.KW.ConnectTimeout
+		T.api.RequestTimeout = time.Duration(time.Minute * 3)
+		T.api.ConnectTimeout = time.Minute
 		T.api.APIClient.NewToken = T.api.newFTAToken
 		T.api.ErrorScanner = T.api.ftaError
+		T.api.Snoop = T.KW.Snoop
 		T.api.TokenErrorCodes = []string{"221", "120", "ERR_AUTH_UNAUTHORIZED", "INVALID_GRANT"}
 		T.filemover = make(chan *ftacopy, 1024)
 		T.uploads = T.DB.Table("uploads")
@@ -258,32 +276,6 @@ func (T *Broker) Main() (err error) {
 	}
 
 	T.kw_perm_map = make(map[int]map[string]int)
-
-	if len(T.workspace) > 0 {
-		for k, _ := range T.perm_map {
-			found := false
-			for i := 0; i < len(T.workspace); i++ {
-				if strings.Split(strings.ToLower(k), "/")[0] == strings.ToLower(T.workspace[i]) {
-					found = true
-				}
-			}
-			if !found {
-				delete(T.perm_map, k)
-			}
-		}
-
-		lower := make(map[string]struct{})
-
-		for k, _ := range T.perm_map {
-			lower[strings.ToLower(k)] = struct{}{}
-		}
-
-		for _, ws := range T.workspace {
-			if _, found := lower[strings.ToLower(ws)]; !found {
-				Err("%s: Unable to find workspace in csv.", ws)
-			}
-		}
-	}
 
 	wg := NewLimitGroup(25)
 
@@ -392,8 +384,8 @@ func (T *Broker) ProcessFolders(kw_user string, target KiteObject) {
 			}
 		}
 
-		T.SetPermissions(kw_user, folder)
 		T.CopyFiles(kw_user, folder)
+		T.SetPermissions(kw_user, folder)
 
 		children, err := T.KW.Session(kw_user).Folder(folder.ID).Folders()
 		if err != nil {
@@ -512,7 +504,7 @@ func (T *Broker) CreatePaths(user, folder string) (kw_user string, kw_folder *Ki
 
 	base, err := T.KW.Session(kw_user).Folder(0).ResolvePath(folder)
 	if err != nil {
-		return NONE, nil, fmt.Errorf("%s: %s: %v", folder, kw_user, err)
+		return NONE, nil, fmt.Errorf("%s - %v", kw_user, err)
 	}
 
 	kw_folder = &base
@@ -602,7 +594,7 @@ func (T *Broker) FindManager(folder string) (kw_user string, kw_folder *KiteObje
 	for i, u := range fta_managers {
 		sess := T.KW.Session(u)
 		if result, err := sess.Folder(0).Find(folder); err != nil {
-			if err != ErrNotFound && !IsAPIError(err, "INVALID_GRANT") {
+			if err != ErrNotFound && !IsAPIError(err, "INVALID_GRANT", "223")  {
 				Err("%s: (%s): %v", folder, u, err)
 			} 
 			continue
@@ -678,7 +670,7 @@ func (T *Broker) SetPermissions(kw_user string, target KiteObject) {
 					T.cache.Set("created", u, 0)
 				} 
 			}
-			if err := kw_sess.Folder(target.ID).AddUsersToFolder(users, role_id, T.notify); err != nil {
+			if err := kw_sess.Folder(target.ID).AddUsersToFolder(users, role_id, T.notify, true); err != nil {
 				if !IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED", "ERR_ENTITY_IS_OWNER", "ERR_ENTITY_USER_HAS_INSUFFICIENT_PERMISSIONS") {
 					return err
 				}
@@ -762,99 +754,10 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 
 
 	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, false, *folder, x)
+	x.Close()
 	return
 } 
-/*
-	var UploadRecord struct {
-		Name string
-		ID int
-		ClientModified time.Time
-		Size int64
-	}
 
-	transfer_file := func(user, fta_id string, uid int) (err error) {
-		upload_counter := func(num int) {
-			T.transfered.Add(num)
-		}
-
-		file, err := T.api.Session(user).File(fta_id).Download()
-		if err != nil {
-			return err
-		}
-
-		x := TransferCounter(file, upload_counter)
-		_, err = T.KW.Session(user).Upload(source.Name(), uid, x)
-		return
-	}
-
-	target := fmt.Sprintf("%d:%s", folder.ID, source.Name())
-
-	if T.uploads.Get(target, &UploadRecord) {
-		if UploadRecord.Name == source.Name() && UploadRecord.Size == source.Size() && UploadRecord.ClientModified == source.ModTime() {
-			if err := transfer_file(user, source.ID, UploadRecord.ID); err != nil {
-				Debug("Error attempting to resume file: %s", err.Error())
-			} else {
-				T.uploads.Unset(target)
-				return nil
-			}
-		}
-	} 
-
-	kw_file_info, err := T.KW.Session(user).Folder(folder.ID).Find(source.Name())
-	if err != nil && err != ErrNotFound {
-		return err
-	}
-	var uid int
-	//Log(kw_file_info)
-
-	if kw_file_info.ID > 0 {
-		modified, _ := ReadKWTime(kw_file_info.ClientModified)
-
-		// File on kiteworks is newer than local file.
-		if modified.UTC().Unix() > source.ModTime().UTC().Unix() {
-				T.uploads.Unset(target)
-				return nil
-			// Local file is newer than kiteworks file.
-		} else if modified.UTC().Unix() < source.ModTime().UTC().Unix() {
-			uid, err = T.KW.File(kw_file_info.ID).NewVersion(source.Name(), source.Size(), source.ModTime())
-			if err != nil {
-				return err
-			}
-			// Local file gas same timestamp as kiteworks file.
-		} else {
-			if kw_file_info.Size == source.Size() {
-				T.uploads.Unset(target)
-				return nil
-			}
-		}
-	} else {
-		uid, err = T.KW.Session(user).Folder(folder.ID).NewUpload(source.Name(), source.Size(), source.ModTime())
-		if err != nil {
-			return err
-		}
-	}
-	UploadRecord.Name = source.Name()
-	UploadRecord.ID = uid
-	UploadRecord.ClientModified = source.ModTime()
-	UploadRecord.Size = source.Size()
-
-	T.uploads.Set(target, &UploadRecord)
-
-	for i := uint(0); i <= T.KW.Retries; i++ {
-		err = transfer_file(user, source.ID, uid)
-		if err == nil || IsAPIError(err) {
-			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
-				Debug("%s/%s: %s (%d/%d)", folder.Path, UploadRecord.Name, err.Error(), i+1, T.KW.Retries+1)
-				T.KW.BackoffTimer(i)
-				continue
-			}
-			T.uploads.Unset(target)
-		}
-		break
-	}
-	return
-}
-*/
 type ftacopy struct {
 	user string
 	src *FTAObject
@@ -863,10 +766,16 @@ type ftacopy struct {
 
 func (T *Broker) FindDownloader(folder_path string) (fta_user string, err error) {
 	users := T.GetMembers(T.perm_map[folder_path], OWNER, MANAGER, COLLABORATOR, DOWNLOADER)
+
+	if len(users) == 0 {
+		return NONE, nil
+	}
+
+	Debug("%s: %v", folder_path, T.perm_map[folder_path])
 	for _, u := range users {
 		_, err := T.Find(T.api.Session(u), folder_path)
-		if err != nil && err != ErrNotFound && !IsAPIError(err, "INVALID_GRANT") {
-			Warn("(FTA) %s: Error attempting to find folder: %v", folder_path, err)
+		if err != nil && err != ErrNotFound && !IsAPIError(err, "INVALID_GRANT", "223") {
+			Debug("(FTA) (%s) %s: Error attempting to find folder: %v", u, folder_path, err)
 		} else if err == nil {
 			return u, nil
 		}
@@ -884,6 +793,11 @@ func (T *Broker) CopyFiles(kw_user string, folder KiteObject) {
 	if err != nil {
 		Err(err)
 		return
+	}
+
+	// Likely this is a folder we found on kiteworks, but is not in csv.
+	if fta_user == NONE {
+		fta_user = kw_user
 	}
 
 	fta_session := T.api.Session(fta_user)
