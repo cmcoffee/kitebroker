@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 	"io"
 )
 
@@ -258,13 +257,13 @@ func (T *Broker) Main() (err error) {
 	T.wg = NewLimitGroup(10)
 
 	if T.files {
-		T.api.TokenStore = KVLiteStore(T.DB.Sub(T.api.Server))
+		T.api.TokenStore = KVLiteStore(OpenCache())
 		T.api.Retries = T.KW.Retries
 		T.api.Snoop = T.KW.Snoop
 		T.api.ProxyURI = T.KW.ProxyURI
 		T.api.AgentString = T.KW.AgentString
-		T.api.RequestTimeout = time.Duration(time.Minute * 3)
-		T.api.ConnectTimeout = time.Minute
+		T.api.RequestTimeout = T.KW.RequestTimeout
+		T.api.ConnectTimeout = T.KW.ConnectTimeout
 		T.api.APIClient.NewToken = T.api.newFTAToken
 		T.api.ErrorScanner = T.api.ftaError
 		T.api.Snoop = T.KW.Snoop
@@ -750,9 +749,8 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 	if err != nil { 
 		return err
 	}
+	
 	x := TransferCounter(file, T.transfered.Add)
-
-
 	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, false, *folder, x)
 	x.Close()
 	return

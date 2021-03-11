@@ -67,9 +67,13 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 		}
 		W.reqs = append(W.reqs[:0], W.reqs[1:]...)
 		W.flag.Set(wd_started)
-		W.resp, err = W.api.Do(W.req)
-		if err != nil {
-			return 0, err
+		retries := int(W.api.Retries)
+		for i := 0; i < retries; i++ {
+			W.resp, err = W.api.Do(W.req)
+			if err != nil && i == retries {
+				return 0, err
+			}
+			W.api.BackoffTimer(uint(i))
 		}
 
 		if W.resp.StatusCode < 200 || W.resp.StatusCode >= 300 {

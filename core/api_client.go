@@ -539,6 +539,7 @@ func (s APIClient) Do(req *http.Request) (resp *http.Response, err error) {
 
 	transport.TLSHandshakeTimeout = s.ConnectTimeout
 	transport.ResponseHeaderTimeout = s.RequestTimeout
+	transport.DisableKeepAlives = true
 
 	client := http.Client{
 		Transport: &transport,
@@ -563,6 +564,7 @@ func (s APIClient) NewRequest(username, method, path string) (req *http.Request,
 		req.Header.Set("User-Agent", s.AgentString)
 	}
 	req.Header.Set("Referer", "https://"+s.Server+"/")
+	req.Close = true
 
 	if err := s.setToken(username, req); err != nil {
 		return nil, err
