@@ -1,16 +1,16 @@
 package FTA
 
 import (
-	"bytes"
+	//"bytes"
 	"crypto/hmac"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/iotimeout"
+	//"github.com/cmcoffee/go-snuglib/iotimeout"
 	. "github.com/cmcoffee/kitebroker/core"
-	"io/ioutil"
+	//"io/ioutil"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -35,7 +35,9 @@ func (F FTASession) Call(api_req APIRequest) (err error) {
 	api_req.Header = map[string][]string{
 		"OAUTH_PARAM": []string{"oauth_token"},
 	}
-	return F.APIClient.Call(F.Username, api_req)
+	api_req.Username = F.Username
+	
+	return F.APIClient.Call(api_req)
 }
 
 // Reads FTA rest errors and interprets them.
@@ -123,22 +125,14 @@ func (T FTAClient) newFTAToken(username string) (auth *Auth, err error) {
 		}
 	}
 
-	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
-	req.Body = iotimeout.NewReadCloser(req.Body, T.RequestTimeout)
-	defer req.Body.Close()
-
-	resp, err := T.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
 	var fta_auth struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		Expires      string `json:"expires_in"`
 	}
 
-	if err := T.DecodeJSON(resp, &fta_auth); err != nil {
+	err = T.Fulfill(&APISession{NONE, req}, []byte(postform.Encode()), &fta_auth)
+	if err != nil {
 		return nil, err
 	}
 

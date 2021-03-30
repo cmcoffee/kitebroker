@@ -17,6 +17,7 @@ type Database interface {
 	CountKeys(table string) int
 	Tables() []string
 	Table(table string) Table
+	Close()
 }
 
 // Wrapper around go-kvlite.

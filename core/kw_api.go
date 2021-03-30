@@ -81,7 +81,9 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 	}
 
 	api_req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_req.Version))
-	return K.APIClient.Call(K.Username, api_req)
+	api_req.Username = K.Username
+	
+	return K.APIClient.Call(api_req)
 }
 
 // Call handler which allows for easier getting of multiple-object arrays.
@@ -340,12 +342,8 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
 	defer req.Body.Close()
 
-	resp, err := K.Do(req)
+	err = K.Fulfill(&APISession{NONE, req}, nil, &auth)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := K.DecodeJSON(resp, &auth); err != nil {
 		return nil, err
 	}
 

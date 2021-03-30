@@ -39,11 +39,134 @@ type APIClient struct {
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
+	cache           Database
+}
+
+type APISession struct {
+	Username string
+	*http.Request
+}
+/*
+// reAuth attempts to get a new token on a token related error.
+func (s APIClient) reAuth(req *APISession) error {
+	if s.secrets.signature_key == nil {
+			existing, err := s.TokenStore.Load(req.Username)
+			if err != nil {
+				return err
+			}
+			if token, err := s.refreshToken(req.Username, existing); err == nil {
+				if err := s.TokenStore.Save(req.Username, token); err != nil {
+					return err
+				}
+				if err = s.setToken(req); err == nil {
+					return nil
+				}
+			}
+			s.TokenStore.Delete(req.Username)
+			Critical(fmt.Errorf("Access token is no longer valid."))
+		}
+		s.TokenStore.Delete(req.Username)
+		return s.setToken(req)
+}
+*/
+const (
+	_is_retry_error = 1 << iota
+	_is_token_error
+
+)
+
+// Check if error is retryable.
+func (s APIClient) IsRetryError(attempt_id string, attempt int, username string, path string, err error) bool {
+	var flag BitFlag
+
+	if !IsBlank(username) && s.isTokenError(err) {
+		flag.Set(_is_token_error)
+		flag.Set(_is_retry_error)
+	} else {
+		if s.isRetryError(err) || !IsAPIError(err) {
+			flag.Set(_is_retry_error)
+		}
+	}
+
+	if flag.Has(_is_token_error|_is_retry_error) {
+		if attempt == 0 {
+			if s.Retries > 0 {
+				Debug("[#%s]: %s -> %s: %s (will retry)", attempt_id, username, path, err.Error())
+			}
+		} else {
+			Debug("[#%s]: %s (retry %d/%d)", attempt_id, err.Error(), attempt+1, s.Retries)
+		}
+	}
+
+	if flag.Has(_is_token_error) {
+		if !IsBlank(username) {
+			s.cache.Set("revoke_tokens", username, 1)
+			s.BackoffTimer(uint(attempt))
+			return true
+		}
+		return false
+	}
+
+	if flag.Has(_is_retry_error) {
+		s.BackoffTimer(uint(attempt))
+		return true
+	}
+
+	return false
+}
+
+// Fulfill does a safe wrapper around the request so that it can retry in the event of failure.
+func (s *APIClient) Fulfill(req *APISession, body []byte, output interface{}) error {
+	var report_success bool
+
+	close_resp := func(resp *http.Response) {
+		if resp != nil && resp.Body != nil {
+			resp.Body.Close()
+		}
+	}
+
+	attempt_id := string(RandBytes(8))
+
+	for i := 0; i <= int(s.Retries); i++ {
+
+		if req.Body == nil {
+			req.Body = iotimeout.NewReadCloser(ioutil.NopCloser(bytes.NewReader(body)), s.RequestTimeout)
+		} else {
+			req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
+			i = int(s.Retries) // if the request body is already set, we will need to return to caller instead.
+		}
+
+		resp, err := s.SendRequest(req)
+
+		if err == nil && resp != nil {
+			resp.Body = iotimeout.NewReadCloser(resp.Body, s.RequestTimeout)
+			err = s.DecodeJSON(resp, output)
+		}
+
+		if err != nil {
+			if s.IsRetryError(attempt_id, i, req.Username, req.Request.URL.Path, err) {
+				report_success = true
+				close_resp(resp)
+				continue
+			} else {
+				close_resp(resp)
+				return err
+			}
+		} else {
+			if report_success {
+				Debug("[#%s]: Success!!! (retry %d/%d)", attempt_id, i+1, s.Retries)
+			}
+			close_resp(resp)
+			return err
+		}
+	}
+	return nil
 }
 
 // Configures a database for the API Client
 func (K *APIClient) SetDatabase(db Database) {
 	K.db = db
+	K.cache = OpenCache()
 	K.TokenStore = KVLiteStore(db.Sub("tokens"))
 }
 
@@ -67,6 +190,7 @@ func (K *APIClient) SetTransferLimiter(max_transfers int) {
 	}
 }
 
+// Returns the configured TransferLimit.
 func (K *APIClient) GetTransferLimit() int {
 	if K.trans_limiter != nil {
 		return cap(K.trans_limiter)
@@ -169,8 +293,9 @@ func (K APIClient) GetClientSecret() string {
 	return secret
 }
 
-// APIRequest model
+// APISession model
 type APIRequest struct {
+	Username string
 	Version int
 	Header  http.Header
 	Method  string
@@ -256,12 +381,12 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 }
 
 // Add Bearer token to APIClient requests.
-func (s *APIClient) setToken(username string, req *http.Request) (err error) {
+func (s *APIClient) setToken(req *APISession) (err error) {
 	if s.TokenStore == nil {
 		return fmt.Errorf("APIClient: TokenStore not initalized.")
 	}
 
-	token, err := s.TokenStore.Load(username)
+	token, err := s.TokenStore.Load(req.Username)
 	if err != nil {
 		return err
 	}
@@ -270,7 +395,7 @@ func (s *APIClient) setToken(username string, req *http.Request) (err error) {
 	if token != nil {
 		if token.Expires <= time.Now().Unix() {
 			// First attempt to use a refresh token if there is one.
-			token, err = s.refreshToken(username, token)
+			token, err = s.refreshToken(req.Username, token)
 			if err != nil && s.secrets.signature_key == nil {
 				Debug("Unable to use refresh token: %v", err)
 				Fatal("Access token has expired, must reauthenticate for new access token.")
@@ -283,16 +408,17 @@ func (s *APIClient) setToken(username string, req *http.Request) (err error) {
 		if s.NewToken == nil {
 			return fmt.Errorf("APIClient: NewToken not initalized.")
 		}
-		s.TokenStore.Delete(username)
-		token, err = s.NewToken(username)
+		s.TokenStore.Delete(req.Username)
+		token, err = s.NewToken(req.Username)
 		if err != nil {
 			return err
 		}
 	}
 
 	if token != nil {
+		req.Header.Set("KiteBrokerUser", req.Username)
 		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-		if err := s.TokenStore.Save(username, token); err != nil {
+		if err := s.TokenStore.Save(req.Username, token); err != nil {
 			return err
 		}
 	}
@@ -341,15 +467,6 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 		}
 	}
 
-	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
-	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
-	defer req.Body.Close()
-
-	resp, err := K.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
 	var new_token struct {
 		AccessToken  string      `json:"access_token"`
 		Scope        string      `json:"scope"`
@@ -357,7 +474,8 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 		Expires      interface{} `json:"expires_in"`
 	}
 
-	if err := K.DecodeJSON(resp, &new_token); err != nil {
+	err = K.Fulfill(&APISession{NONE, req}, []byte(postform.Encode()), new_token)
+	if err != nil {
 		return nil, err
 	}
 
@@ -415,6 +533,96 @@ func (K APIClient) spanner(input interface{}) string {
 	}
 }
 
+type readCloser struct {
+	closer func() error
+	io.Reader
+}
+
+func (r readCloser) Close() (err error) {
+	return r.closer()
+}
+
+
+func newReadCloser(src io.Reader, close_func func() error) io.ReadCloser {
+	return readCloser{
+		close_func,
+		src,
+	}
+}
+
+func snoopReader(src io.ReadCloser, min int) (snoop_reader io.Reader, output io.ReadCloser, err error) {
+
+	var n int
+	buffer := make([]byte, min)
+
+	n, err = io.ReadAtLeast(src, buffer, min)
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, src, err
+	}
+
+	buffer = buffer[0:n]
+
+	snoop_reader = bytes.NewReader(buffer)
+
+	if n == min {
+		output = readCloser{src.Close, io.MultiReader(bytes.NewReader(buffer), src)}
+	} else {
+		output = readCloser{src.Close, bytes.NewReader(buffer)}
+	}
+
+	err = nil
+
+	return 
+}
+
+func (K APIClient) RespErrorCheck(resp *http.Response) (err error) {
+	var snoop_reader io.Reader
+
+	if resp == nil {
+		return nil
+	}
+
+	snoop_reader, resp.Body, err = snoopReader(iotimeout.NewReadCloser(resp.Body, K.RequestTimeout), 65536)
+	if err != nil {
+		return err
+	}
+
+	msg, err := ioutil.ReadAll(snoop_reader)
+	if err != nil {
+		return err
+	}
+
+	if K.Snoop {
+		var snoop_output map[string]interface{}
+		Debug("<-- RESPONSE STATUS: %s", resp.Status)
+		dec := json.NewDecoder(bytes.NewReader(msg))
+		dec.Decode(&snoop_output)
+		if len(snoop_output) > 0 {
+			o, err := json.MarshalIndent(&snoop_output, "", "  ")
+			if err == nil {
+				Debug("<-- RESPONSE BODY: \n%s\n", string(o))
+			}
+		}
+	} 
+
+	if K.ErrorScanner == nil {
+		K.ErrorScanner = kwapiError
+	}
+
+	err = K.ErrorScanner(msg)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
+		return nil
+	}
+	
+	e := K.NewAPIError()
+	e.Register(fmt.Sprintf("HTTP_STATUS_%d", resp.StatusCode), resp.Status)
+	return e
+}
+
 // Decodes JSON response body to provided interface.
 func (K APIClient) DecodeJSON(resp *http.Response, output interface{}) (err error) {
 	var (
@@ -422,6 +630,11 @@ func (K APIClient) DecodeJSON(resp *http.Response, output interface{}) (err erro
 		snoop_buffer bytes.Buffer
 		body         io.Reader
 	)
+
+	err = K.RespErrorCheck(resp)
+	if err != nil {
+		return err
+	}
 
 	resp.Body = iotimeout.NewReadCloser(resp.Body, K.RequestTimeout)
 	defer resp.Body.Close()
@@ -450,30 +663,7 @@ func (K APIClient) DecodeJSON(resp *http.Response, output interface{}) (err erro
 		return err
 	}
 
-	// Final Error Check Against Response.
-	ErrorCheck := func(resp *http.Response) (err error) {
-		if resp.StatusCode < 200 && resp.StatusCode >= 300 {
-			var e APIError
-			e.Register(fmt.Sprintf("HTTP_STATUS_%d", resp.StatusCode), resp.Status)
-			return e
-		}
-		return nil
-	}
-
 	if len(msg) > 0 {
-		if K.ErrorScanner == nil {
-			K.ErrorScanner = kwapiError
-		}
-
-		err = K.ErrorScanner(msg)
-		if err != nil {
-			return err
-		}
-
-		if output == nil {
-			return ErrorCheck(resp)
-		}
-
 		err = json.Unmarshal(msg, output)
 		if err == io.EOF {
 			return nil
@@ -494,7 +684,7 @@ func (K APIClient) DecodeJSON(resp *http.Response, output interface{}) (err erro
 		}
 	}
 
-	return ErrorCheck(resp)
+	return
 }
 
 // Provides output of specified request.
@@ -519,7 +709,7 @@ func snoop_request(body io.Reader) error {
 	return nil
 }
 
-func (s APIClient) Do(req *http.Request) (resp *http.Response, err error) {
+func (s APIClient) SendRequest(req *APISession) (resp *http.Response, err error) {
 	var transport http.Transport
 
 	// Allows invalid certs if set to "no" in config.
@@ -546,13 +736,41 @@ func (s APIClient) Do(req *http.Request) (resp *http.Response, err error) {
 		Timeout:   0, // Timeouts will be implemented with iotimeout.
 	}
 
-	return client.Do(req)
+	// Must check token before sending request.
+	if !IsBlank(req.Username) && s.cache.Get("revoke_tokens", req.Username, nil) {
+		if s.secrets.signature_key == nil {
+			existing, err := s.TokenStore.Load(req.Username)
+			if err != nil {
+				return nil, err
+			}
+			if token, err := s.refreshToken(req.Username, existing); err == nil {
+				if err := s.TokenStore.Save(req.Username, token); err != nil {
+					return nil, err
+				}
+			} else {
+				s.TokenStore.Delete(req.Username)
+				Critical(fmt.Errorf("Access token is no longer valid."))
+			}
+		} else {
+			s.TokenStore.Delete(req.Username)
+		}
+
+		err = s.setToken(req)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return client.Do(req.Request)
 }
 
 // New API Client Request.
-func (s APIClient) NewRequest(username, method, path string) (req *http.Request, err error) {
+func (s APIClient) NewRequest(username, method, path string) (req *APISession, err error) {
 
-	req, err = http.NewRequest(method, fmt.Sprintf("https://%s%s", s.Server, path), nil)
+	req = new(APISession)
+	req.Username = username
+
+	req.Request, err = http.NewRequest(method, fmt.Sprintf("https://%s%s", s.Server, path), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +784,7 @@ func (s APIClient) NewRequest(username, method, path string) (req *http.Request,
 	req.Header.Set("Referer", "https://"+s.Server+"/")
 	req.Close = true
 
-	if err := s.setToken(username, req); err != nil {
+	if err := s.setToken(req); err != nil {
 		return nil, err
 	}
 
@@ -574,19 +792,19 @@ func (s APIClient) NewRequest(username, method, path string) (req *http.Request,
 }
 
 // kiteworks API Call Wrapper
-func (s APIClient) Call(username string, api_req APIRequest) (err error) {
+func (s APIClient) Call(api_req APIRequest) (err error) {
 	if s.limiter != nil {
 		s.limiter <- struct{}{}
 		defer func() { <-s.limiter }()
 	}
 
-	req, err := s.NewRequest(username, api_req.Method, api_req.Path)
+	req, err := s.NewRequest(api_req.Username, api_req.Method, api_req.Path)
 	if err != nil {
 		return err
 	}
 
 	if s.Snoop {
-		Debug("[%s]: %s", s.Server, username)
+		Debug("[%s]: %s", s.Server, api_req.Username)
 		Debug("--> METHOD: \"%s\" PATH: \"%s\"", strings.ToUpper(api_req.Method), api_req.Path)
 	}
 
@@ -665,76 +883,7 @@ func (s APIClient) Call(username string, api_req APIRequest) (err error) {
 		}
 	}
 
-	// reAuth attempts to get a new token on a token related error.
-	reAuth := func(s *APIClient, username string, req *http.Request, orig_err error) error {
-		if s.secrets.signature_key == nil {
-			existing, err := s.TokenStore.Load(username)
-			if err != nil {
-				return err
-			}
-			if token, err := s.refreshToken(username, existing); err == nil {
-				if err := s.TokenStore.Save(username, token); err != nil {
-					return err
-				}
-				if err = s.setToken(username, req); err == nil {
-					return nil
-				}
-			}
-			s.TokenStore.Delete(username)
-			Critical(fmt.Errorf("Token is no longer valid: %s", orig_err.Error()))
-		}
-		s.TokenStore.Delete(username)
-		return s.setToken(username, req)
-	}
-
-	var (
-		resp           *http.Response
-		report_success bool
-	)
-
-	attempt := string(RandBytes(8))
-	first_attempt := true
-
-	// Retry calls on failure.
-	for i := 0; i <= int(s.Retries); i++ {
-		req.Body = ioutil.NopCloser(bytes.NewReader(body))
-		resp, err = s.Do(req)
-
-		if err == nil && resp != nil {
-			err = s.DecodeJSON(resp, api_req.Output)
-		}
-		if err != nil {
-			if s.isTokenError(err) {
-				err = reAuth(&s, username, req, err)
-				if err != nil {
-					return
-				} else {
-					continue
-				}
-			}
-			if s.isRetryError(err) || !IsAPIError(err) {
-				report_success = true
-				if first_attempt {
-					if s.Retries > 0 {
-						Debug("[#%s]: %s -> %s: %s (will retry)", attempt, username, api_req.Path, err.Error())
-					}
-					first_attempt = false
-				} else {
-					Debug("[#%s]: %s (retry %d/%d)", attempt, err.Error(), i, s.Retries)
-				}
-				s.BackoffTimer(uint(i))
-				continue
-			} else {
-				return
-			}
-		} else {
-			if report_success {
-				Debug("[#%s]: Success!!! (retry %d/%d)", attempt, i, s.Retries)
-			}
-			return
-		}
-	}
-	return
+	return s.Fulfill(req, body, api_req.Output)
 }
 
 // Backs off subsequent attempts generating a pause between requests.
@@ -746,7 +895,7 @@ func (s APIClient) BackoffTimer(retry uint) {
 
 // Call handler which allows for easier getting of multiple-object arrays.
 // An offset of -1 will provide all results, any positive offset will only return the requested results.
-func (s APIClient) PageCall(username string, req APIRequest, offset, limit int) (err error) {
+func (s APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
 
 	output := req.Output
 	params := req.Params
@@ -781,7 +930,7 @@ func (s APIClient) PageCall(username string, req APIRequest, offset, limit int) 
 	for {
 		req.Params = SetParams(params, Query{"limit": limit, "offset": offset})
 		req.Output = &o
-		if err = s.Call(username, req); err != nil {
+		if err = s.Call(req); err != nil {
 			return err
 		}
 		// Decode the results we get, convert to []map[string]interface{}, and stack results.

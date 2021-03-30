@@ -708,7 +708,7 @@ func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
 
-	return transferMonitor(file.Name, file.Size, rightToLeft, s.Download(req)), nil
+	return transferMonitor(file.Name, file.Size, rightToLeft, s.Download(req.Request)), nil
 }
 
 type kw_profile struct {

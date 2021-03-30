@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "21.03.04"
+	VERSION = "21.03.06"
 )
 
 const (

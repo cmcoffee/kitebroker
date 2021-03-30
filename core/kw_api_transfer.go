@@ -59,31 +59,46 @@ type web_downloader struct {
 	request_timeout time.Duration
 }
 
+
+type downloadError struct {
+	err error
+}
+
+func (d downloadError) Error() string {
+	return d.err.Error()
+}
+
+// Check if error was produced during download of file.
+func IsDownloadError(err error) bool {
+	if _, ok := err.(*downloadError); ok {
+		return true
+	} 
+	return false
+}
+
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
 		W.req = W.reqs[0]
 		if W.req == nil {
-			return 0, fmt.Errorf("Webdownloader not initialized.")
+			return 0, downloadError{fmt.Errorf("Webdownloader not initialized.")}
 		}
 		W.reqs = append(W.reqs[:0], W.reqs[1:]...)
 		W.flag.Set(wd_started)
-		retries := int(W.api.Retries)
-		for i := 0; i < retries; i++ {
-			W.resp, err = W.api.Do(W.req)
-			if err != nil && i == retries {
-				return 0, err
-			}
-			W.api.BackoffTimer(uint(i))
+		W.resp, err = W.api.SendRequest(&APISession{NONE, W.req})
+		if err != nil {
+			return 0, downloadError{fmt.Errorf("Download Error(%s): %s", W.req.URL, err)}
 		}
 
-		if W.resp.StatusCode < 200 || W.resp.StatusCode >= 300 {
-			return 0, fmt.Errorf("GET %s: %s", W.req.URL, W.resp.Status)
+		err = W.api.RespErrorCheck(W.resp)
+		if err != nil {
+			return 0, downloadError{fmt.Errorf("Download Error(%s): %s", W.req.URL, err)}
 		}
+
 		if W.offset > 0 {
 			content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
 			if len(content_range) > 1 {
 				if strings.TrimSpace(content_range[0]) != strconv.FormatInt(W.offset, 10) {
-					return 0, fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])
+					return 0, downloadError{fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])}
 				}
 			}
 		}
@@ -114,7 +129,7 @@ func (W *web_downloader) Close() error {
 		if W.resp == nil || W.resp.Body == nil {
 			return nil
 		}
-		return W.resp.Body.Close()
+		return downloadError{W.resp.Body.Close()}
 	}
 	return nil
 }
@@ -382,13 +397,13 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 
 		req.Body = post
 
-		close_req := func(req *http.Request) {
+		close_req := func(req *APISession) {
 			if req.Body != nil {
 				req.Body.Close()
 			}
 		}
 
-		resp, err := s.Do(req)
+		resp, err := s.APIClient.SendRequest(req)
 		if err != nil {
 			close_req(req)
 			return nil, err
@@ -559,19 +574,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	UploadRecord.Size = size
 	uploads.Set(target, &UploadRecord)
 
-	for i := uint(0); i <= s.Retries; i++ {
-		file, err = s.uploadFile(filename, uid, src)
-		if err == nil || IsAPIError(err) {
-			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
-				Debug("%s/%s: %s (%d/%d)", dst.Path, UploadRecord.Name, err.Error(), i+1, s.Retries+1)
-				s.BackoffTimer(i)
-				continue
-			}
-			uploads.Unset(target)
-		}
-		break
-	}
-
+	file, err = s.uploadFile(filename, uid, src)
 	return
 }
 

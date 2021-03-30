@@ -184,6 +184,7 @@ func init_database() {
 	db_filename := FormatPath(fmt.Sprintf("%s/data/%s.db", global.root, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
+	Defer(global.db.Close)
 }
 
 // Opens go-kvlite database using mac address for lock.

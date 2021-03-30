@@ -66,7 +66,7 @@ func (s sourceFile) LocalFile(local_path string) (err error) {
 	}
 	return nil
 }
-
+/*
 type SourceFile interface {
 	String() string
 	Name() string
@@ -76,10 +76,11 @@ type SourceFile interface {
 	Read(p []byte) (n int, err error)
 	Close() error
 }
+*/
 /*
 func LocalSourceFile(path string) (SourceFile, error) {
 
-}*/
+}
 
 // Creates a new source file.
 func NewSourceFile(name string, size int64, mod_time time.Time, source ReadSeekCloser) SourceFile {
@@ -90,7 +91,7 @@ func NewSourceFile(name string, size int64, mod_time time.Time, source ReadSeekC
 		ReadSeekCloser: source,
 	}
 }
-
+*/
 /*
 func (T *KiteBrokerTask) KWUploader(file FileInfo, target KiteObject, sess KWSession, source ReadSeekCloser) (*KiteObject, error) {
 

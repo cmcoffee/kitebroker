@@ -308,7 +308,7 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 			return nil, err
 		} else {
 			if req != nil {
-				reqs = append(reqs, req)
+				reqs = append(reqs, req.Request)
 			}
 		}
 	} else {
@@ -317,7 +317,7 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 				return nil, err
 			} else {
 				if req != nil {
-					reqs = append(reqs, req)
+					reqs = append(reqs, req.Request)
 				}
 			}
 		}
@@ -328,42 +328,48 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 
 // Gather information about the file from FTA.
 func (F fta_rest_file) chunk_header(file_handle string) (finfo *FTAFinfo, err error) {
-	req, err := F.NewRequest(F.Username, "GET", "/seos/wsfiles/download")
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	q := req.URL.Query()
-	q.Add("oauth_token", strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
-	q.Add("id", F.file_id)
-	if file_handle != NONE {
-		q.Add("file_handle", b64encode(file_handle))
-	}
-	req.Header.Del("Authorization")
-	req.Header.Set("User-Agent", "AFetcher")
-	req.URL.RawQuery = q.Encode()
-	resp, err := F.Do(req)
-	if err != nil {
-		return nil, err
-	}
+	for i := 0; i < int(F.Retries); i++ {
+		req, err := F.NewRequest(F.Username, "GET", "/seos/wsfiles/download")
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		q := req.URL.Query()
+		q.Add("oauth_token", strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+		q.Add("id", F.file_id)
+		if file_handle != NONE {
+			q.Add("file_handle", b64encode(file_handle))
+		}
+		req.Header.Del("Authorization")
+		req.Header.Set("User-Agent", "AFetcher")
+		req.URL.RawQuery = q.Encode()
+		resp, err := F.SendRequest(req)
+		if err != nil {
+			Debug(err)
+			F.TokenStore.Delete(F.Username)
+			F.BackoffTimer(uint(i))
+			continue
+		}
 
-	finfo = new(FTAFinfo)
-	if resp.StatusCode == 200 && resp.Header != nil {
-		if sz_str := resp.Header.Get("Esize"); sz_str != NONE {
-			finfo.Size, _ = strconv.ParseInt(sz_str, 0, 64)
+		finfo = new(FTAFinfo)
+		if resp.StatusCode == 200 && resp.Header != nil {
+			if sz_str := resp.Header.Get("Esize"); sz_str != NONE {
+				finfo.Size, _ = strconv.ParseInt(sz_str, 0, 64)
+			}
+			if subfile := resp.Header.Get("Subfile"); subfile != NONE {
+				finfo.Subfiles, _ = strconv.ParseInt(subfile, 0, 64)
+			}
+			if file_handle := resp.Header.Get("File_handle"); file_handle != NONE {
+				finfo.FileHandle = file_handle
+			}
 		}
-		if subfile := resp.Header.Get("Subfile"); subfile != NONE {
-			finfo.Subfiles, _ = strconv.ParseInt(subfile, 0, 64)
-		}
-		if file_handle := resp.Header.Get("File_handle"); file_handle != NONE {
-			finfo.FileHandle = file_handle
-		}
+		return finfo, err
 	}
-	return
+	return nil, fmt.Errorf("Error obtaining download headers for file.")
 }
 
 // Create a download request for FTA.
-func (F fta_rest_file) generate_download_req(id string, file_handle string, subfile, total_subfiles int64) (*http.Request, error) {
+func (F fta_rest_file) generate_download_req(id string, file_handle string, subfile, total_subfiles int64) (*APISession, error) {
 	req, err := F.NewRequest(F.Username, "GET", "/seos/wsfiles/download")
 	if err != nil {
 		return nil, err

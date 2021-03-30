@@ -56,6 +56,7 @@ type Broker struct {
 	uploads      Table
 	api          *FTAClient
 	notify 		 bool
+	skip_permissions bool
 	KiteBrokerTask
 }
 
@@ -226,6 +227,7 @@ func (T *Broker) Init() (err error) {
 	T.Flags.MultiVar(&T.user_list, "filter_users", "<users>", "Only work when manager/owner is in provided users.")
 	T.Flags.BoolVar(&T.elevate, "auto_elevate", "Automatiaclly elevate managers to owners, if no owner is assigned.")
 	T.Flags.IntVar(&T.standard_profile_id, "standard_profile_id", 1, "Standard user profile id.")
+	T.Flags.BoolVar(&T.skip_permissions, "skip_permissions", "Do not apply permissions to folders.")
 	T.Flags.Order("csv", "manager", "folder","filter_users","auto_elevate","standard_profile_id","files","server","client_id","secert_key","signature_key","redirect_uri")
 	if err := T.Flags.Parse(); err != nil {
 		return err
@@ -257,18 +259,19 @@ func (T *Broker) Main() (err error) {
 	T.wg = NewLimitGroup(10)
 
 	if T.files {
-		T.api.TokenStore = KVLiteStore(OpenCache())
+		T.api.TokenStore = KVLiteStore(T.DB.Sub(T.api.Server))
 		T.api.Retries = T.KW.Retries
 		T.api.Snoop = T.KW.Snoop
 		T.api.ProxyURI = T.KW.ProxyURI
 		T.api.AgentString = T.KW.AgentString
-		T.api.RequestTimeout = T.KW.RequestTimeout
+		T.api.RequestTimeout = 0
 		T.api.ConnectTimeout = T.KW.ConnectTimeout
 		T.api.APIClient.NewToken = T.api.newFTAToken
 		T.api.ErrorScanner = T.api.ftaError
 		T.api.Snoop = T.KW.Snoop
+		T.api.SetLimiter(1)
 		T.api.TokenErrorCodes = []string{"221", "120", "ERR_AUTH_UNAUTHORIZED", "INVALID_GRANT"}
-		T.filemover = make(chan *ftacopy, 1024)
+		T.filemover = make(chan *ftacopy, 25)
 		T.uploads = T.DB.Table("uploads")
 		T.wg.Add(1)
 		go T.FileMover()
@@ -345,7 +348,6 @@ func (T *Broker) FixFolder(folder string) {
 		kw_user = T.manager
 		Log("Override given for manager: %s", T.manager)
 	}
-	Log("Processing folder '%s' as '%s'.", folder, kw_user)
 	T.ProcessFolders(kw_user, *target)
 }
 
@@ -372,6 +374,8 @@ func (T *Broker) ProcessFolders(kw_user string, target KiteObject) {
 
 		folder := current[n]
 
+		Log("Processing folder '%s' as '%s'.", folder.Path, kw_user)
+
 		if n+1 < len(current)-1 {
 			if T.wg.Try() {
 				go func(kw_user string, folder KiteObject) {
@@ -383,8 +387,12 @@ func (T *Broker) ProcessFolders(kw_user string, target KiteObject) {
 			}
 		}
 
+		if !T.skip_permissions {
+			T.SetPermissions(kw_user, folder)
+		} else {
+			T.folders.Add(1)
+		}
 		T.CopyFiles(kw_user, folder)
-		T.SetPermissions(kw_user, folder)
 
 		children, err := T.KW.Session(kw_user).Folder(folder.ID).Folders()
 		if err != nil {
@@ -643,7 +651,11 @@ func (T *Broker) SetPermissions(kw_user string, target KiteObject) {
 
 	T.kw_perm_map[target.ID] = make(map[string]int)
 
-	fta_map := T.perm_map[target.Path]
+	fta_map := make(map[string]int)
+	for k, v := range fta_map {
+		fta_map[k] = v
+	}
+
 	if kw_map, found := T.kw_perm_map[target.ParentID]; found {
 		for k, v := range kw_map {
 			if fta_map[k] == v {
@@ -730,27 +742,45 @@ func (T *Broker) FileMover() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := T.UploadFile(msg.user, msg.src, msg.dst)
-			if err != nil {
-				Err("(%s) %s: %v", msg.user, msg.src.Name(), err)
+			defer T.file_count.Add(1)
+			var err error
+			for i := 0; i < int(T.api.Retries); i++ {
+				err = T.UploadFile(msg.user, msg.src, msg.dst)
+				if err != nil {
+					Warn("(%s) %s: %v (%d/%d)", msg.user, msg.src.Name(), err, i+1, T.api.Retries)
+					T.api.TokenStore.Delete(msg.user)
+					T.KW.BackoffTimer(uint(i))
+				} else {
+					return
+				}
 			}
+			Err("(%s) %s: %v", msg.user, msg.src.Name(), err)
 		}()
 
 	}
 }
 
 func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) (err error) {
-	defer T.file_count.Add(1)
 	if folder.ID == 0 {
 		Notice("%s: Uploading files to base path is not permitted, ignoring file.", source.Name())
 		return nil
 	}
+
+	kw_file_info, err := T.KW.Session(user).Folder(folder.ID).Find(source.Name())
+	if err != nil && err != ErrNotFound {
+		return err
+	}
+
+	if kw_file_info.ID > 0 {
+		return nil
+	}
+
 	file, err := T.api.Session(user).File(source.ID).Download()
 	if err != nil { 
 		return err
 	}
-	
 	x := TransferCounter(file, T.transfered.Add)
+
 	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, false, *folder, x)
 	x.Close()
 	return
