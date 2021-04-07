@@ -165,6 +165,7 @@ func get_taskstore(name string, is_admin bool) Database {
 }
 
 func write_task_file(name, desc string, flags *FlagSet) {
+	Stdout("### %s: %s ###\n\n", name, desc)
 	Stdout("[%s]", name)
 	Stdout("\n")
 	get_flag := func(input *eflag.Flag) {

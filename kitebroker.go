@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "21.03.06"
+	VERSION = "21.04.01"
 )
 
 const (
@@ -78,6 +78,11 @@ func enable_debug() {
 	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 }
 
+func enable_trace() {
+	nfo.SetOutput(nfo.TRACE, os.Stdout)
+	nfo.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
+}
+
 func main() {
 	nfo.HideTS()
 	defer Exit(0)
@@ -103,6 +108,7 @@ func main() {
 
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
+	
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
@@ -121,8 +127,12 @@ func main() {
 		}
 	})
 
-	if global.debug || global.snoop {
+	if global.debug {
 		enable_debug()
+	}
+
+	if global.snoop {
+		enable_trace()
 	}
 
 	if global.sysmode && !*setup {
@@ -175,9 +185,7 @@ func main() {
 			var args []string
 			args = append(args, s)
 			for _, k := range task_file.Keys(s) {
-				for _, v := range task_file.MGet(s, k) {
-					args = append(args, fmt.Sprintf("--%s=%s", k, v))
-				}
+				args = append(args, fmt.Sprintf("--%s=%s", k, strings.Join(task_file.MGet(s, k), ",")))
 			}
 			args = append(args, f)
 			task_args = append(task_args, args)

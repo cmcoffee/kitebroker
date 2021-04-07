@@ -701,14 +701,16 @@ func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
 
-	req, err := s.NewRequest(s.Username, "GET", SetPath("/rest/files/%d/content", file.ID))
+	req, err := s.NewRequest("GET", SetPath("/rest/files/%d/content", file.ID))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
 
-	return transferMonitor(file.Name, file.Size, rightToLeft, s.Download(req.Request)), nil
+	err = s.SetToken(s.Username, req)
+
+	return transferMonitor(file.Name, file.Size, rightToLeft, s.Download(req)), err
 }
 
 type kw_profile struct {

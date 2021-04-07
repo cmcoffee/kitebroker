@@ -308,7 +308,7 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 			return nil, err
 		} else {
 			if req != nil {
-				reqs = append(reqs, req.Request)
+				reqs = append(reqs, req)
 			}
 		}
 	} else {
@@ -317,7 +317,7 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 				return nil, err
 			} else {
 				if req != nil {
-					reqs = append(reqs, req.Request)
+					reqs = append(reqs, req)
 				}
 			}
 		}
@@ -329,13 +329,18 @@ func (F fta_rest_file) Download() (ReadSeekCloser, error) {
 // Gather information about the file from FTA.
 func (F fta_rest_file) chunk_header(file_handle string) (finfo *FTAFinfo, err error) {
 	for i := 0; i < int(F.Retries); i++ {
-		req, err := F.NewRequest(F.Username, "GET", "/seos/wsfiles/download")
+		req, err := F.NewRequest("GET", "/seos/wsfiles/download")
 		if err != nil {
 			return nil, err
 		}
+
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		q := req.URL.Query()
-		q.Add("oauth_token", strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+		if token, err := F.GetToken(F.Username); err == nil {
+			q.Add("oauth_token", token.AccessToken)
+		} else {
+			return nil, err
+		}
 		q.Add("id", F.file_id)
 		if file_handle != NONE {
 			q.Add("file_handle", b64encode(file_handle))
@@ -343,7 +348,7 @@ func (F fta_rest_file) chunk_header(file_handle string) (finfo *FTAFinfo, err er
 		req.Header.Del("Authorization")
 		req.Header.Set("User-Agent", "AFetcher")
 		req.URL.RawQuery = q.Encode()
-		resp, err := F.SendRequest(req)
+		resp, err := F.SendRequest(F.Username, req)
 		if err != nil {
 			Debug(err)
 			F.TokenStore.Delete(F.Username)
@@ -369,14 +374,18 @@ func (F fta_rest_file) chunk_header(file_handle string) (finfo *FTAFinfo, err er
 }
 
 // Create a download request for FTA.
-func (F fta_rest_file) generate_download_req(id string, file_handle string, subfile, total_subfiles int64) (*APISession, error) {
-	req, err := F.NewRequest(F.Username, "GET", "/seos/wsfiles/download")
+func (F fta_rest_file) generate_download_req(id string, file_handle string, subfile, total_subfiles int64) (*http.Request, error) {
+	req, err := F.NewRequest("GET", "/seos/wsfiles/download")
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	q := req.URL.Query()
-	q.Add("oauth_token", strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer "))
+	if token, err := F.GetToken(F.Username); err == nil {
+		q.Add("oauth_token", token.AccessToken)
+	} else {
+		return nil, err
+	}
 	req.Header.Del("Authorization")
 	q.Add("id", F.file_id)
 	if subfile == 0 {

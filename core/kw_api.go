@@ -19,7 +19,7 @@ import (
 )
 
 // Reads KW rest errors and interprets them.
-func kwapiError(body []byte) APIError {
+func kwapiError(body []byte) (e APIError) {
 	// kiteworks API Error
 	type KiteErr struct {
 		Error     string `json:"error"`
@@ -33,8 +33,6 @@ func kwapiError(body []byte) APIError {
 	var kite_err *KiteErr
 	json.Unmarshal(body, &kite_err)
 
-	e := new(apiError)
-
 	if kite_err != nil {
 		for _, v := range kite_err.Errors {
 			if strings.Contains(v.Code, "ERR_INTERNAL_") {
@@ -47,11 +45,7 @@ func kwapiError(body []byte) APIError {
 		}
 	}
 
-	if e.NoErrors() {
-		return nil
-	}
-
-	return e
+	return
 }
 
 // KWAPI Wrapper for kiteworks.
@@ -326,15 +320,13 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 		postform.Add("code", auth_code)
 	}
 
-	if K.Snoop {
-		Debug("[kiteworks]: %s", username)
-		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
-		for k, v := range *postform {
-			if k == "grant_type" || k == "redirect_uri" || k == "scope" {
-				Debug("\\-> POST PARAM: %s VALUE: %s", k, v)
-			} else {
-				Debug("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
-			}
+	Trace("[kiteworks]: %s", username)
+	Trace("--> ACTION: \"POST\" PATH: \"%s\"", path)
+	for k, v := range *postform {
+		if k == "grant_type" || k == "redirect_uri" || k == "scope" {
+			Trace("\\-> POST PARAM: %s VALUE: %s", k, v)
+		} else {
+			Trace("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
 		}
 	}
 
@@ -342,8 +334,12 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
 	defer req.Body.Close()
 
-	err = K.Fulfill(&APISession{NONE, req}, nil, &auth)
+	resp, err := K.SendRequest(NONE, req)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := DecodeJSON(resp, &auth); err != nil {
 		return nil, err
 	}
 

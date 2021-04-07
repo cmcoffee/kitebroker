@@ -231,9 +231,13 @@ func init_logging() {
 		KiteBrokerCore.SetLogOutput(KiteBrokerCore.LOG_FLAG_INFO, os.Stdout)
 		KiteBrokerCore.SetLogOutput(KiteBrokerCore.LOG_FLAG_AUX|KiteBrokerCore.LOG_FLAG_WARN|KiteBrokerCore.LOG_FLAG_NOTICE, nfo.None)
 	}
-	if global.debug || global.snoop {
+	if global.debug {
 		KiteBrokerCore.SetLogOutput(nfo.DEBUG, os.Stderr)
 		KiteBrokerCore.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
+	}
+	if global.snoop {
+		KiteBrokerCore.SetLogOutput(nfo.TRACE, os.Stderr)
+		KiteBrokerCore.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
 	}
 }
 
@@ -435,7 +439,6 @@ func config_api(configure_api, test_required bool) {
 		kw.Retries = 3
 
 		if global.snoop {
-			kw.Snoop = true
 			kw.SetLimiter(1)
 			kw.SetTransferLimiter(1)
 		} else {

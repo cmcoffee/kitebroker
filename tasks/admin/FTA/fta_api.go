@@ -32,16 +32,49 @@ func (F FTAClient) Session(user string) *FTASession {
 }
 
 func (F FTASession) Call(api_req APIRequest) (err error) {
-	api_req.Header = map[string][]string{
-		"OAUTH_PARAM": []string{"oauth_token"},
+	token, err := F.GetToken(F.Username)
+	if err != nil {
+		return err
 	}
-	api_req.Username = F.Username
+
+	api_req.Params = SetParams(api_req.Params, PostForm{"oauth_token": token.AccessToken})
+	api_req.Username = NONE
 	
 	return F.APIClient.Call(api_req)
 }
 
+func (F FTASession) GetToken(username string) (*Auth, error) {
+	token, err := F.TokenStore.Load(F.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	// If we find a token, check if it's still valid.
+	if token != nil {
+		if token.Expires <= time.Now().Unix() {
+			token = nil
+		} else {
+			return token, nil
+		}
+	} 
+
+	if token == nil {
+		F.TokenStore.Delete(username)
+		token, err = F.NewToken(username)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if err := F.TokenStore.Save(username, token); err != nil {
+		return token, err
+	}
+
+	return token, nil
+}
+
 // Reads FTA rest errors and interprets them.
-func (F *FTAClient) ftaError(body []byte) APIError {
+func (F *FTAClient) ftaError(body []byte) (e APIError) {
 	// kiteworks API Error
 	var FTAErr struct {
 		Error           string `json:"error"`
@@ -53,7 +86,6 @@ func (F *FTAClient) ftaError(body []byte) APIError {
 
 	json.Unmarshal(body, &FTAErr)
 
-	e := F.NewAPIError()
 	if FTAErr.Error != NONE {
 		e.Register(FTAErr.Error, FTAErr.ErrorDesc)
 	}
@@ -62,10 +94,6 @@ func (F *FTAClient) ftaError(body []byte) APIError {
 			FTAErr.ResultMsg = fmt.Sprintf("%s: %s", FTAErr.ResultMsg, FTAErr.ResultMsgDetail)
 		}
 		e.Register(fmt.Sprintf("%d", FTAErr.ResultCode), FTAErr.ResultMsg)
-	}
-
-	if e.NoErrors() {
-		return nil
 	}
 
 	return e
@@ -113,15 +141,13 @@ func (T FTAClient) newFTAToken(username string) (auth *Auth, err error) {
 	postform.Add("code", auth_code)
 	postform.Add("scope", "account/* myfiles/* workspaces/* wsusers/* wscomments/* wsfiles/* twshub/* twsfiles/")
 
-	if T.Snoop {
-		Debug("[FTA]: %s", username)
-		Debug("--> ACTION: \"POST\" PATH: \"%s\"", path)
-		for k, v := range *postform {
-			if k == "grant_type" || k == "redirect_uri" || k == "scope" {
-				Debug("\\-> POST PARAM: %s VALUE: %s", k, v)
-			} else {
-				Debug("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
-			}
+	Trace("[FTA]: %s", username)
+	Trace("--> ACTION: \"POST\" PATH: \"%s\"", path)
+	for k, v := range *postform {
+		if k == "grant_type" || k == "redirect_uri" || k == "scope" {
+			Trace("\\-> POST PARAM: %s VALUE: %s", k, v)
+		} else {
+			Trace("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
 		}
 	}
 
@@ -131,7 +157,7 @@ func (T FTAClient) newFTAToken(username string) (auth *Auth, err error) {
 		Expires      string `json:"expires_in"`
 	}
 
-	err = T.Fulfill(&APISession{NONE, req}, []byte(postform.Encode()), &fta_auth)
+	err = T.Fulfill(NONE, req, []byte(postform.Encode()), &fta_auth)
 	if err != nil {
 		return nil, err
 	}

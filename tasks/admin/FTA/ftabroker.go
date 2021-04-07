@@ -51,6 +51,7 @@ type Broker struct {
 	elevate      bool
 	kitedrive    bool
 	standard_profile_id int
+	new_folders_only bool
 	filemover    chan *ftacopy
 	cache        Database
 	uploads      Table
@@ -222,6 +223,7 @@ func (T *Broker) Init() (err error) {
 	T.Flags.MultiVar(&T.workspace, "folder", "<specific folder>", "Perform permission updates on a specific kiteworks folder.")
 	T.Flags.StringVar(&T.manager, "manager", "<manager>", "Fallback manager to create folder if folder does not exist.")
 	T.Flags.BoolVar(&T.files, "files", "Copy files from FTA system.")
+	T.Flags.BoolVar(&T.new_folders_only, "new_folders_only", "Don't modify existing folders.")
 	//flags.BoolVar(&T.kitedrive, "kitedrive", false, "Copy kitedrive folders over.")
 	T.Flags.BoolVar(&T.notify, "notify", "Send notifications to users added.")
 	T.Flags.MultiVar(&T.user_list, "filter_users", "<users>", "Only work when manager/owner is in provided users.")
@@ -259,16 +261,14 @@ func (T *Broker) Main() (err error) {
 	T.wg = NewLimitGroup(10)
 
 	if T.files {
-		T.api.TokenStore = KVLiteStore(T.DB.Sub(T.api.Server))
+		T.api.TokenStore = KVLiteStore(OpenCache())
 		T.api.Retries = T.KW.Retries
-		T.api.Snoop = T.KW.Snoop
 		T.api.ProxyURI = T.KW.ProxyURI
 		T.api.AgentString = T.KW.AgentString
 		T.api.RequestTimeout = 0
 		T.api.ConnectTimeout = T.KW.ConnectTimeout
 		T.api.APIClient.NewToken = T.api.newFTAToken
 		T.api.ErrorScanner = T.api.ftaError
-		T.api.Snoop = T.KW.Snoop
 		T.api.SetLimiter(1)
 		T.api.TokenErrorCodes = []string{"221", "120", "ERR_AUTH_UNAUTHORIZED", "INVALID_GRANT"}
 		T.filemover = make(chan *ftacopy, 25)
@@ -640,6 +640,9 @@ func (T *Broker) FindManager(folder string) (kw_user string, kw_folder *KiteObje
 		}
 		return m, new_folder, nil
 	} else {
+		if T.new_folders_only {
+			return NONE, nil, nil
+		}
 		return managers[0], &kw_f, nil
 	}
 	return NONE, nil, fmt.Errorf("No viable managers were found in kiteworks for folder!")
@@ -793,7 +796,7 @@ type ftacopy struct {
 }
 
 func (T *Broker) FindDownloader(folder_path string) (fta_user string, err error) {
-	users := T.GetMembers(T.perm_map[folder_path], OWNER, MANAGER, COLLABORATOR, DOWNLOADER)
+	users := T.GetMembers(T.perm_map[folder_path], OWNER, MANAGER, COLLABORATOR)
 
 	if len(users) == 0 {
 		return NONE, nil

@@ -34,71 +34,6 @@ type KiteBrokerTask struct {
 	KW     KWSession
 }
 
-const _sf_started = 1 << iota
-
-type sourceFile struct {
-	name string
-	size int64
-	mod_time time.Time
-	ReadSeekCloser
-}
-
-func (s sourceFile) ModTime() time.Time {
-	return s.mod_time
-}
-
-func (s sourceFile) Name() string {
-	return s.name
-}
-
-func (s sourceFile) Size() int64 {
-	return s.size
-}
-
-func (s sourceFile) String() string {
-	return fmt.Sprintf("%s:%d:%v", s.name, s.size, s.mod_time)
-}
-
-func (s sourceFile) LocalFile(local_path string) (err error) {
-	s.ReadSeekCloser, err = os.Open(local_path)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-/*
-type SourceFile interface {
-	String() string
-	Name() string
-	Size() int64
-	ModTime() time.Time
-	Seek(offset int64, whence int) (int64, error)
-	Read(p []byte) (n int, err error)
-	Close() error
-}
-*/
-/*
-func LocalSourceFile(path string) (SourceFile, error) {
-
-}
-
-// Creates a new source file.
-func NewSourceFile(name string, size int64, mod_time time.Time, source ReadSeekCloser) SourceFile {
-	return &sourceFile {
-		name: name,
-		size: size,
-		mod_time: mod_time,
-		ReadSeekCloser: source,
-	}
-}
-*/
-/*
-func (T *KiteBrokerTask) KWUploader(file FileInfo, target KiteObject, sess KWSession, source ReadSeekCloser) (*KiteObject, error) {
-
-}
-
-func (s KWSession) Upload(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error)
-*/
 // Sets the flags for the task.
 func (T *KiteBrokerTask) KiteBrokerTask_set_flags(Flags FlagSet) {
 	T.Flags = Flags
@@ -208,6 +143,7 @@ var (
 	Warn            = nfo.Warn
 	Defer           = nfo.Defer
 	Debug           = nfo.Debug
+	Trace           = nfo.Trace
 	Exit            = nfo.Exit
 	PleaseWait      = nfo.PleaseWait
 	Stderr          = nfo.Stderr

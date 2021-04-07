@@ -84,15 +84,15 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 		}
 		W.reqs = append(W.reqs[:0], W.reqs[1:]...)
 		W.flag.Set(wd_started)
-		W.resp, err = W.api.SendRequest(&APISession{NONE, W.req})
+		W.resp, err = W.api.SendRequest(NONE, W.req)
 		if err != nil {
-			return 0, downloadError{fmt.Errorf("Download Error(%s): %s", W.req.URL, err)}
+			return 0, downloadError{fmt.Errorf("Download Error: %s", err)}
 		}
-
-		err = W.api.RespErrorCheck(W.resp)
-		if err != nil {
-			return 0, downloadError{fmt.Errorf("Download Error(%s): %s", W.req.URL, err)}
+		if err := W.api.respErrorCheck(W.resp); err != nil {
+			err = PrefixAPIError("Download Error", err)
+			return 0, err
 		}
+		Debug("%v: %s", W.req.URL, W.resp.Status)
 
 		if W.offset > 0 {
 			content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
@@ -240,14 +240,14 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 			if err == io.EOF {
 				s.eof = true
 			} else {
-				return -1, err
+				return n, err
 			}
 		}
 	
 		// We're writing to a bytes.Buffer.
 		_, err = s.f_writer.Write(p[0:n])
 		if err != nil {
-			return -1, err
+			return n, err
 		}
 
 		// Clear out the []byte slice provided.
@@ -327,17 +327,15 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 	for transfered_bytes < total_bytes || total_bytes == 0 {
 		w_buff.Reset()
 
-		req, err := s.NewRequest(s.Username, "POST", fmt.Sprintf("/%s", upload_data.URI))
+		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI))
 		if err != nil {
 			return nil, err
 		}
 
 		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
 
-		if s.Snoop {
-			Debug("[kiteworks]: %s", s.Username)
-			Debug("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
-		}
+		Trace("[kiteworks]: %s", s.Username)
+		Trace("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
 
 		w := multipart.NewWriter(w_buff)
 
@@ -347,11 +345,10 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 			q := req.URL.Query()
 			q.Set("returnEntity", "true")
 			q.Set("mode", "full")
-			if s.Snoop {
-				for k, v := range q {
-					Debug("\\-> QUERY: %s VALUE: %s", k, v)
-				}
+			for k, v := range q {
+				Trace("\\-> QUERY: %s VALUE: %s", k, v)
 			}
+
 			req.URL.RawQuery = q.Encode()
 			ChunkSize = total_bytes - transfered_bytes
 		}
@@ -381,9 +378,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 			return nil, err
 		}
 
-		if s.Snoop {
-			Debug(w_buff.String())
-		}
+		Trace(w_buff.String())
 
 		post := &streamReadCloser{
 			ChunkSize,
@@ -397,19 +392,19 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 
 		req.Body = post
 
-		close_req := func(req *APISession) {
+		close_req := func(req *http.Request) {
 			if req.Body != nil {
 				req.Body.Close()
 			}
 		}
 
-		resp, err := s.APIClient.SendRequest(req)
+		resp, err := s.APIClient.SendRequest(s.Username, req)
 		if err != nil {
 			close_req(req)
 			return nil, err
 		}
 
-		if err := s.DecodeJSON(resp, &resp_data); err != nil {
+		if err := DecodeJSON(resp, &resp_data); err != nil {
 			close_req(req)
 			return nil, err
 		}
