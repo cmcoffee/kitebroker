@@ -79,7 +79,7 @@ func (s APIClient) isRetryError(attempt_id string, attempt int, username string,
 }
 
 // Fulfill does a safe wrapper around the request so that it can retry in the event of failure.
-func (s *APIClient) Fulfill(username string, req *http.Request, body []byte, output interface{}) (err error) {
+func (s *APIClient) Fulfill(username string, req *http.Request, output interface{}) (err error) {
 	var report_success bool
 
 	close_resp := func(resp *http.Response) {
@@ -90,30 +90,37 @@ func (s *APIClient) Fulfill(username string, req *http.Request, body []byte, out
 
 	attempt_id := string(RandBytes(8))
 
-	var (
-		resp *http.Response
-		retry bool
-	)
+	var resp *http.Response
 
-	if req.Body == nil {
-		retry = true
+	retry := true
+
+	retries := int(s.Retries)
+
+	if req.GetBody == nil && req.Body != nil {
+		retries = 0
 	} else {
-		retry = false
+		orig_body := req.GetBody
+		req.GetBody = func() (io.ReadCloser, error) {
+			body, err := orig_body()
+			if err != nil {
+				return nil, err
+			}
+			return iotimeout.NewReadCloser(body, s.RequestTimeout), nil
+		}
 	}
 
-	for i := 0; i <= int(s.Retries); i++ {
+	for i := 0; i <= retries; i++ {
 
-		if retry {
-			req.Body = iotimeout.NewReadCloser(ioutil.NopCloser(bytes.NewReader(body)), s.RequestTimeout)
-		} else {
-			req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
-			i = int(s.Retries) // if the request body is already set, we will need to return to caller instead.
+		if req.GetBody != nil {
+			req.Body, err = req.GetBody()
+			if err != nil {
+				return err
+			}
 		}
 
 		resp, err = s.SendRequest(username, req)
 
 		if err == nil && resp != nil {
-			resp.Body = iotimeout.NewReadCloser(resp.Body, s.RequestTimeout)
 			err = DecodeJSON(resp, output)
 		}
 
@@ -137,6 +144,7 @@ func (s *APIClient) Fulfill(username string, req *http.Request, body []byte, out
 	}
 
 	return err
+
 }
 
 // Configures a database for the API Client
@@ -690,7 +698,6 @@ func (s APIClient) SendRequest(username string, req *http.Request) (resp *http.R
 
 	client := http.Client{
 		Transport: &transport,
-		Timeout:   0, // Timeouts will be implemented with iotimeout.
 	}
 
 	// Must check token before sending request.
@@ -699,6 +706,13 @@ func (s APIClient) SendRequest(username string, req *http.Request) (resp *http.R
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if req.Body != nil {
+		req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
+		client.Timeout = 0
+	} else {
+		client.Timeout = s.RequestTimeout
 	}
 
 	resp, err = client.Do(req)
@@ -793,7 +807,9 @@ func (s APIClient) Call(api_req APIRequest) (err error) {
 		}
 	}
 
-	return s.Fulfill(api_req.Username, req, body, api_req.Output)
+	req.GetBody = GetBodyBytes(body)
+
+	return s.Fulfill(api_req.Username, req, api_req.Output)
 }
 
 // Backs off subsequent attempts generating a pause between requests.

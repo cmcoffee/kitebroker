@@ -59,38 +59,21 @@ type web_downloader struct {
 	request_timeout time.Duration
 }
 
-
-type downloadError struct {
-	err error
-}
-
-func (d downloadError) Error() string {
-	return d.err.Error()
-}
-
-// Check if error was produced during download of file.
-func IsDownloadError(err error) bool {
-	if _, ok := err.(*downloadError); ok {
-		return true
-	} 
-	return false
-}
-
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
 		W.req = W.reqs[0]
 		if W.req == nil {
-			return 0, downloadError{fmt.Errorf("Webdownloader not initialized.")}
+			return 0, fmt.Errorf("Webdownloader not initialized.")
 		}
 		W.reqs = append(W.reqs[:0], W.reqs[1:]...)
 		W.flag.Set(wd_started)
 		W.resp, err = W.api.SendRequest(NONE, W.req)
 		if err != nil {
-			return 0, downloadError{fmt.Errorf("Download Error: %s", err)}
-		}
-		if err := W.api.respErrorCheck(W.resp); err != nil {
-			err = PrefixAPIError("Download Error", err)
-			return 0, err
+			if IsAPIError(err) {
+				err = PrefixAPIError("Download Error", err)
+				return 0, err
+			}
+			return 0, fmt.Errorf("Download Error: %s", err)
 		}
 		Debug("%v: %s", W.req.URL, W.resp.Status)
 
@@ -98,7 +81,7 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 			content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
 			if len(content_range) > 1 {
 				if strings.TrimSpace(content_range[0]) != strconv.FormatInt(W.offset, 10) {
-					return 0, downloadError{fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])}
+					return 0, fmt.Errorf("Requested byte %v, got %v instead.", W.offset, content_range[0])
 				}
 			}
 		}
@@ -129,7 +112,7 @@ func (W *web_downloader) Close() error {
 		if W.resp == nil || W.resp.Body == nil {
 			return nil
 		}
-		return downloadError{W.resp.Body.Close()}
+		return W.resp.Body.Close()
 	}
 	return nil
 }
@@ -392,24 +375,19 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 
 		req.Body = post
 
-		close_req := func(req *http.Request) {
-			if req.Body != nil {
-				req.Body.Close()
-			}
+		resp, err := s.APIClient.SendRequest(s.Username, req)
+		if req.Body != nil {
+			req.Body.Close()
 		}
 
-		resp, err := s.APIClient.SendRequest(s.Username, req)
 		if err != nil {
-			close_req(req)
 			return nil, err
 		}
 
 		if err := DecodeJSON(resp, &resp_data); err != nil {
-			close_req(req)
 			return nil, err
 		}
 
-		close_req(req)
 		ChunkIndex++
 		transfered_bytes = transfered_bytes + ChunkSize
 		if total_bytes == 0 {

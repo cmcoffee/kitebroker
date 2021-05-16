@@ -9,14 +9,16 @@ import (
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/xsync"
-	"github.com/cmcoffee/go-snuglib/kvlite"
-	"github.com/cmcoffee/go-snuglib/options"
+	//"github.com/cmcoffee/go-snuglib/kvlite"
+	//"github.com/cmcoffee/go-snuglib/options"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
+	"io/ioutil"
+	"bytes"
 )
 
 // Menu item flags
@@ -85,6 +87,13 @@ type Task interface {
 }
 
 type TaskArgs map[string]interface{}
+
+// Easy GetBody wrapper for requests.
+func GetBodyBytes(input []byte) func() (io.ReadCloser, error) {
+	return func() (io.ReadCloser, error) {
+		return ioutil.NopCloser(bytes.NewReader(input)), nil
+	}
+}
 
 // Allows a KitebrokerTask to launch another KiteBrokerTask.
 func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...map[string]interface{}) (err error) {
@@ -156,38 +165,6 @@ var (
 	Info            = nfo.Aux
 	HumanSize       = nfo.HumanSize
 )
-
-var KiteBrokerCore = struct{
-	ErrBadPadlock error
-	OpenDB func(filename string, padlock ...byte) (kvlite.Store, error)
-	CryptReset func(filename string) (err error)
-	LogFile func(filename string, max_size_mb uint, max_rotation uint) (io.Writer, error) 
-	SetFile func(flag uint32, input io.Writer)
-	SetLogOutput func(flag uint32, w io.Writer)
-	LOG_FLAG_STD uint32
-	LOG_FLAG_AUX uint32
-	LOG_FLAG_DEBUG uint32
-	LOG_FLAG_ERROR uint32
-	LOG_FLAG_NOTICE uint32
-	LOG_FLAG_INFO uint32
-	LOG_FLAG_WARN uint32
-	Options func(header, footer string, exit_char rune) *options.Options
-}{
-	ErrBadPadlock: kvlite.ErrBadPadlock,
-	OpenDB:     kvlite.Open,
-	CryptReset: kvlite.CryptReset,
-	LogFile:    nfo.LogFile,
-	SetFile:    nfo.SetFile,
-	SetLogOutput: nfo.SetOutput,
-	LOG_FLAG_STD:   nfo.STD,
-	LOG_FLAG_AUX:   nfo.AUX,
-	LOG_FLAG_DEBUG: nfo.DEBUG,
-	LOG_FLAG_ERROR: nfo.ERROR,
-	LOG_FLAG_NOTICE: nfo.NOTICE,
-	LOG_FLAG_INFO: nfo.INFO,
-	LOG_FLAG_WARN: nfo.WARN,
-	Options: options.NewOptions,
-}
 
 var (
 	transferMonitor = nfo.TransferMonitor

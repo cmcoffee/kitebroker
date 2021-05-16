@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
+	"github.com/cmcoffee/go-snuglib/options"
+	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/kvlite"
 	"net"
 	"os"
 	"strings"
@@ -203,17 +205,17 @@ func SecureDatabase(file string) (*DBase, error) {
 		return nil
 	}
 
-	db, err := KiteBrokerCore.OpenDB(file, get_mac_addr()[0:]...)
+	db, err := kvlite.Open(file, get_mac_addr()[0:]...)
 	if err != nil {
-		if err == KiteBrokerCore.ErrBadPadlock {
+		if err == kvlite.ErrBadPadlock {
 			Notice("Hardware changes detected, you will need to reauthenticate.")
-			if err := KiteBrokerCore.CryptReset(file); err != nil {
+			if err := kvlite.CryptReset(file); err != nil {
 				return nil, err
 			}
 		} else {
 			return nil, err
 		}
-		db, err = KiteBrokerCore.OpenDB(file, get_mac_addr()[0:]...)
+		db, err = kvlite.Open(file, get_mac_addr()[0:]...)
 		if err != nil {
 			return nil, err
 		}
@@ -223,21 +225,21 @@ func SecureDatabase(file string) (*DBase, error) {
 
 // Initialize Logging.
 func init_logging() {
-	file, err := KiteBrokerCore.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
+	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
-	KiteBrokerCore.SetFile(KiteBrokerCore.LOG_FLAG_STD|KiteBrokerCore.LOG_FLAG_AUX, file)
+	nfo.SetFile(nfo.STD|nfo.AUX, file)
 	if global.sysmode {
-		KiteBrokerCore.SetLogOutput(KiteBrokerCore.LOG_FLAG_STD, os.Stderr)
-		KiteBrokerCore.SetLogOutput(KiteBrokerCore.LOG_FLAG_INFO, os.Stdout)
-		KiteBrokerCore.SetLogOutput(KiteBrokerCore.LOG_FLAG_AUX|KiteBrokerCore.LOG_FLAG_WARN|KiteBrokerCore.LOG_FLAG_NOTICE, nfo.None)
+		nfo.SetOutput(nfo.STD, os.Stderr)
+		nfo.SetOutput(nfo.INFO, os.Stdout)
+		nfo.SetOutput(nfo.AUX|nfo.WARN|nfo.NOTICE, nfo.None)
 	}
 	if global.debug {
-		KiteBrokerCore.SetLogOutput(nfo.DEBUG, os.Stderr)
-		KiteBrokerCore.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
+		nfo.SetOutput(nfo.DEBUG, os.Stderr)
+		nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 	}
 	if global.snoop {
-		KiteBrokerCore.SetLogOutput(nfo.TRACE, os.Stderr)
-		KiteBrokerCore.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
+		nfo.SetOutput(nfo.TRACE, os.Stderr)
+		nfo.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
 	}
 }
 
@@ -322,7 +324,7 @@ func config_api(configure_api, test_required bool) {
 
 	var bad_test bool
 
-	setup := KiteBrokerCore.Options("--- kiteworks API configuration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := options.NewOptions("--- kiteworks API configuration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
@@ -365,7 +367,7 @@ func config_api(configure_api, test_required bool) {
 	proxy := proxyValue{"Proxy Server", proxy_uri}
 	setup.Register(&proxy)
 
-	advanced := KiteBrokerCore.Options(NONE, "(selection or 'q' to return to previous)", 'q')
+	advanced := options.NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
 	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)

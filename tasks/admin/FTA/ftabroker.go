@@ -42,6 +42,7 @@ type Broker struct {
 	workspace    []string
 	manager      string
 	wg           LimitGroup
+	file_mover_wg LimitGroup
 	folders      Tally
 	perm_updates Tally
 	file_count   Tally
@@ -170,13 +171,14 @@ func (T *Broker) GetMembers(in_map map[string]int, role...int) (output []string)
 	T.map_lock.Lock()
 	defer T.map_lock.Unlock()
 
-	for k, v := range in_map {
-		for _, r := range role {
+	for _, r := range role {
+		for k, v := range in_map {
 			if v == r {
 				output = append(output, k)
 			}
 		}
 	}
+
 	return
 }
 
@@ -258,7 +260,8 @@ func (T *Broker) Init() (err error) {
 }
 
 func (T *Broker) Main() (err error) {
-	T.wg = NewLimitGroup(10)
+	T.wg = NewLimitGroup(100)
+	T.file_mover_wg = NewLimitGroup(100)
 
 	if T.files {
 		T.api.TokenStore = KVLiteStore(OpenCache())
@@ -271,15 +274,15 @@ func (T *Broker) Main() (err error) {
 		T.api.ErrorScanner = T.api.ftaError
 		T.api.SetLimiter(1)
 		T.api.TokenErrorCodes = []string{"221", "120", "ERR_AUTH_UNAUTHORIZED", "INVALID_GRANT"}
-		T.filemover = make(chan *ftacopy, 25)
+		T.filemover = make(chan *ftacopy, 100)
 		T.uploads = T.DB.Table("uploads")
-		T.wg.Add(1)
+		T.file_mover_wg.Add(1)
 		go T.FileMover()
 	}
 
 	T.kw_perm_map = make(map[int]map[string]int)
 
-	wg := NewLimitGroup(25)
+	wg := NewLimitGroup(100)
 
 	T.folders = T.Report.Tally("Folders Processed")
 	T.perm_updates = T.Report.Tally("Permission Updates")
@@ -317,13 +320,13 @@ func (T *Broker) Main() (err error) {
 	}
 
 	wg.Wait()
+	T.wg.Wait()
 
 	if T.files {
-		//T.CopyKitedrive()
 		T.filemover<-nil
+		T.file_mover_wg.Wait()
 	}
 
-	T.wg.Wait()
 	return nil
 }
 
@@ -734,17 +737,16 @@ func (T *Broker) SetPermissions(kw_user string, target KiteObject) {
 }
 
 func (T *Broker) FileMover() {
-	defer T.wg.Done()
-	wg := NewLimitGroup(25)
+	defer T.file_mover_wg.Done()
 	for {
 		msg := <-T.filemover
 		if msg == nil {
-			wg.Wait()
+			Debug("Filemover exiting.")
 			return
 		} 
-		wg.Add(1)
+		T.file_mover_wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer T.file_mover_wg.Done()
 			defer T.file_count.Add(1)
 			var err error
 			for i := 0; i < int(T.api.Retries); i++ {
@@ -778,12 +780,15 @@ func (T *Broker) UploadFile(user string, source *FTAObject, folder *KiteObject) 
 		return nil
 	}
 
+	Debug("[%s]: Preparing download of file.", source.Name())
 	file, err := T.api.Session(user).File(source.ID).Download()
 	if err != nil { 
 		return err
 	}
+	Debug("[%s]: Adding file to counter.", source.Name())
 	x := TransferCounter(file, T.transfered.Add)
 
+	Debug("[%s]: Starting upload to kiteworks.", source.Name())
 	_, err = T.KW.Session(user).Upload(source.Name(), source.Size(), source.ModTime(), false, true, false, *folder, x)
 	x.Close()
 	return
@@ -795,14 +800,15 @@ type ftacopy struct {
 	dst *KiteObject
 }
 
-func (T *Broker) FindDownloader(folder_path string) (fta_user string, err error) {
-	users := T.GetMembers(T.perm_map[folder_path], OWNER, MANAGER, COLLABORATOR)
+func (T *Broker) FindDownloader(kw_user string, folder_path string) (fta_user string, err error) {
+	users := append(T.GetMembers(T.perm_map[folder_path], OWNER, MANAGER, COLLABORATOR), kw_user)
 
-	if len(users) == 0 {
+	if _, ok := T.perm_map[folder_path]; !ok {
 		return NONE, nil
 	}
 
-	Debug("%s: %v", folder_path, T.perm_map[folder_path])
+	//Debug("%s: %v", folder_path, T.perm_map[folder_path])
+
 	for _, u := range users {
 		_, err := T.Find(T.api.Session(u), folder_path)
 		if err != nil && err != ErrNotFound && !IsAPIError(err, "INVALID_GRANT", "223") {
@@ -811,16 +817,18 @@ func (T *Broker) FindDownloader(folder_path string) (fta_user string, err error)
 			return u, nil
 		}
 	}
+
 	return NONE, fmt.Errorf("(FTA) %s: Unable to find a suitable downloader for downloading files.", folder_path)
 }
 
 // Copies files from FTA to kiteworks.
 func (T *Broker) CopyFiles(kw_user string, folder KiteObject) {
+
 	if !T.files {
 		return
 	}
 
-	fta_user, err := T.FindDownloader(folder.Path)
+	fta_user, err := T.FindDownloader(kw_user, folder.Path)
 	if err != nil {
 		Err(err)
 		return
@@ -843,6 +851,7 @@ func (T *Broker) CopyFiles(kw_user string, folder KiteObject) {
 		Log("(FTA) %s[%s]: %v", folder.Path, folder.ID, err)
 		return
 	}
+
 	for i, c := range children {
 		if c.Type == "f" {
 			T.filemover<-&ftacopy{

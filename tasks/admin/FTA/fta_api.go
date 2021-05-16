@@ -157,7 +157,9 @@ func (T FTAClient) newFTAToken(username string) (auth *Auth, err error) {
 		Expires      string `json:"expires_in"`
 	}
 
-	err = T.Fulfill(NONE, req, []byte(postform.Encode()), &fta_auth)
+	req.GetBody = GetBodyBytes([]byte(postform.Encode()))
+
+	err = T.Fulfill(NONE, req, &fta_auth)
 	if err != nil {
 		return nil, err
 	}
