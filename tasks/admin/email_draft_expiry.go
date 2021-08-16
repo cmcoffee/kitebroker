@@ -127,7 +127,7 @@ func (T *EmailDraftExpiryTask) Main() (err error) {
 func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
 	sess := T.KW.Session(user)
 	type kite_mail struct {
-		ID     int `json:"ID"`
+		ID     string `json:"ID"`
 		Sender struct {
 			Email string `json:"email"`
 		} `json:"sender"`
@@ -180,15 +180,15 @@ func (T *EmailDraftExpiryTask) ProcessDrafts(user string) (err error) {
 	return T.CleanMailDir(&sess)
 }
 
-func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id int) (err error) {
+func (T *EmailDraftExpiryTask) ShowAttachments(sess *KWSession, mail_id string) (err error) {
 	var attachments []struct {
-		AttachmentID int `json:"attachmentId"`
-		VersionID    int `json:"versionFileId"`
+		AttachmentID string `json:"attachmentId"`
+		VersionID    string `json:"versionFileId"`
 	}
 
 	err = sess.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/mail/%d/attachments", mail_id),
+		Path:   SetPath("/rest/mail/%s/attachments", mail_id),
 		Params: SetParams(Query{"with": "(package)"}),
 		Output: &attachments,
 	}, -1, 1000)

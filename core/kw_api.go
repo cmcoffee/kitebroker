@@ -68,7 +68,7 @@ func (K *KWAPI) Session(username string) KWSession {
 // Wrapper around Call to provide username.
 func (K KWSession) Call(api_req APIRequest) (err error) {
 	if api_req.Version <= 0 {
-		api_req.Version = 13
+		api_req.Version = 20
 	}
 	if api_req.Header == nil {
 		api_req.Header = make(map[string][]string)

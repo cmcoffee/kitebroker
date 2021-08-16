@@ -64,6 +64,40 @@ func (m *menu) RegisterHidden(task Task) {
 	m.register(task.Name(), _hidden_task, task)
 }
 
+
+// Sets the flags for the task.
+func set_task_flags(task Task, Flags FlagSet) {
+	T := task.Get()
+	T.Flags = Flags
+}
+
+// Initializes the task's database
+func set_task_db(task Task, DB Database) {
+	T := task.Get()
+	T.DB = DB
+}
+
+// Sets a report for the task.
+func set_task_report(task Task, input *TaskReport) {
+	T := task.Get()
+	T.Report = input
+}
+
+// Sets the kw api session for the task
+func set_task_session(task Task, user KWSession) {
+	T := task.Get()
+	T.KW = user
+}
+
+// Provides summary of the task after completion.
+func task_report_summary(task Task, errors uint32) {
+	T := task.Get()
+	if T.Report == nil {
+		return
+	}
+	T.Report.Summary(errors)
+}
+
 // Registers a task with the task menu.
 func (m *menu) register(name string, t_flag uint, task Task) {
 	desc := task.Desc()
@@ -211,8 +245,8 @@ func (m *menu) Select(input [][]string) (err error) {
 				show_help = true
 			}
 
-			x.task.KiteBrokerTask_set_db(get_taskstore(strings.Split(x.name, ":")[0], x.t_flag != _normal_task))
-			x.task.KiteBrokerTask_set_flags(*x.flags)
+			set_task_db(x.task, get_taskstore(strings.Split(x.name, ":")[0], x.t_flag != _normal_task))
+			set_task_flags(x.task, *x.flags)
 
 			if err := x.task.Init(); err != nil {
 				if show_help || err == eflag.ErrHelp {
@@ -225,9 +259,9 @@ func (m *menu) Select(input [][]string) (err error) {
 				}
 				if err != eflag.ErrHelp {
 					if source != "cli" {
-						Stderr("err [%s]: %s\n\n", source, err.Error())
+						Stderr("err [%s]: %s\n", source, err.Error())
 					} else {
-						Stderr("err: %s\n\n", err.Error())
+						Stderr("err: %s\n", err.Error())
 					}
 				}
 				x.flags.Usage()
@@ -273,7 +307,9 @@ func (m *menu) Select(input [][]string) (err error) {
 			if source == "cli" {
 				return fmt.Errorf("No such command: '%s' found.\n\n", args[0])
 			} else {
-				return fmt.Errorf("%s: No such command: '%s' found.\n\n", args[len(args)-1], args[0])
+				if source != "exit" {
+ 					return fmt.Errorf("%s: No such command: '%s' found.\n\n", args[len(args)-1], args[0])
+ 				}
 			}
 		}
 		m.mutex.RUnlock()
@@ -287,6 +323,11 @@ func (m *menu) Select(input [][]string) (err error) {
 	/*if !global.sysmode {
 		nfo.ShowTS()
 	}*/
+
+	if global.gen_token {
+		return
+	}
+
 	Info("### %s v%s ###", APPNAME, VERSION)
 	Info(NONE)
 
@@ -311,10 +352,10 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 					Info("\n")
 
-					x.task.KiteBrokerTask_set_session(global.user)
-					x.task.KiteBrokerTask_set_report(NewTaskReport(name, source, x.flags))
+					set_task_session(x.task, global.user)
+					set_task_report(x.task, NewTaskReport(name, source, x.flags))
 					report := Defer(func() error {
-						x.task.KiteBrokerTask_report_summary(ErrCount() - pre_errors)
+						task_report_summary(x.task, ErrCount() - pre_errors)
 						return nil
 					})
 					if err := x.task.Main(); err != nil {

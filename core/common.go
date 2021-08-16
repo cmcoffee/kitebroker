@@ -36,32 +36,9 @@ type KiteBrokerTask struct {
 	KW     KWSession
 }
 
-// Sets the flags for the task.
-func (T *KiteBrokerTask) KiteBrokerTask_set_flags(Flags FlagSet) {
-	T.Flags = Flags
-}
-
-// Initializes the task's database
-func (T *KiteBrokerTask) KiteBrokerTask_set_db(DB Database) {
-	T.DB = DB
-}
-
-// Sets a report for the task.
-func (T *KiteBrokerTask) KiteBrokerTask_set_report(input *TaskReport) {
-	T.Report = input
-}
-
-// Sets the kw api session for the task
-func (T *KiteBrokerTask) KiteBrokerTask_set_session(user KWSession) {
-	T.KW = user
-}
-
-// Provides summary of the task after completion.
-func (T *KiteBrokerTask) KiteBrokerTask_report_summary(errors uint32) {
-	if T.Report == nil {
-		return
-	}
-	T.Report.Summary(errors)
+// Return specified KiteBrokerTask
+func (T *KiteBrokerTask) Get() *KiteBrokerTask {
+	return T
 }
 
 // Parse flags assocaited with task.
@@ -72,18 +49,18 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
+func (f *FlagSet) Text() (output []string) {
+	return f.FlagArgs
+}
+
 // Task Interface
 type Task interface {
 	New() Task
+	Get() *KiteBrokerTask
 	Name() string
 	Desc() string
 	Init() error
 	Main() error
-	KiteBrokerTask_set_flags(Flags FlagSet)
-	KiteBrokerTask_set_db(DB Database)
-	KiteBrokerTask_set_report(*TaskReport)
-	KiteBrokerTask_set_session(user KWSession)
-	KiteBrokerTask_report_summary(error uint32)
 }
 
 type TaskArgs map[string]interface{}
@@ -122,15 +99,16 @@ func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...m
 			}
 		}
 	}
-	input.KiteBrokerTask_set_db(db)
+	task := input.Get()
+	task.DB = db
 	flags := FlagSet{EFlagSet: eflag.NewFlagSet("SubTask", eflag.ReturnErrorOnly)}
 	flags.FlagArgs = arg_string
-	input.KiteBrokerTask_set_flags(flags)
+	task.Flags = flags
 	if err = input.Init(); err != nil {
 		return err
 	}
-	input.KiteBrokerTask_set_session(T)
-	input.KiteBrokerTask_set_report(report)
+	task.KW = T
+	task.Report = report
 	if err = input.Main(); err != nil {
 		return err
 	}
@@ -144,33 +122,33 @@ const (
 
 // Import from go-nfo.
 var (
-	Log             = nfo.Log
-	Fatal           = nfo.Fatal
-	Notice          = nfo.Notice
-	Flash           = nfo.Flash
-	Stdout          = nfo.Stdout
-	Warn            = nfo.Warn
-	Defer           = nfo.Defer
-	Debug           = nfo.Debug
-	Trace           = nfo.Trace
-	Exit            = nfo.Exit
-	PleaseWait      = nfo.PleaseWait
-	Stderr          = nfo.Stderr
-	ProgressBar     = nfo.ProgressBar
-	Path            = filepath.Clean
-	TransferCounter = nfo.TransferCounter
-	NewLimitGroup   = xsync.NewLimitGroup
-	FormatPath      = filepath.FromSlash
-	GetPath         = filepath.ToSlash
-	Info            = nfo.Aux
-	HumanSize       = nfo.HumanSize
+	Log             = nfo.Log      // Standard Log Output
+	Fatal           = nfo.Fatal    // Fatal Log Output & Exit.
+	Notice          = nfo.Notice   // Notice Log Output
+	Flash           = nfo.Flash    // Flash to Stderr
+	Stdout          = nfo.Stdout   // Send to Stdout
+	Warn            = nfo.Warn     // Warn Log Output
+	Defer           = nfo.Defer    // Global Application Deffer
+	Debug           = nfo.Debug    // Debug Log Output
+	Trace           = nfo.Trace    // Trace Log Output
+	Exit            = nfo.Exit     // End Application, Run Global Defer.
+	PleaseWait      = nfo.PleaseWait // Set Loading Prompt
+	Stderr          = nfo.Stderr     // Send to Stderr
+	ProgressBar     = nfo.ProgressBar // Set Progress Bar animation
+	Path            = filepath.Clean  // Provide clean path
+	TransferCounter = nfo.TransferCounter // Tranfer Animation
+	NewLimitGroup   = xsync.NewLimitGroup // Limiter Group
+	FormatPath      = filepath.FromSlash // Convert to standard path with *nix style delimiters.
+	GetPath         = filepath.ToSlash // Conver to OS specific path with correct slash delimiters.
+	Info            = nfo.Aux         // Log as standrd INFO
+	HumanSize       = nfo.HumanSize   // Convert bytes int64 to B/KB/MB/GB/TB.
 )
 
 var (
 	transferMonitor = nfo.TransferMonitor
-	leftToRight     = nfo.LeftToRight
-	rightToLeft     = nfo.RightToLeft
-	noRate          = nfo.NoRate
+	leftToRight     = nfo.LeftToRight // Transfer Monitor Direction
+	rightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
+	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
 )
 
 type (
@@ -187,6 +165,7 @@ func ErrCount() uint32 {
 	return atomic.LoadUint32(&error_counter)
 }
 
+// Log Standard Error, adds counter to ErrCount()
 func Err(input ...interface{}) {
 	atomic.AddUint32(&error_counter, 1)
 	nfo.Err(input...)
@@ -362,6 +341,7 @@ func DateString(input time.Time) string {
 	return fmt.Sprintf("%s-%s-%s", pad(input.Year()), pad(int(input.Month())), pad(input.Day()))
 }
 
+// Combines several paths.
 func CombinePath(name ...string) string {
 	if name == nil {
 		return NONE
@@ -372,10 +352,12 @@ func CombinePath(name ...string) string {
 	return fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH))
 }
 
+// Path rename.
 func Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
+// Confirms all strings handed to it are empty.
 func IsBlank(input ...string) bool {
 	for _, v := range input {
 		if len(v) == 0 {
@@ -385,6 +367,7 @@ func IsBlank(input ...string) bool {
 	return false
 }
 
+// Remove leading and trailing quotation marks on string.
 func Dequote(input *string) {
 	if len(*input) > 0 && (*input)[0] == '"' {
 		*input = (*input)[:1]

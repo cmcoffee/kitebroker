@@ -27,7 +27,7 @@ type KiteMember struct {
 type KiteObject struct {
 	Type                  string         `json:"type"`
 	Status                string         `json:"status"`
-	ID                    int            `json:"id"`
+	ID                    string         `json:"id"`
 	Name                  string         `json:"name"`
 	Description           string         `json:"description"`
 	Created               string         `json:"created"`
@@ -38,7 +38,7 @@ type KiteObject struct {
 	PermDeleted           bool           `json:"permDeleted"`
 	Expire                interface{}    `json:"expire"`
 	Path                  string         `json:"path"`
-	ParentID              int            `json:"parentId"`
+	ParentID              string         `json:"parentId"`
 	UserID                int            `json:"userId"`
 	Permalink             string         `json:"permalink"`
 	Secure                bool           `json:"secure"`
@@ -73,7 +73,7 @@ func (K *KiteObject) Expiry() time.Time {
 type KiteLinks struct {
 	Relationship string `json:"rel"`
 	Entity       string `json:"entity"`
-	ID           int    `json:"id"`
+	ID           string `json:"id"`
 	URL          string `json:"href"`
 }
 
@@ -81,17 +81,17 @@ type KiteLinks struct {
 type KitePermission struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
-	Rank       int    `json:"rank"`
+	Rank       string `json:"rank"`
 	Modifiable bool   `json:"modifiable"`
 	Disabled   bool   `json:"disabled"`
 }
 
 type kw_rest_folder struct {
-	folder_id int
+	folder_id string
 	*KWSession
 }
 
-func (s KWSession) Folder(folder_id int) kw_rest_folder {
+func (s KWSession) Folder(folder_id string) kw_rest_folder {
 	return kw_rest_folder{
 		folder_id,
 		&s,
@@ -101,7 +101,7 @@ func (s KWSession) Folder(folder_id int) kw_rest_folder {
 func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err error) {
 	return result, s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/members", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/members", s.folder_id),
 		Output: &result,
 		Params: SetParams(params, Query{"with": "(user,role)"}),
 	}, -1, 1000)
@@ -111,7 +111,7 @@ func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bo
 	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": notify_files_added, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
 	err = s.Call(APIRequest{
 		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/members", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/members", s.folder_id),
 		Params: params,
 	})
 	return
@@ -151,10 +151,10 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 
 	var current []KiteObject
 
-	if s.folder_id <= 0 {
+	if !IsBlank(s.folder_id) && s.folder_id != "0" {
 		current, err = s.TopFolders(params)
 	} else {
-		current, err = s.Folder(s.folder_id).Contents(params)
+		current, err = s.Folder("0").TopFolders(params)
 	}
 	if err != nil {
 		return
@@ -229,18 +229,18 @@ func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (
 }
 
 type kw_rest_file struct {
-	file_id int
+	file_id string
 	*KWSession
 }
 
-func (s KWSession) File(file_id int) kw_rest_file {
+func (s KWSession) File(file_id string) kw_rest_file {
 	return kw_rest_file{file_id, &s}
 }
 
 func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/files/%d", s.file_id),
+		Path:   SetPath("/rest/files/%s", s.file_id),
 		Params: SetParams(params),
 		Output: &result,
 	})
@@ -250,7 +250,7 @@ func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error)
 func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
-		Path:   SetPath("/rest/files/%d", s.file_id),
+		Path:   SetPath("/rest/files/%s", s.file_id),
 		Params: SetParams(params),
 	})
 	return
@@ -259,19 +259,10 @@ func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 func (s kw_rest_file) PermDelete() (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
-		Path:   SetPath("/rest/files/%d/actions/permanent", s.file_id),
+		Path:   SetPath("/rest/files/%s/actions/permanent", s.file_id),
 	})
 	return
 }
-
-
-/*
-// Drills down specific folder and returns all results.
-func (s KWSession) CrawlFolder(folder_id int, params...interface{}) (results []KiteObject, err error) {
-	if len(params) == 0 {
-
-	}
-}*/
 
 // Get list of all top folders
 func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err error) {
@@ -288,109 +279,6 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 	return
 }
 
-/*
-// File Uploader
-func (S kw_rest_folder) Upload(src SourceFile, overwrite_newer, version bool, count_cb func(num int)) (error) {
-
-	if S.folder_id == 0 {
-		Notice("%s: Uploading files to base path is not permitted, ignoring file.", src.Name())
-		return nil
-	}
-
-	var UploadRecord struct {
-		Name string
-		ID int
-		ClientModified time.Time
-		Size int64
-		Created time.Time
-	}
-
-	if count_cb == nil {
-		count_cb = func(num int) {
-			return
-		}
-	}
-
-	transfer_file := func(src SourceFile, uid int) (err error) {
-		defer src.Close()
-
-		x := TransferCounter(src, count_cb)
-		_, err = S.KWSession.Upload(src.Name(), uid, x)
-		return
-	}
-
-	target := fmt.Sprintf("%d:%s", S.folder_id, src.String())
-	uploads := S.db.Table("uploads")
-	if uploads.Get(target, &UploadRecord) {
-		if err := transfer_file(src, UploadRecord.ID); err != nil {
-			Debug("Error attempting to resume file: %s", err.Error())
-		} else {
-			uploads.Unset(target)
-			return nil
-		}
-	}
-	 
-
-	kw_file_info, err := S.Folder(S.folder_id).Find(src.Name())
-	if err != nil && err != ErrNotFound {
-		return err
-	}
-
-	var uid int
-
-	if kw_file_info.ID > 0 {
-		modified, _ := ReadKWTime(kw_file_info.ClientModified)
-
-		// File on kiteworks is newer than local file.
-		if modified.UTC().Unix() > src.ModTime().UTC().Unix() {
-			if overwrite_newer {
-				uid, err = S.File(kw_file_info.ID).NewVersion(src)
-				if err != nil {
-					return err
-				}
-			} else {
-				uploads.Unset(target)
-				return nil
-			}
-			// Local file is newer than kiteworks file.
-		} else if modified.UTC().Unix() < src.ModTime().UTC().Unix() {
-				uid, err = S.File(kw_file_info.ID).NewVersion(src, PostJSON{"disableAutoVersion": !version})
-				if err != nil {
-					return err
-				}
-		} else {
-			return nil
-		}
-	} else {
-		uid, err = S.Folder(S.folder_id).NewUpload(src)
-		if err != nil {
-			return err
-		}
-	}
-
-	UploadRecord.Name = src.Name()
-	UploadRecord.ID = uid
-	UploadRecord.ClientModified = src.ModTime()
-	UploadRecord.Size = src.Size()
-	uploads.Set(target, &UploadRecord)
-
-	for i := uint(0); i <= S.Retries; i++ {
-		err = transfer_file(src, uid)
-		if err == nil || IsAPIError(err) {
-			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
-				Debug("[%d]%s: %s (%d/%d)", uid, UploadRecord.Name, err.Error(), i+1, S.Retries+1)
-				S.BackoffTimer(i)
-				continue
-			}
-			uploads.Unset(target)
-			return err
-		}
-		break
-	}
-
-	return nil
-}
-*/
 // Returns all items with listed folder_id.
 func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
@@ -398,7 +286,7 @@ func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, 
 	}
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/children", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/children", s.folder_id),
 		Output: &children,
 		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
@@ -413,7 +301,7 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 	}
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/folders", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/folders", s.folder_id),
 		Output: &children,
 		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
@@ -424,14 +312,14 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 func (s kw_rest_folder) Recover(params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PATCH",
-		Path:   SetPath("/rest/folders/%d/actions/recover", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/actions/recover", s.folder_id),
 	})
 }
 
 func (s kw_rest_file) Recover(params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PATCH",
-		Path:   SetPath("/rest/files/%d/actions/recover", s.file_id),
+		Path:   SetPath("/rest/files/%s/actions/recover", s.file_id),
 	})
 }
 
@@ -441,7 +329,7 @@ func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err
 	}
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/files", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/files", s.folder_id),
 		Output: &children,
 		Params: SetParams(params),
 	}, -1, 1000)
@@ -453,12 +341,12 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 	if params == nil {
 		params = SetParams(Query{"deleted": false})
 	}
-	if s.folder_id == 0 {
+	if IsBlank(s.folder_id) || s.folder_id == "0" {
 		return
 	}
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d", s.folder_id),
+		Path:   SetPath("/rest/folders/%s", s.folder_id),
 		Params: SetParams(params, Query{"mode": "full", "with": "(currentUserRole, fileLifetime, path)"}),
 		Output: &output,
 	})
@@ -468,7 +356,7 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/folders", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/folders", s.folder_id),
 		Params: SetParams(PostJSON{"name": name}, Query{"returnEntity": true}, params),
 		Output: &output,
 	})
@@ -481,12 +369,12 @@ type KiteUser struct {
 	Active      bool   `json:"active"`
 	Deactivated bool   `json:"deactivated"`
 	Suspended   bool   `json:"suspended"`
-	BaseDirID   int    `json:"basedirId"`
 	Deleted     bool   `json:"deleted"`
 	Email       string `json:"email"`
-	MyDirID     int    `json:"mydirId"`
 	Name        string `json:"name"`
-	SyncDirID   int    `json:"syncdirId"`
+	MyDirID     string `json:"mydirId"`
+	BaseDirID   string `json:"basedirId"`
+	SyncDirID   string `json:"syncdirId"`
 	UserTypeID  int    `json:"userTypeId"`
 	Verified    bool   `json:"verified"`
 	Internal    bool   `json:"internal"`
@@ -695,18 +583,40 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 	return input, nil
 }
 
+type KiteRoles struct {
+	ID int `json:"id"`
+	Name string `json:"name"`
+	Rank int `json:"rank"`
+	Type string `json:"type"`
+	Links string `json:"links"`
+}
+
+func (s KWSession) Roles() (output []KiteRoles, err error) {
+	var Roles struct {
+		Out []KiteRoles `json:"data"`
+	}
+
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path:   "/rest/roles",
+		Output: &Roles,
+	})
+	output = Roles.Out
+	return
+}
+
 // Downloads a file to a specific path
 func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
 
-	req, err := s.NewRequest("GET", SetPath("/rest/files/%d/content", file.ID))
+	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
 	if err != nil {
 		return nil, err
 	}
 
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
 
 	err = s.SetToken(s.Username, req)
 
@@ -728,7 +638,7 @@ func (K KWSession) Profile(profile_id int) kw_profile {
 
 func (K kw_profile) Get() (profile KWProfile, err error) {
 	err = K.Call(APIRequest{
-		Version: 13,
+		Version: 20,
 		Path:    SetPath("/rest/profiles/%d", K.profile_id),
 		Output:  &profile,
 	})

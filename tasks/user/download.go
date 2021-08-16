@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -99,7 +98,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 	var folders []KiteObject
 
 	for _, f := range T.input.src {
-		folder, err := T.KW.Folder(0).Find(f)
+		folder, err := T.KW.Folder("0").Find(f)
 		if err != nil {
 			Err("%s: %v", f, err)
 			continue
@@ -198,11 +197,11 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 
 		switch obj.Type {
 		case "d":
-			if obj.CurrentUserRole.Rank < 500000 && T.input.owned_only {
+			if obj.CurrentUserRole.ID < 5 && T.input.owned_only {
 				n++
 				continue
 			}
-			if obj.CurrentUserRole.Rank < 200000 {
+			if obj.CurrentUserRole.ID < 2 {
 				n++
 				continue
 			}
@@ -260,9 +259,9 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
 
-	clear_from_db := func(file_id int) {
+	clear_from_db := func(file_id string) {
 		for _, k := range T.db.downloads.Keys() {
-			if strings.Split(k, ":")[0] == strconv.Itoa(file_id) {
+			if strings.Split(k, ":")[0] == file_id {
 				T.db.downloads.Unset(k)
 			}
 		}

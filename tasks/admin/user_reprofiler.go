@@ -8,6 +8,7 @@ import (
 )
 
 type UserProfilerTask struct {
+	KiteBrokerTask
 	new_profile_id int
 	old_profile_id int
 	user_emails    []string
@@ -16,7 +17,6 @@ type UserProfilerTask struct {
 	deactivated    bool
 	user_changed   Tally
 	user_count     Tally
-	KiteBrokerTask
 }
 
 func (T *UserProfilerTask) New() Task {

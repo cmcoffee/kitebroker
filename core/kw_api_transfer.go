@@ -395,7 +395,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		}
 	}
 
-	if resp_data == nil || resp_data.ID == 0 {
+	if resp_data == nil || (IsBlank(resp_data.ID) || resp_data.ID == "0") {
 		return nil, ErrUploadNoResp
 	}
 
@@ -403,14 +403,14 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 }
 
 // Create a new file version for an existing file.
-func (S KWSession) newFileVersion(file_id int, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+func (S KWSession) newFileVersion(file_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
 
 	if err := S.Call(APIRequest{
 		Method: "POST",
-		Path:   SetPath("/rest/files/%d/actions/initiateUpload", file_id),
+		Path:   SetPath("/rest/files/%s/actions/initiateUpload", file_id),
 		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
 		Output: &upload,
 	}); err != nil {
@@ -420,7 +420,7 @@ func (S KWSession) newFileVersion(file_id int, filename string, size int64, mod_
 }
 
 // Creates a new upload for a folder.
-func (S KWSession) newFolderUpload(folder_id int, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+func (S KWSession) newFolderUpload(folder_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
@@ -428,7 +428,7 @@ func (S KWSession) newFolderUpload(folder_id int, filename string, size int64, m
 	if err := S.Call(APIRequest{
 		//Version: 5,
 		Method: "POST",
-		Path:   SetPath("/rest/folders/%d/actions/initiateUpload", folder_id),
+		Path:   SetPath("/rest/folders/%s/actions/initiateUpload", folder_id),
 		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
 		Output: &upload,
 	}); err != nil {
@@ -504,7 +504,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 
 	if flags.Has(IsFile) {
 		kw_file_info = dst
-		dst, err = s.Folder(0).Find(dst.Path)
+		dst, err = s.Folder("0").Find(dst.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -515,7 +515,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		}
 	} 
 
-	if kw_file_info.ID > 0 {
+	if !IsBlank(kw_file_info.ID) && kw_file_info.ID != "0" {
 		modified, _ := ReadKWTime(kw_file_info.ClientModified)
 
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {

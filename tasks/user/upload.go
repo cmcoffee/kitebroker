@@ -72,15 +72,15 @@ func (T *FolderUploadTask) Main() (err error) {
 	var base_folder KiteObject
 
 	if IsBlank(T.input.dst) {
-		base_folder, err = T.KW.Folder(0).Info()
+		base_folder, err = T.KW.Folder("0").Info()
 		if err != nil {
 			return err
 		}
 	} else {
-		base_folder, err = T.KW.Folder(0).Find(T.input.dst)
+		base_folder, err = T.KW.Folder("0").Find(T.input.dst)
 		if err != nil {
 			if err == ErrNotFound {
-				base_folder, err = T.KW.Folder(0).NewFolder(T.input.dst)
+				base_folder, err = T.KW.Folder("0").NewFolder(T.input.dst)
 				if err != nil {
 					return err
 				}

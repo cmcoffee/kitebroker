@@ -81,7 +81,7 @@ func (T *FolderFileExpiryTask) Init() (err error) {
 
 func (T *FolderFileExpiryTask) Main() (err error) {
 	type Folder struct {
-		ID              int            `json:"ID"`
+		ID              string         `json:"ID"`
 		CurrentUserRole KitePermission `json:"currentUserRole"`
 	}
 
@@ -149,7 +149,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 				}
 			} else {
 				for _, v := range T.input.folders {
-					f, err := sess.Folder(0).Find(v)
+					f, err := sess.Folder("0").Find(v)
 					if err != nil {
 						Err("%s: [%s]: %v", user.Email, v, err)
 						continue
@@ -159,7 +159,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 			}
 			for _, v := range folders {
 				// Only process folders this user owns.
-				if v.CurrentUserRole.Rank < 500000 {
+				if v.CurrentUserRole.ID < 5 {
 					continue
 				}
 				T.limiter.Add(1)
@@ -249,7 +249,7 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 	err = sess.Call(APIRequest{
 		Version: 15,
 		Method:  "PUT",
-		Path:    SetPath("/rest/folders/%d", folder.ID),
+		Path:    SetPath("/rest/folders/%s", folder.ID),
 		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),
 	})
 	if err != nil && IsAPIError(err, "ERR_ENTITY_IS_SYNC_DIR") {
@@ -277,7 +277,7 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 
 	err = sess.DataCall(APIRequest{
 		Method: "GET",
-		Path:   SetPath("/rest/folders/%d/files", folder.ID),
+		Path:   SetPath("/rest/folders/%s/files", folder.ID),
 		Params: SetParams(Query{"deleted": false}),
 		Output: &files,
 	}, -1, 1000)
@@ -293,7 +293,7 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 	for _, file := range files {
 		err = sess.Call(APIRequest{
 			Method: "PUT",
-			Path:   SetPath("/rest/files/%d", file.ID),
+			Path:   SetPath("/rest/files/%s", file.ID),
 			Params: SetParams(PostJSON{"expire": WriteKWTime(expiry_time)}),
 		})
 		if err != nil {

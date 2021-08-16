@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "21.05.01"
+	VERSION = "21.06.01"
 )
 
 const (
@@ -38,6 +38,7 @@ var global struct {
 	new_task_file bool
 	pause     bool
 	as_user   string
+	gen_token bool
 }
 
 func init() {
@@ -101,6 +102,7 @@ func main() {
 	if global.cfg.Get("configuration", "auth_flow") == "signature" {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")
 	}
+	flags.BoolVar(&global.gen_token, "auth_token_only", "Returns the generated auth token, then exits.")
 
 	flags.Order("task", "new_task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
@@ -133,6 +135,22 @@ func main() {
 
 	if global.snoop {
 		enable_trace()
+	}
+
+	if global.gen_token {
+		nfo.Animations = false
+		command.Select([][]string{[]string{"exit"}})
+		if _, err := global.user.MyUser(); err != nil {
+			Fatal(err)
+			Exit(1)
+		}
+		auth, err := global.user.KWAPI.TokenStore.Load(global.user.Username)
+		if err != nil {
+			Fatal(err)
+			Exit(1)
+		}
+		Stdout(auth.AccessToken)
+		Exit(0)
 	}
 
 	if global.sysmode && !*setup {

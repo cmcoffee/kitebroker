@@ -82,7 +82,7 @@ func (T *ListTask) Main() (err error) {
 		T.displayResult(folders[0:]...)
 	} else {
 		Info("-- '%s' --", T.input.folder)
-		f, err := T.KW.Folder(0).Find(T.input.folder)
+		f, err := T.KW.Folder("0").Find(T.input.folder)
 		if err != nil {
 			return err
 		}
