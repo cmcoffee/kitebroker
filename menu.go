@@ -259,9 +259,9 @@ func (m *menu) Select(input [][]string) (err error) {
 				}
 				if err != eflag.ErrHelp {
 					if source != "cli" {
-						Stderr("err [%s]: %s\n", source, err.Error())
+						Stderr("err [%s]: %s\n\n", source, err.Error())
 					} else {
-						Stderr("err: %s\n", err.Error())
+						Stderr("err: %s\n\n", err.Error())
 					}
 				}
 				x.flags.Usage()

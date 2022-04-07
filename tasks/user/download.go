@@ -160,7 +160,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 
 func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string) {
 	type child struct {
-		path string
+		local_path string
 		*KiteObject
 	}
 
@@ -187,9 +187,9 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 		if n+1 < len(folders)-1 {
 			if T.crawl_limiter.Try() {
 				go func(path string, obj *KiteObject) {
-					T.ProcessFolder(obj, local_path)
+					T.ProcessFolder(obj, path)
 					T.crawl_limiter.Done()
-				}(obj.path, obj.KiteObject)
+				}(obj.local_path, obj.KiteObject)
 				n++
 				continue
 			}
@@ -218,29 +218,33 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 					continue
 				}
 			}
+
 			T.folder_count.Add(1)
-			err := MkDir(CombinePath(obj.path, obj.Name))
+			err := MkDir(CombinePath(obj.local_path, obj.Name))
 			if err != nil {
 				Err("%s: %v", obj.Path, err)
 				n++
 				continue
 			}
+			obj.local_path = CombinePath(obj.local_path, obj.Name)
+
 			objs, err := T.KW.Folder(obj.ID).Contents()
 			if err != nil {
 				Err(err)
 				n++
 				continue
 			}
+
 			for i := 0; i < len(objs); i++ {
 				switch objs[i].Type {
 				case "d":
-					next = append(next, child{CombinePath(obj.path, obj.Name), &objs[i]})
+					next = append(next, child{obj.local_path, &objs[i]})
 				case "f":
-					T.dwnld_chan <- &download{CombinePath(obj.path, obj.Name), &objs[i]}
+					T.dwnld_chan <- &download{obj.local_path, &objs[i]}
 				}
 			}
 		case "f":
-			T.dwnld_chan <- &download{obj.path, obj.KiteObject}
+			T.dwnld_chan <- &download{obj.local_path, obj.KiteObject}
 		}
 		n++
 	}

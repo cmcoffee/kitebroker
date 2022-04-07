@@ -20,5 +20,5 @@ func init() {
 	// Register Signature Only Tasks:
 	command.RegisterAdmin(new(admin.FolderFileExpiryTask))
 	command.RegisterAdmin(new(admin.UserProfilerTask))
-	command.RegisterAdmin(new(admin.EmailDraftExpiryTask))
+	command.RegisterAdmin(new(admin.FileCleanerTask))
 }

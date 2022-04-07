@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"strings"
 )
 
 type FolderUploadTask struct {
@@ -72,7 +73,11 @@ func (T *FolderUploadTask) Main() (err error) {
 	var base_folder KiteObject
 
 	if IsBlank(T.input.dst) {
-		base_folder, err = T.KW.Folder("0").Info()
+		user_info, err := T.KW.MyUser()
+		if err != nil {
+			return err
+		}
+		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
 		if err != nil {
 			return err
 		}
@@ -123,7 +128,7 @@ func (T *FolderUploadTask) Main() (err error) {
 					break
 				}
 				if err != nil {
-					Err("%s[%d]: %v", up.path, up.dest.ID, err)
+					Err("%s[%s]: %v", up.path, up.dest.ID, err)
 					return
 				}
 			}(u)
@@ -360,7 +365,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 				kw_folder, err := T.KW.Folder(target.ID).Find(v.Name())
 				if err != nil {
 					if err != ErrNotFound {
-						Err("%s[%d]: %v", target.Path, target.ID, err)
+						Err("%s[%s]: %v", target.Path, target.ID, err)
 						continue
 					} else {
 						kw_folder, err = T.KW.Folder(target.ID).NewFolder(v.Name())
@@ -368,7 +373,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 							if IsAPIError(err, "ERR_INPUT_FOLDER_NAME_INVALID_START_END_FORMAT") {
 								Notice("%s: %v", v.Name(), err)
 							} else {
-								Err("%s[%d]: %v", target.Path, target.ID, err)
+								Err("%s[%s]: %v", target.Path, target.ID, err)
 							}
 							continue
 						}

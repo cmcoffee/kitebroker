@@ -136,5 +136,5 @@ func (d DBase) Unset(table, key string) {
 
 // Closes go-kvlite database.
 func (d DBase) Close() {
-	Critical(d.Store.Close())
+	d.Store.Close()
 }

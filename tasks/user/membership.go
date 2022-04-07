@@ -44,10 +44,15 @@ func (T *MembershipTask) Init() (err error) {
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
-	if len(T.rem_users) > 0 || len(T.add_users) > 0 && len(T.target) == 0 {
+	if len(T.target) == 0 {
 		return fmt.Errorf("Please provide a folder you wish to add/remove users from.")
 	}
-	return 
+
+	if len(T.add_users) == 0 && len(T.rem_users) == 0 {
+		return fmt.Errorf("Must use either --add=<users> or --del=<users>")
+	}
+
+	return nil
 }
 
 func (T *MembershipTask) FindRoleID(input string) (id int, err error) {

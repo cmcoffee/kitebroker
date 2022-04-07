@@ -159,7 +159,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 			}
 			for _, v := range folders {
 				// Only process folders this user owns.
-				if v.CurrentUserRole.ID < 5 {
+				if v.CurrentUserRole.ID != 5 {
 					continue
 				}
 				T.limiter.Add(1)
@@ -247,7 +247,6 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 	}
 
 	err = sess.Call(APIRequest{
-		Version: 15,
 		Method:  "PUT",
 		Path:    SetPath("/rest/folders/%s", folder.ID),
 		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),

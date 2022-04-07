@@ -43,6 +43,19 @@ func (t *TaskReport) Summary(errors uint32) {
 
 	Info("\n")
 
+	if errors > 0 {
+		fmt.Fprintf(text, "\t\t\t------------- Recorded Errors -------------\n")
+		if err_table != nil {
+			var err_txt string
+			for _, k := range err_table.Keys() {
+				err_table.Get(k, &err_txt)
+				fmt.Fprintf(text, fmt.Sprintf("%s\n", err_txt))
+			}
+		}
+		fmt.Fprintf(text, "\t\t\t-------------------------------------------\n\n")
+		err_table.Drop()
+	}
+
 	if t.file != "cli" {
 		fmt.Fprintf(text, "\tFile: \t%s\n", t.file)
 	}
@@ -94,6 +107,7 @@ func (t *TaskReport) Summary(errors uint32) {
 	for _, t := range strings.Split(buffer.String(), "\n") {
 		Info(t)
 	}
+
 	return
 }
 

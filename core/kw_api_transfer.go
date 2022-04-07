@@ -19,8 +19,11 @@ const (
 	kw_chunk_size_min = 1048576
 )
 
-var ErrNoUploadID = errors.New("Upload ID not found.")
-var ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
+var (
+	ErrNoUploadID = errors.New("Upload ID not found.")
+	ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
+	ErrUploadFinished = errors.New("Upload already marked as complete.")
+)
 
 // Returns chunk_size, total number of chunks and last chunk size.
 func (K *APIClient) chunksCalc(total_size int64) (total_chunks int64) {
@@ -278,7 +281,11 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		return nil, err
 	}
 
-	if upload_data.ID != upload_data.ID {
+	if upload_data.Finished {
+		return nil, ErrUploadFinished
+	}
+
+	if upload_id != upload_data.ID {
 		return nil, ErrNoUploadID
 	}
 
@@ -315,7 +322,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 			return nil, err
 		}
 
-		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 7))
+		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
 
 		Trace("[kiteworks]: %s", s.Username)
 		Trace("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
@@ -471,7 +478,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		Created time.Time
 	}
 
-	target := fmt.Sprintf("%d:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
+	target := fmt.Sprintf("%s:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
 	uploads := s.db.Table("uploads")
 
 	delete_upload := func(target string) {
@@ -492,7 +499,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 
 	if uploads.Get(target, &UploadRecord) {
 		if output, err := s.uploadFile(filename, UploadRecord.ID, src); err != nil {
-			Debug("Error attempting to resume file: %s", err.Error())
+			Debug("Error attempting to resume file %s: %s", filename, err.Error())
 			delete_upload(target)
 		} else {
 			uploads.Unset(target)
@@ -515,7 +522,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		}
 	} 
 
-	if !IsBlank(kw_file_info.ID) && kw_file_info.ID != "0" {
+	if !IsBlank(kw_file_info.ID) {
 		modified, _ := ReadKWTime(kw_file_info.ClientModified)
 
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {
@@ -548,6 +555,10 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	uploads.Set(target, &UploadRecord)
 
 	file, err = s.uploadFile(filename, uid, src)
+	if err == nil {
+		uploads.Unset(target)
+	}
+
 	return
 }
 

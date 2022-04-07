@@ -186,6 +186,7 @@ func init_database() {
 	db_filename := FormatPath(fmt.Sprintf("%s/data/%s.db", global.root, APPNAME))
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
+	SetErrTable(global.db.Table("kitebroker_errors"))
 	Defer(global.db.Close)
 }
 

@@ -81,9 +81,17 @@ type KiteLinks struct {
 type KitePermission struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
-	Rank       string `json:"rank"`
+	// Rank       string `json:"rank"`
 	Modifiable bool   `json:"modifiable"`
 	Disabled   bool   `json:"disabled"`
+}
+
+func (s KWSession) FolderRoles() (result []KitePermission, err error) {
+	return result, s.DataCall(APIRequest{
+		Method: "GET",
+		Path: SetPath("/rest/roles"),
+		Output: &result,
+	}, -1, 1000)
 }
 
 type kw_rest_folder struct {
@@ -152,9 +160,9 @@ func (s kw_rest_folder) Find(path string, params ...interface{}) (result KiteObj
 	var current []KiteObject
 
 	if !IsBlank(s.folder_id) && s.folder_id != "0" {
-		current, err = s.TopFolders(params)
+		current, err = s.Folder(s.folder_id).Contents(params)
 	} else {
-		current, err = s.Folder("0").TopFolders(params)
+		current, err = s.TopFolders(params)
 	}
 	if err != nil {
 		return
@@ -195,6 +203,14 @@ type kw_rest_admin struct {
 
 func (s KWSession) Admin() kw_rest_admin {
 	return kw_rest_admin{&s}
+}
+
+func (s kw_rest_admin) Register(email string) (err error) {
+	return s.Call(APIRequest{
+		Method: "POST",
+		Path: "/rest/users/register",
+		Params: SetParams(PostJSON{"email": email, "password": "NewAccount#123"}),
+	})
 }
 
 // Creates a new user on the system.
@@ -284,6 +300,7 @@ func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, 
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
+
 	err = s.DataCall(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/folders/%s/children", s.folder_id),

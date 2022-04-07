@@ -21,6 +21,12 @@ import (
 	"bytes"
 )
 
+var err_table *Table
+func SetErrTable(input Table) {
+	err_table = &input
+	err_table.Drop()
+}
+
 // Menu item flags
 type FlagSet struct {
 	FlagArgs []string
@@ -168,7 +174,11 @@ func ErrCount() uint32 {
 // Log Standard Error, adds counter to ErrCount()
 func Err(input ...interface{}) {
 	atomic.AddUint32(&error_counter, 1)
-	nfo.Err(input...)
+	msg := nfo.Stringer(input...)
+	nfo.Err(msg)
+	if err_table != nil {
+		err_table.Set(fmt.Sprintf("%d", err_table.CountKeys()), fmt.Sprintf("<%v> %s", time.Now().Round(time.Second), msg))
+	}
 }
 
 // Converts string to date.
