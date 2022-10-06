@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io"
+	"os"
 	"mime/multipart"
 	"net/http"
 	"strconv"
@@ -75,10 +76,10 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 			if IsAPIError(err) {
 				err = PrefixAPIError("Download Error", err)
 				return 0, err
+			} else {
+				return 0, fmt.Errorf("Download Error: %s", err)	
 			}
-			return 0, fmt.Errorf("Download Error: %s", err)
 		}
-		Debug("%v: %s", W.req.URL, W.resp.Status)
 
 		if W.offset > 0 {
 			content_range := strings.Split(strings.TrimPrefix(W.resp.Header.Get("Content-Range"), "bytes"), "-")
@@ -148,7 +149,7 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 }
 
 // Perform External Download from a remote request.
-func (S *APIClient) Download(req *http.Request, reqs ...*http.Request) ReadSeekCloser {
+func (S *APIClient) WebDownload(req *http.Request, reqs ...*http.Request) ReadSeekCloser {
 	if S.trans_limiter != nil {
 		S.trans_limiter <- struct{}{}
 	}
@@ -255,7 +256,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser) (*KiteObject, error) {
+func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path...string) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -297,7 +298,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 	}
 	ChunkIndex := upload_data.UploadedChunks
 
-	src := transferMonitor(filename, total_bytes, leftToRight, source_reader)
+	src := transferMonitor(filename, total_bytes, leftToRight, source_reader, path...)
 	defer src.Close()
 
 	if ChunkIndex > 0 {
@@ -455,6 +456,9 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		VersionFile
 	)
 
+	dest_path := strings.TrimPrefix(dst.Path, "basedir/")
+	dest_path = fmt.Sprintf("%s/", dest_path)
+
 	switch dst.Type {
 		case "d":
 			flags.Set(IsFolder)
@@ -498,7 +502,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	var uid int
 
 	if uploads.Get(target, &UploadRecord) {
-		if output, err := s.uploadFile(filename, UploadRecord.ID, src); err != nil {
+		if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
 			Debug("Error attempting to resume file %s: %s", filename, err.Error())
 			delete_upload(target)
 		} else {
@@ -507,27 +511,27 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		}
 	}
 
-	var kw_file_info KiteObject
+//	var kw_file_info KiteObject
+
+//	if flags.Has(IsFile) {
+//		kw_file_info = dst
+		//dst, err = s.Folder("0").Find(dst.Path)
+		//if err != nil {
+		//	return nil, err
+		//}
+	//} else {
+	//	kw_file_info, err = s.Folder(dst.ID).Find(filename)
+	//	if err != nil && err != ErrNotFound {
+	//		return nil, err
+	//	}
+	//} 
 
 	if flags.Has(IsFile) {
-		kw_file_info = dst
-		dst, err = s.Folder("0").Find(dst.Path)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		kw_file_info, err = s.Folder(dst.ID).Find(filename)
-		if err != nil && err != ErrNotFound {
-			return nil, err
-		}
-	} 
-
-	if !IsBlank(kw_file_info.ID) {
-		modified, _ := ReadKWTime(kw_file_info.ClientModified)
+		modified, _ := ReadKWTime(dst.ClientModified)
 
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {
 			if flags.Has(OverwriteFile) {
-				uid, err = s.newFileVersion(kw_file_info.ID, filename, size, mod_time)
+				uid, err = s.newFileVersion(dst.ID, filename, size, mod_time)
 				if err != nil {
 					return nil, err
 				}
@@ -536,7 +540,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 				return nil, nil
 			}
 		} else {
-			if kw_file_info.Size == size {
+			if dst.Size == size {
 				uploads.Unset(target)
 				return nil, nil
 			}
@@ -554,11 +558,119 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	UploadRecord.Size = size
 	uploads.Set(target, &UploadRecord)
 
-	file, err = s.uploadFile(filename, uid, src)
+	file, err = s.uploadFile(filename, uid, src, dest_path)
 	if err == nil {
 		uploads.Unset(target)
 	}
 
+	return
+}
+
+// Downloads a file to from Kiteworks
+func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
+	if file == nil {
+		return nil, fmt.Errorf("nil file object provided.")
+	}
+
+	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
+
+	err = s.SetToken(s.Username, req)
+
+	return transferMonitor(file.Name, file.Size, rightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
+}
+
+// Kiteworks File Download to Local File
+func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_counter_cb func(c int)) (err error) {
+	if file == nil {
+		return fmt.Errorf("nil file object provided.")
+	}
+
+	mtime, err := ReadKWTime(file.ClientModified)
+	if err != nil {
+		return err
+	}
+
+	dest_file := CombinePath(local_path, file.Name)
+	tmp_file_name := fmt.Sprintf("%s.%d.%d.incomplete", dest_file, file.Size, mtime.Unix())
+
+	dstat, err := os.Stat(dest_file)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if dstat != nil && dstat.Size() == file.Size && dstat.ModTime().UTC().Unix() == mtime.UTC().Unix() {
+		return nil
+	}
+
+	f, err := s.Download(file)
+	if err != nil {
+		return err 
+	}
+
+	fstat, err := os.Stat(tmp_file_name)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	dst, err := os.OpenFile(tmp_file_name, os.O_CREATE|os.O_RDWR, 0755)
+	if err != nil {
+		return
+	}
+
+	if fstat != nil {
+		offset, err := dst.Seek(fstat.Size(), 0)
+		if err != nil {
+			return err
+		}
+		_, err = f.Seek(offset, 0)
+		if err != nil {
+			return err
+		}
+	}
+
+	if fstat == nil || fstat.Size() != file.Size {
+		if transfer_counter_cb != nil {
+			f = TransferCounter(f, transfer_counter_cb)
+		}
+
+		_, err := io.Copy(dst, f)
+		if err != nil {
+			f.Close()
+			dst.Close()
+
+			if file.AdminQuarantineStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			if file.AVStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			if file.DLPStatus != "allowed" {
+				Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
+				os.Remove(tmp_file_name)
+				return nil
+			}
+			return err
+		}
+	}
+
+	f.Close()
+	dst.Close()
+
+	err = Rename(tmp_file_name, dest_file)
+	if err != nil {
+		return err
+	}
+
+	err = os.Chtimes(dest_file, time.Now(), mtime)
 	return
 }
 

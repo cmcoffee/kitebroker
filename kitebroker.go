@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "21.12.23"
+	VERSION = "22.09.02"
 )
 
 const (
@@ -26,6 +26,7 @@ const (
 var global struct {
 	cfg       ConfigStore
 	db        Database
+	cache     Database
 	auth_mode int
 	user      KWSession
 	kw        *KWAPI

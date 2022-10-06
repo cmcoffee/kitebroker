@@ -128,7 +128,7 @@ func (T *UserProfilerTask) change_profile(user_id int) (err error) {
 	return T.KW.Call(APIRequest{
 		Method: "PUT",
 		Path:   SetPath("/rest/admin/profiles/%d/users", T.new_profile_id),
-		Params: SetParams(Query{"id:in": user_id}),
+		Params: SetParams(Query{"id:in": user_id}, PostJSON{"retainToUser": true, "retainData": true, "retainPermissionToSharedData": true}),
 		Output: nil,
 	})
 }

@@ -75,6 +75,10 @@ func set_task_flags(task Task, Flags FlagSet) {
 func set_task_db(task Task, DB Database) {
 	T := task.Get()
 	T.DB = DB
+	T.Cache = global.cache
+	for _, k := range T.Cache.Tables() {
+		T.Cache.Drop(k)
+	}
 }
 
 // Sets a report for the task.

@@ -25,37 +25,37 @@ type KiteMember struct {
 
 // KiteFile/Folder/Attachment
 type KiteObject struct {
-	Type                  string         `json:"type"`
-	Status                string         `json:"status"`
-	ID                    string         `json:"id"`
-	Name                  string         `json:"name"`
-	Description           string         `json:"description"`
-	Created               string         `json:"created"`
-	Modified              string         `json:"modified"`
-	ClientCreated         string         `json:"clientCreated"`
-	ClientModified        string         `json:"clientModified"`
-	Deleted               bool           `json:"deleted"`
-	PermDeleted           bool           `json:"permDeleted"`
-	Expire                interface{}    `json:"expire"`
-	Path                  string         `json:"path"`
-	ParentID              string         `json:"parentId"`
-	UserID                int            `json:"userId"`
-	Permalink             string         `json:"permalink"`
-	Secure                bool           `json:"secure"`
-	LockUser              int            `json:"lockUser"`
-	Fingerprint           string         `json:"fingerprint"`
-	ProfileID             int            `json:"typeID`
-	Size                  int64          `json:"size"`
-	Mime                  string         `json:"mime"`
-	AVStatus              string         `json:"avStatus"`
-	DLPStatus             string         `json:"dlpStatus"`
-	AdminQuarantineStatus string         `json:"adminQuarantineStatus`
-	Quarantined           bool           `json:"quarantined"`
-	DLPLocked             bool           `json:"dlpLocked"`
-	FileLifetime          int            `json:"fileLifetime"`
-	MailID                int            `json:"mail_id"`
-	Links                 []KiteLinks    `json:"links"`
-	CurrentUserRole       KitePermission `json:"currentUserRole"`
+	Type                  string         `json:"type,omitempty"`
+	Status                string         `json:"status,omitempty"`
+	ID                    string         `json:"id,omitempty"`
+	Name                  string         `json:"name,omitempty"`
+	Description           string         `json:"description,omitempty"`
+	Created               string         `json:"created,omitempty"`
+	Modified              string         `json:"modified,omitempty"`
+	ClientCreated         string         `json:"clientCreated,omitempty"`
+	ClientModified        string         `json:"clientModified,omitempty"`
+	Deleted               bool           `json:"deleted,omitempty"`
+	PermDeleted           bool           `json:"permDeleted,omitempty"`
+	Expire                interface{}    `json:"expire,omitempty"`
+	Path                  string         `json:"path,omitempty"`
+	ParentID              string         `json:"parentId,omitempty"`
+	UserID                int            `json:"userId,omitempty"`
+	Permalink             string         `json:"permalink,omitempty"`
+	Secure                bool           `json:"secure,omitempty"`
+	Fingerprint           string         `json:"fingerprint,omitempty"`
+	ProfileID             int            `json:"typeID,omitempty"`
+	Size                  int64          `json:"size,omitempty"`
+	Mime                  string         `json:"mime,omitempty"`
+	AVStatus              string         `json:"avStatus,omitempty"`
+	DLPStatus             string         `json:"dlpStatus,omitempty"`
+	AdminQuarantineStatus string         `json:"adminQuarantineStatus,omitempty"`
+	Quarantined           bool           `json:"quarantined,omitempty"`
+	DLPLocked             bool           `json:"dlpLocked,omitempty"`
+	FileLifetime          int            `json:"fileLifetime,omitempty"`
+	MailID                int            `json:"mail_id,omitempty"`
+	Links                 []KiteLinks    `json:"links,omitempty"`
+	IsShared              bool           `json:"isShared,omitempty"`
+	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
 }
 
 // Returns the Expiration in time.Time.
@@ -81,7 +81,7 @@ type KiteLinks struct {
 type KitePermission struct {
 	ID         int    `json:"id"`
 	Name       string `json:"name"`
-	// Rank       string `json:"rank"`
+	//Rank       int    `json:"rank"`
 	Modifiable bool   `json:"modifiable"`
 	Disabled   bool   `json:"disabled"`
 }
@@ -104,6 +104,15 @@ func (s KWSession) Folder(folder_id string) kw_rest_folder {
 		folder_id,
 		&s,
 	}
+}
+
+func (s kw_rest_folder) Delete(params ...interface{}) (err error) {
+	err = s.Call(APIRequest{
+		Method: "DELETE",
+		Path:   SetPath("/rest/folders/%s", s.folder_id),
+		Params: SetParams(params),
+	})
+	return
 }
 
 func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err error) {
@@ -225,6 +234,25 @@ func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify 
 	return user, err
 }
 
+func (s kw_rest_admin) GetAllUsers(params ...interface{}) (emails []string, err error) {
+	var users []struct {
+		Email string `json:"email"`
+	}
+	err = s.DataCall(APIRequest{
+		Method: "GET",
+		Path:   "/rest/admin/users",
+		Params: SetParams(params),
+		Output: &users,
+	}, -1, 1000)
+	if err != nil {
+		return nil, err
+	}
+	for _, u := range users {
+		emails = append(emails, u.Email)
+	}
+	return
+}
+
 func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (emails []string, err error) {
 	var users []struct {
 		Email string `json:"email"`
@@ -241,6 +269,38 @@ func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (
 	for _, u := range users {
 		emails = append(emails, u.Email)
 	}
+	return
+}
+
+func (s kw_rest_admin) DeleteUser(user KiteUser, params ...interface{}) (err error) {
+	return s.Call(APIRequest{
+		Method: "DELETE",
+		Path: SetPath("/rest/admin/users/%v", user.ID),
+		Params: SetParams(params),
+	})
+}
+
+func (s kw_rest_admin) FindProfile(name string) (profile KWProfile, err error) {
+	profiles, err := s.Profiles()
+	if err != nil { 
+		return profile, err
+	}
+	for _, v := range profiles {
+		if strings.ToLower(name) == strings.ToLower(v.Name) {
+			return v, nil
+		}
+	}
+	err = fmt.Errorf("Requested profile not found: %s", name)
+	return
+}
+
+func (s kw_rest_admin) Profiles(params ...interface{}) (profiles []KWProfile, err error) {
+	err = s.DataCall(APIRequest{
+		Method: "GET",
+		Path: "/rest/admin/profiles",
+		Params: SetParams(params),
+		Output: &profiles,
+	}, -1, 1000)
 	return
 }
 
@@ -395,6 +455,7 @@ type KiteUser struct {
 	UserTypeID  int    `json:"userTypeId"`
 	Verified    bool   `json:"verified"`
 	Internal    bool   `json:"internal"`
+	ProfileID   int    `json:"userTypeID"`
 }
 
 // Retrieve my user info.
@@ -403,6 +464,22 @@ func (s KWSession) MyUser() (user KiteUser, err error) {
 		Method: "GET",
 		Path:   "/rest/users/me",
 		Output: &user,
+	})
+	return
+}
+
+type KiteQuota struct {
+	SendUsed      int `json:"send_quota_used"`
+	FolderUsed    int `json:"folder_quota_users"`
+	FolderAllowed int `json:"folder_quota_allowed"`
+	SendAllowed   int `json:"send_quota_allowed"`
+}
+
+func (s KWSession) MyQuota() (quota KiteQuota, err error) {
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path: "/rest/users/me/quota",
+		Output: &quota,
 	})
 	return
 }
@@ -437,6 +514,7 @@ type GetUsers struct {
 	offset    int
 	filter    Query
 	emails    []string
+	email_map map[string]interface{}
 	params    []interface{}
 	session   *kw_rest_admin
 	completed bool
@@ -447,7 +525,16 @@ func (s kw_rest_admin) Users(emails []string, params ...interface{}) *GetUsers {
 	var T GetUsers
 	T.filter = make(Query)
 	T.offset = 0
-	T.emails = emails
+
+	if len(emails) > 0 {
+		T.email_map = make(map[string]interface{})
+		for _, v := range emails {
+			T.email_map[strings.ToLower(v)] = struct{}{}
+		}
+		if len(emails) <= 100 {
+			T.emails = emails
+		}
+	}
 
 	// First extract the query from request.
 	params = SetParams(params)
@@ -490,14 +577,15 @@ func (s kw_rest_admin) Users(emails []string, params ...interface{}) *GetUsers {
 
 // Return a set of users to process.
 func (T *GetUsers) Next() (users []KiteUser, err error) {
-	if T.emails != nil && T.emails[0] != NONE {
-		if !T.completed {
-			T.completed = true
-			return T.findEmails()
-		} else {
-			return []KiteUser{}, nil
+		if T.completed {
+			return
 		}
-	}
+
+		if len(T.emails) > 0 {
+				T.completed = true
+				return T.findEmails()
+		} 
+
 	for {
 		var raw_users []KiteUser
 		err = T.session.DataCall(APIRequest{
@@ -509,6 +597,7 @@ func (T *GetUsers) Next() (users []KiteUser, err error) {
 			return nil, err
 		}
 		if len(raw_users) == 0 {
+			T.completed = true
 			return
 		}
 		T.offset = T.offset + len(raw_users)
@@ -526,6 +615,7 @@ func (T *GetUsers) Next() (users []KiteUser, err error) {
 	return
 }
 
+// Individual Email Lookup
 func (T *GetUsers) findEmails() (users []KiteUser, err error) {
 	for _, u := range T.emails {
 		var raw_users []KiteUser
@@ -546,7 +636,7 @@ func (T *GetUsers) findEmails() (users []KiteUser, err error) {
 			users = append(users, filtered_users[0:]...)
 			continue
 		}
-		Err("%s: User not found, or did not meet specified criteria", u)
+		Err("%s: User not found, or did not meet specified criteria.", u)
 	}
 	return
 }
@@ -587,6 +677,11 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 			if v, ok := val.(bool); ok {
 				tmp := input[0:0]
 				for _, user := range input {
+					if T.email_map != nil {
+						if _, ok := T.email_map[strings.ToLower(user.Email)]; !ok {
+							continue
+						}
+					}
 					if matchBool(user, key, v) {
 						tmp = append(tmp, user)
 					}
@@ -622,24 +717,6 @@ func (s KWSession) Roles() (output []KiteRoles, err error) {
 	return
 }
 
-// Downloads a file to a specific path
-func (s KWSession) FileDownload(file *KiteObject) (ReadSeekCloser, error) {
-	if file == nil {
-		return nil, fmt.Errorf("nil file object provided.")
-	}
-
-	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
-
-	err = s.SetToken(s.Username, req)
-
-	return transferMonitor(file.Name, file.Size, rightToLeft, s.Download(req)), err
-}
-
 type kw_profile struct {
 	profile_id int
 	*KWSession
@@ -663,10 +740,103 @@ func (K kw_profile) Get() (profile KWProfile, err error) {
 }
 
 type KWProfile struct {
+	ID int `json:"id"`
+	Name string `json:"name"`
 	Features struct {
 		AllowSFTP    bool  `json:"allowSftp"`
 		MaxStorage   int64 `json:"maxStorage"`
 		SendExternal bool  `json:"sendExternal`
 		FolderCreate int   `json:"folderCreate"`
 	} `json:"features"`
+}
+
+type dli_admin struct {
+	*KWSession
+}
+
+func (K KWSession) DLIAdmin() dli_admin {
+	return dli_admin{
+		&K,
+	}
+}
+
+func (K dli_admin) ActivityCount(input KiteUser, number_of_days_ago int) (activities int, err error) {
+	var activity []struct {
+		Created string `json:"created"`
+	}
+
+	err = K.DataCall(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/dli/users/%v/activities", input.ID),
+		Params: SetParams(Query{"noDayBack": number_of_days_ago}),
+		Output: &activity,
+	}, -1, 1000);
+	if err != nil {
+		return 1, err
+	}
+
+	return len(activity), err
+}
+
+func (K dli_admin) CheckForActivity(user KiteUser, number_of_days int) (found bool, err error) {
+	end_date := time.Now().UTC()
+	start_date := time.Now().UTC().Add((time.Hour * 24) * time.Duration(1) * -1)
+
+	var report []struct {
+		ID string `json:"id"`
+		Status string `json:"status"`
+	}
+
+	err = K.DataCall(APIRequest{
+		Method: "POST",
+		Path: SetPath("/rest/dli/exports/users/%v", user.ID),
+		Params: SetParams(PostJSON{"startDate": WriteKWTime(start_date), "endDate": WriteKWTime(end_date), "types":[]string{"activities"}}, Query{"returnEntity": true}),
+		Output: &report,
+	}, -1, 1000)
+
+	if err != nil {
+		return false, err
+	}
+
+	if len(report) == 0 {
+		return false, fmt.Errorf("No report found.")
+	}
+
+	path := SetPath("/rest/dli/exports/%s", report[0].ID)
+
+	defer K.Call(APIRequest{
+			Method: "DELETE",
+			Path: path,
+		})
+
+
+	status := report[0].Status
+
+	for status == "inprocess" {
+		time.Sleep(time.Second)
+		var r_status struct {
+			ID string `json:"id"`
+			Status string `json:"status"`
+		}
+
+		err = K.Call(APIRequest{
+			Method: "GET",
+			Path: path,
+			Output: &r_status,
+		})
+
+		if err != nil {
+			return false, err
+		}
+
+		status = r_status.Status
+	}
+
+	if status == "nodata" {
+		return false, nil
+	} else {
+		return true, nil
+	}
+
+	return
 }

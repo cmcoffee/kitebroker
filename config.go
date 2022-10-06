@@ -187,7 +187,8 @@ func init_database() {
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 	SetErrTable(global.db.Table("kitebroker_errors"))
-	Defer(global.db.Close)
+	global.cache = global.db.Sub("cache")
+	//Defer(global.db.Close)
 }
 
 // Opens go-kvlite database using mac address for lock.
@@ -340,10 +341,8 @@ func config_api(configure_api, test_required bool) {
 
 	server := setup.String("kiteworks Host", global.cfg.Get("configuration", "server"), "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", false)
 
-	if IsBlank(client_app_id) || IsBlank(client_app_secret) || global.auth_mode == SIGNATURE_AUTH {
-		setup.StringVar(&client_app_id, "Client Application ID", client_app_id, NONE, false)
-		setup.StringVar(&client_app_secret, "Client Secret Key", client_app_secret, NONE, true)
-	}
+	setup.StringVar(&client_app_id, "Client Application ID", client_app_id, NONE, false)
+	setup.StringVar(&client_app_secret, "Client Secret Key", client_app_secret, NONE, true)
 
 	if global.auth_mode == SIGNATURE_AUTH {
 		setup.StringVar(&signature, "Signature Secret", signature, NONE, true)
@@ -372,7 +371,7 @@ func config_api(configure_api, test_required bool) {
 	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
-	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 5)
+	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 10)
 	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 65", 1, 65)
 
 	setup.Options("Advanced", advanced, false)

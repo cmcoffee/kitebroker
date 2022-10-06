@@ -156,6 +156,11 @@ func (c Tally) Add64(num int64) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
 }
 
+// Remove from Tally
+func (c Tally) Del(num int) {
+	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)-int64(num))
+}
+
 // Get the value of the Tally
 func (c Tally) Value() int64 {
 	return atomic.LoadInt64(c.count)

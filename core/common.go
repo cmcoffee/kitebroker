@@ -38,6 +38,7 @@ type FlagSet struct {
 type KiteBrokerTask struct {
 	Flags  FlagSet
 	DB     Database
+	Cache  Database
 	Report *TaskReport
 	KW     KWSession
 }

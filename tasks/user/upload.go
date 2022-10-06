@@ -25,6 +25,7 @@ type FolderUploadTask struct {
 	folder_count Tally
 	transfered   Tally
 	uploads      Table
+	cache        FileCache
 	KiteBrokerTask
 }
 
@@ -66,12 +67,29 @@ func (T *FolderUploadTask) Init() (err error) {
 }
 
 func (T *FolderUploadTask) Main() (err error) {
-	T.crawl_wg = NewLimitGroup(20)
-	T.upload_wg = NewLimitGroup(6)
+	T.crawl_wg = NewLimitGroup(50)
+	T.upload_wg = NewLimitGroup(50)
 	T.uploads = T.DB.Table("uploads")
 
 	var base_folder KiteObject
 
+	user_info, err := T.KW.MyUser()
+	if err != nil {
+		return err
+	}
+	if IsBlank(T.input.dst) {
+		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
+		if err != nil {
+			return err
+		}
+	} else {
+		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(T.input.dst)
+		if err != nil {
+			return err
+		}
+	}
+
+/*
 	if IsBlank(T.input.dst) {
 		user_info, err := T.KW.MyUser()
 		if err != nil {
@@ -94,7 +112,7 @@ func (T *FolderUploadTask) Main() (err error) {
 			}
 		}
 	}
-
+*/
 	T.file_count = T.Report.Tally("Files")
 	T.folder_count = T.Report.Tally("Folders")
 	T.transfered = T.Report.Tally("Transfered", HumanSize)
@@ -106,6 +124,7 @@ func (T *FolderUploadTask) Main() (err error) {
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 
 	T.upload_chan = make(chan *upload, 100)
+
 	// Spin up go thread for uploading.
 	T.upload_wg.Add(1)
 	go func() {
@@ -115,20 +134,19 @@ func (T *FolderUploadTask) Main() (err error) {
 			if u == nil {
 				return
 			}
+			T.file_count.Add(1)
 			T.upload_wg.Add(1)
 			go func(up *upload) {
+				retry := T.KW.InitRetry(T.KW.Username, fmt.Sprintf("%s/%s", up.dest, up.finfo.Name()))
 				defer T.upload_wg.Done()
-				var err error
-				for i := 0; i < int(T.KW.Retries); i++ {
-					err = T.UploadFile(up.path, up.finfo, up.dest)
-					if err == ErrUploadNoResp {
-						time.Sleep(time.Second*time.Duration(i) + 1)
-						continue
+				for {
+					if err := T.UploadFile(up.path, up.finfo, up.dest); err != nil {
+						if retry.CheckForRetry(err) {
+							continue
+						}
+						Err("%s[%s]: %v", up.path, up.dest.ID, err)
+						T.file_count.Del(1)
 					}
-					break
-				}
-				if err != nil {
-					Err("%s[%s]: %v", up.path, up.dest.ID, err)
 					return
 				}
 			}(u)
@@ -151,6 +169,10 @@ func (T *FolderUploadTask) Main() (err error) {
 	}
 	T.crawl_wg.Wait()
 
+	for len(T.upload_chan) > 0 {
+		time.Sleep(time.Second)
+	}
+
 	// Shutdown upload
 	T.upload_chan <- nil
 	T.upload_wg.Wait()
@@ -159,16 +181,20 @@ func (T *FolderUploadTask) Main() (err error) {
 }
 
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
-	defer T.file_count.Add(1)
-	
+	if T.cache.Check(finfo, folder) == true {
+		return nil
+	} 
+
 	f, err := os.Open(local_path)
 	if err != nil {
 		return err
 	}
+
 	x := TransferCounter(f, T.transfered.Add)
 	defer f.Close()
 
 	_, err = T.KW.Upload(finfo.Name(), finfo.Size(), finfo.ModTime(), T.input.overwrite_newer, !T.input.dont_overwrite, true, *folder, x)
+
 	return
 }
 
@@ -294,7 +320,6 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 */
 
 func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) (err error) {
-
 	type child struct {
 		path string
 		os.FileInfo
@@ -305,6 +330,8 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 	if err != nil {
 		return err
 	}
+
+	T.cache.CacheFolder(T.KW, folder)
 
 	if !finfo.IsDir() {
 		T.upload_chan <- &upload{local_path, finfo, folder}
@@ -352,6 +379,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 			n++
 			continue
 		}
+
 		nested, err := ioutil.ReadDir(target.path)
 		if err != nil {
 			Err("%s: %v", target.path, err)
@@ -378,6 +406,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 							continue
 						}
 					}
+					T.cache.CacheFolder(T.KW, &kw_folder)
 				}
 				next = append(next, child{CombinePath(target.path, v.Name()), v, &kw_folder})
 			} else {

@@ -38,7 +38,7 @@ func (C APIClient) clear_token(username string) {
 	}
 }
 
-func (C APIClient) IsTokenError(username string, err error) bool {
+func (C APIClient) isTokenError(username string, err error) bool {
 	if C.TokenErrorCodes != nil {
 		if IsAPIError(err, C.TokenErrorCodes[0:]...) {
 			C.clear_token(username)
@@ -53,11 +53,11 @@ func (C APIClient) IsTokenError(username string, err error) bool {
 	return false
 }
 
-func (C APIClient) IsRetryError(err error) bool {
+func (C APIClient) isRetryError(err error) bool {
 	if C.RetryErrorCodes != nil {
 		return IsAPIError(err, C.RetryErrorCodes[0:]...)
 	} else {
-		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR")
+		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR", "ERR_ACCESS_USER", "HTTP_STATUS_503", "HTTP_STATUS_502")
 	}
 	return false
 }

@@ -38,7 +38,6 @@ type APIClient struct {
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
-	cache           Database
 }
 
 const (
@@ -47,31 +46,62 @@ const (
 
 )
 
+type APIRetryEngine struct {
+	api APIClient
+	attempt uint
+	uid string
+	user string
+	dest string
+}
+
+func (s APIClient) InitRetry(user string, dest string) *APIRetryEngine {
+	return &APIRetryEngine {
+		s,
+		0,
+		string(RandBytes(8)),
+		user,
+		dest,
+	}
+}
+
 // Check if error is retryable.
-func (s APIClient) isRetryError(attempt_id string, attempt int, username string, path string, err error) bool {
+func (a *APIRetryEngine) CheckForRetry(err error) bool {
 	var flag BitFlag
 
-	if !IsBlank(username) && s.IsTokenError(username, err) {
+	if err == nil {
+		if a.attempt > 0 {
+			Debug("[#%s]: success!! (retry %d/%d)", a.uid, a.attempt, a.api.Retries)
+		}
+		return false
+	}
+
+	if a.attempt > a.api.Retries {
+		Debug("[#%s]: %s -> %s: %s (exhausted retries)", a.uid, a.user, a.dest, err.Error())
+		return false
+	}
+
+	if !IsBlank(a.user) && a.api.isTokenError(a.user, err) {
 		flag.Set(_is_token_error)
 		flag.Set(_is_retry_error)
 	} else {
-		if s.IsRetryError(err) || !IsAPIError(err) {
+		if a.api.isRetryError(err) || !IsAPIError(err) {
 			flag.Set(_is_retry_error)
 		}
 	}
 
 	if flag.Has(_is_token_error|_is_retry_error) {
-		if attempt == 0 {
-			if s.Retries > 0 {
-				Debug("[#%s]: %s -> %s: %s (will retry)", attempt_id, username, path, err.Error())
+		if a.attempt == 0 {
+			if a.api.Retries > 0 {
+				Debug("[#%s]: %s -> %s: %s (will retry)", a.uid, a.user, a.dest, err.Error())
 			}
 		} else {
-			Debug("[#%s]: %s (retry %d/%d)", attempt_id, err.Error(), attempt, s.Retries)
+			Debug("[#%s]: %s (retry %d/%d)", a.uid, err.Error(), a.attempt, a.api.Retries)
 		}
 	}
 
 	if flag.Has(_is_retry_error) {
-		s.BackoffTimer(uint(attempt))
+		a.api.BackoffTimer(uint(a.attempt))
+		a.attempt++
 		return true
 	}
 
@@ -80,7 +110,7 @@ func (s APIClient) isRetryError(attempt_id string, attempt int, username string,
 
 // Fulfill does a safe wrapper around the request so that it can retry in the event of failure.
 func (s *APIClient) Fulfill(username string, req *http.Request, output interface{}) (err error) {
-	var report_success bool
+	var dont_retry bool
 
 	close_resp := func(resp *http.Response) {
 		if resp != nil && resp.Body != nil {
@@ -88,16 +118,10 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 		}
 	}
 
-	attempt_id := string(RandBytes(8))
-
 	var resp *http.Response
 
-	retry := true
-
-	retries := int(s.Retries)
-
 	if req.GetBody == nil && req.Body != nil {
-		retries = 0
+		dont_retry = true
 	} else {
 		orig_body := req.GetBody
 		req.GetBody = func() (io.ReadCloser, error) {
@@ -109,8 +133,9 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 		}
 	}
 
-	for i := 0; i <= retries; i++ {
+	retry := s.InitRetry(username, req.URL.Path)
 
+	for {
 		if req.GetBody != nil {
 			req.Body, err = req.GetBody()
 			if err != nil {
@@ -124,23 +149,14 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 			err = DecodeJSON(resp, output)
 		}
 
-		if err != nil {
-			if retry && s.isRetryError(attempt_id, i, username, req.URL.Path, err) {
-				report_success = true
+		if retry.CheckForRetry(err) {
+			if !dont_retry {
 				close_resp(resp)
 				continue
-			} else {
-				Debug("%s -> %s: %s", username, req.URL.Path, err.Error())
-				close_resp(resp)
-				return err
 			}
-		} else {
-			if report_success {
-				Debug("[#%s]: Success!!! (retry %d/%d)", attempt_id, i, s.Retries)
-			}
-			close_resp(resp)
-			return err
 		}
+		close_resp(resp)
+		return err
 	}
 
 	return err
@@ -150,7 +166,6 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 // Configures a database for the API Client
 func (K *APIClient) SetDatabase(db Database) {
 	K.db = db
-	K.cache = OpenCache()
 	K.TokenStore = KVLiteStore(db.Sub("tokens"))
 }
 

@@ -88,7 +88,7 @@ func (s KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 	params := req.Params
 
 	if limit <= 0 {
-		limit = 100
+		limit = 1000
 	}
 
 	var managed bool

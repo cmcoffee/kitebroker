@@ -3,11 +3,8 @@ package user
 import (
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 type FolderDownloadTask struct {
@@ -132,8 +129,16 @@ func (T *FolderDownloadTask) Main() (err error) {
 			T.dwnld_limiter.Add(1)
 			go func(m *download) {
 				defer T.dwnld_limiter.Done()
-				if err := T.ProcessFile(m.file, m.path); err != nil {
-					Err("%s/%s: %v", strings.TrimPrefix(strings.TrimPrefix(m.path, T.input.dst), "/"), m.file.Name, err)
+				retry := T.KW.InitRetry(T.KW.Username, m.file.Name)
+				for {
+					err := T.ProcessFile(m.file, m.path)
+					if retry.CheckForRetry(err) {
+						continue
+					}
+					if err != nil {
+						Err("%s/%s: %v", strings.TrimPrefix(strings.TrimPrefix(m.path, T.input.dst), "/"), m.file.Name, err)
+					}
+					break
 				}
 			}(m)
 		}
@@ -256,6 +261,55 @@ const (
 )
 
 func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (err error) {
+	var dl_record uint
+
+	T.file_count.Add(1)
+	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)	
+
+	clear_from_db := func(file_id string) {
+		for _, k := range T.db.downloads.Keys() {
+			if strings.Split(k, ":")[0] == file_id {
+				T.db.downloads.Unset(k)
+			}
+		}
+	}
+
+	found := T.db.downloads.Get(download_record_name, &dl_record)
+
+	if T.input.track && found && dl_record == 1 {
+		if T.input.move {
+			clear_from_db(file.ID)
+		} else {
+			return nil
+		}
+	}
+
+	err = T.KW.LocalDownload(file, local_path, T.transfered.Add)
+	if err != nil {
+		return err
+	}
+
+	mark_complete := func() (err error) {
+		if T.input.move {
+			err = T.KW.File(file.ID).Delete()
+			if err == nil {
+				clear_from_db(file.ID)
+			}
+		}
+		if T.input.track {
+			T.db.downloads.Set(download_record_name, 1)
+			T.db.files.Set(CombinePath(file.Path, file.Name), 1)
+		}
+		return nil
+	}
+
+	T.files_downloaded.Add(1)
+
+	return mark_complete()
+}
+
+/*
+func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (err error) {
 
 	var flag BitFlag
 
@@ -296,16 +350,18 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	}
 
 	file_name := CombinePath(local_path, file.Name)
-	tmp_file_name := fmt.Sprintf("%s.%d.incomplete", file_name, file.ID)
+	tmp_file_name := fmt.Sprintf("%s.%s.incomplete", file_name, file.ID)
 
 	mark_complete := func() (err error) {
 		clear_from_db(file.ID)
 		if T.input.move {
 			return T.KW.File(file.ID).Delete()
 		}
-		flag.Set(complete)
-		T.db.downloads.Set(download_record_name, &flag)
-		T.db.files.Set(CombinePath(file.Path, file.Name), &file)
+		if T.input.track {
+			flag.Set(complete)
+			T.db.downloads.Set(download_record_name, &flag)
+			T.db.files.Set(CombinePath(file.Path, file.Name), &file)
+		}
 		return nil
 	}
 
@@ -397,4 +453,4 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		return mark_complete()
 	}
 	return
-}
+}*/
