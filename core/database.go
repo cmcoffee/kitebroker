@@ -5,9 +5,8 @@ import (
 )
 
 type Database interface {
-	Buckets(limit bool) ([]string)
 	Sub(prefix string) Database
-	Shared(table string) Database
+	Bucket(name string) Database
 	Drop(table string)
 	CryptSet(table, key string, value interface{})
 	Set(table, key string, value interface{})
@@ -27,12 +26,6 @@ type DBase struct {
 
 type Table struct {
 	table kvlite.Table
-}
-
-func (d DBase) Buckets(limit bool) ([]string) {
-	b, err := d.Store.Buckets(limit)
-	Critical(err)
-	return b
 }
 
 func (t Table) Drop() {
@@ -74,8 +67,8 @@ func OpenCache() Database {
 	return &DBase{kvlite.MemStore()}
 }
 
-func (d DBase) Shared(table string) Database {
-	return &DBase{d.Store.Shared(table)}
+func (d DBase) Bucket(table string) Database {
+	return &DBase{d.Store.Bucket(table)}
 }
 
 func (d DBase) Sub(table string) Database {

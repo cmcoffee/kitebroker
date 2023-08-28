@@ -11,7 +11,6 @@ type FolderFileExpiryTask struct {
 	input struct {
 		profile_id         int
 		user_emails        []string
-		exclude_my_folder  bool
 		folders            []string
 		folder_days        int
 		file_days          int
@@ -19,12 +18,15 @@ type FolderFileExpiryTask struct {
 		recover_deleted    bool
 		dont_extend        bool
 		dont_modify_folder bool
+		files_only         bool
+		fzero              bool
+		file_expiry_only   bool
 	}
-	users        Table
-	profiles     Table
+	profiles     map[int]KWProfile
 	limiter      LimitGroup
 	user_count   Tally
 	folder_count Tally
+	skipped_users int64
 	KiteBrokerTask
 }
 
@@ -42,16 +44,17 @@ func (T FolderFileExpiryTask) Desc() string {
 
 func (T *FolderFileExpiryTask) Init() (err error) {
 	all_users := T.Flags.Bool("all_users", "Apply folder and file limits to everyone in all profiles.")
-	T.Flags.BoolVar(&T.input.exclude_my_folder, "exclude_my_folder", "Exclude adding expirations to files in My Folder.")
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
 	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Users to specify.")
 	T.Flags.IntVar(&T.input.folder_days, "folder_days", -1, "Expiry in days for folders.\t(Overrides profile, '-1' = don't override.)")
 	T.Flags.IntVar(&T.input.file_days, "file_days", -1, "Expiry in days for files.\t(Overrides profile, '-1' = don't override.)")
+	T.Flags.BoolVar(&T.input.file_expiry_only, "file_expiry_only", "Only modify file expiry on folders, not folder expiry.")
 	T.Flags.MultiVar(&T.input.folders, "folder", "<My Folder>", "Specify folder name you want to modify.")
-	T.Flags.BoolVar(&T.input.resume, "resume", "Resume previous update of folder/file expiration.")
 	T.Flags.BoolVar(&T.input.recover_deleted, "undelete_all", "Undelete all deleted folders and files.")
 	T.Flags.BoolVar(&T.input.dont_extend, "dont_extend", "Don't extend expiration of individual files.")
 	T.Flags.BoolVar(&T.input.dont_modify_folder, "dont_modify_folder", "Don't modify folder properties.")
+	T.Flags.BoolVar(&T.input.files_only, "files_only", "Only focus on individual file expirations.")
+	T.Flags.BoolVar(&T.input.fzero, "fzero", "Set all file days to match folder, do not modify folder expiries.")
 	T.Flags.Order("folder_days", "file_days")
 	if err := T.Flags.Parse(); err != nil {
 		return err
@@ -76,6 +79,10 @@ func (T *FolderFileExpiryTask) Init() (err error) {
 		}
 	}
 
+	if T.input.fzero {
+		T.input.file_expiry_only = true
+	}
+
 	return
 }
 
@@ -87,34 +94,32 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 
 	T.user_count = T.Report.Tally("Analyzed Users")
 	T.folder_count = T.Report.Tally("Folders Updated")
-	T.users = T.DB.Table("users")
-	T.profiles = OpenCache().Table("profiles")
+	T.profiles, err = T.KW.Profiles()
+	if err != nil {
+		return err
+	}
 
 	T.limiter = NewLimitGroup(50)
 
 	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
 
-	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
-		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
-		if err != nil {
-			return err
-		}
-		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
-	}
-
-	user_count, err := T.KW.Admin().UserCount(T.input.user_emails, params)
+	user_getter, err := T.KW.Admin().Users(T.input.user_emails, T.input.profile_id, params)
 	if err != nil {
 		return err
 	}
 
+	total_users := user_getter.Total()
+
+	user_counter := func() int64 {
+		return T.skipped_users + T.user_count.Value() + int64(user_getter.Failed())
+	}
+
 	message := func() string {
-		return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", T.user_count.Value(), user_count, T.folder_count.Value())
+			return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", user_counter(), total_users, T.folder_count.Value())
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-
-	user_getter := T.KW.Admin().Users(T.input.user_emails, params)
 
 	for {
 		users, err := user_getter.Next()
@@ -125,13 +130,14 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 			break
 		}
 		for _, user := range users {
-			err_start := ErrCount()
-			T.user_count.Add(1)
-			if T.input.resume && T.users.Get(user.Email, nil) {
-				continue
-			}
 			if T.input.profile_id > 0 && user.UserTypeID != T.input.profile_id {
 				Log("Skipping %s, user does not match required profile_id of %d.", user.Email, T.input.profile_id)
+				T.skipped_users++
+				continue
+			}
+			if !user.IsActive() {
+				Err("%s: account is not currently active, skipping user.", user.Email)
+				T.skipped_users++
 				continue
 			}
 			Log("Updating folders for %s ..", user.Email)
@@ -157,6 +163,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 					folders = append(folders, &f)
 				}
 			}
+			T.user_count.Add(1)
 			for _, v := range folders {
 				// Only process folders this user owns.
 				if v.CurrentUserRole.ID != 5 {
@@ -169,38 +176,16 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 				}(sess, user, v)
 			}
 			T.limiter.Wait()
-			if ErrCount()-err_start == 0 {
-				T.users.Set(user.Email, 1)
-			}
 		}
-	}
-	// If we didn't have any errors, we don't need to resume.
-	if ErrCount() == 0 {
-		T.DB.Drop("users")
 	}
 	return nil
 }
 
 // Finds out the expiration settings for the user in question.
 func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expiry int, file_expiry int, err error) {
-	var profile struct {
-		Features struct {
-			FileTime   int `json:"fileLifetime"`
-			FolderTime int `json:"folderExpirationLimit"`
-		} `json:"features"`
-	}
-
-	if found := T.profiles.Get(fmt.Sprintf("%d", user.UserTypeID), &profile); found {
-		return profile.Features.FolderTime, profile.Features.FileTime, nil
-	}
-
-	err = T.KW.Session(user.Email).Call(APIRequest{
-		Method: "GET",
-		Path:   SetPath("/rest/profiles/%d", user.UserTypeID),
-		Output: &profile,
-	})
-	if err != nil {
-		return -1, -1, err
+	profile, ok := T.profiles[user.UserTypeID]
+	if !ok {
+		return -1, -1, fmt.Errorf("Unable to locate profile for %s.", user.Email)
 	}
 
 	if T.input.file_days >= 0 {
@@ -209,12 +194,15 @@ func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expi
 	if T.input.folder_days >= 0 {
 		profile.Features.FolderTime = T.input.folder_days
 	}
-	T.profiles.Set(fmt.Sprintf("%d", user.UserTypeID), &profile)
+
 	return profile.Features.FolderTime, profile.Features.FileTime, nil
 }
 
 // Updates folder to profile expiry
 func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
+	if T.input.files_only {
+		return T.ChangeFiles(sess, user, folder)
+	}
 
 	folder_days, file_days, err := T.GetProfileExpiration(user)
 	if err != nil {
@@ -222,19 +210,23 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 	}
 
 	if folder_days < file_days && folder_days != 0 {
-		file_days = folder_days
+		file_days = 0
 	}
 
 	var params []interface{}
 
-	if folder_days > 0 {
+	if folder_days > 0 && file_days != 0 {
 		if folder_days == file_days {
 			file_days--
 		}
 	}
 
+	if T.input.fzero {
+		file_days = 0
+	}
+
 	if !T.input.dont_modify_folder {
-		if len(strings.Split(folder.Path, "/")) == 1 {
+		if len(strings.Split(folder.Path, "/")) == 1 && !T.input.file_expiry_only {
 			if folder_days != 0 {
 				t := time.Now().UTC().Add((time.Hour * 24) * time.Duration(folder_days))
 				params = SetParams(PostForm{"expire": DateString(t), "fileLifetime": file_days})
@@ -252,24 +244,37 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),
 	})
 	if err != nil && IsAPIError(err, "ERR_ENTITY_IS_SYNC_DIR") {
-		err = T.ChangeMyFolderFiles(sess, user, folder)
-		if err != nil {
-			return err
-		}
+		return T.ChangeFiles(sess, user, folder)
 	}
-	T.folder_count.Add(1)
+
+	defer T.folder_count.Add(1)
+
+	/*if strings.HasPrefix(folder.Path, "My Folder/") {
+		return T.ChangeFiles(sess, user, folder)
+	}*/
+
 	return
 }
 
 // Sets all files within My Folder to an expiration date.
-func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
-	if T.input.exclude_my_folder || T.input.dont_extend {
+func (T *FolderFileExpiryTask) ChangeFiles(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
+	if T.input.dont_extend {
 		return nil
 	}
 
-	folder_expiry, file_expiry, err := T.GetProfileExpiration(user)
+	_, file_days, err := T.GetProfileExpiration(user)
 	if err != nil {
 		return err
+	}
+
+	var folder_expiry int
+
+	file_expiry := folder.FileLifetime
+	fold_exp := folder.Expiry()
+	if fold_exp.IsZero() {
+		folder_expiry = 0
+	} else {
+		folder_expiry = int(time.Now().UTC().Sub(fold_exp).Hours() / 24) * -1
 	}
 
 	var files []KiteObject
@@ -288,7 +293,11 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 		file_expiry = folder_expiry
 	}
 
-	expiry_time := time.Now().UTC().Add((time.Hour * 24) * time.Duration(file_expiry))
+	if file_expiry > file_days {
+		file_expiry = file_days
+	}
+
+	expiry_time := time.Now().UTC().Add((time.Hour * 24) * time.Duration(file_expiry)).Round(time.Hour * 24)
 	for _, file := range files {
 		err = sess.Call(APIRequest{
 			Method: "PUT",
@@ -297,6 +306,7 @@ func (T *FolderFileExpiryTask) ChangeMyFolderFiles(sess *KWSession, user *KiteUs
 		})
 		if err != nil {
 			Err("%s - %s/%s: %v", user.Email, folder.Path, file.Name, err)
+			err = nil
 		}
 	}
 	T.folder_count.Add(1)
@@ -374,8 +384,6 @@ func (T *FolderFileExpiryTask) ProcessFolder(sess *KWSession, user *KiteUser, fo
 			}
 			if err := T.ModifyFolder(sess, user, folders[n]); err != nil {
 				Err("%s - %s: %v", sess.Username, folders[n].Path, err)
-				n++
-				continue
 			}
 			childs, err := sess.Folder(folders[n].ID).Folders()
 			if err == nil {

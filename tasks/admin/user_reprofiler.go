@@ -84,7 +84,10 @@ func (T *UserProfilerTask) Main() (err error) {
 	var wg sync.WaitGroup
 	limiter := make(chan struct{}, 100)
 
-	user_getter := T.KW.Admin().Users(T.user_emails, params, Query{"email:contains": T.filter})
+	user_getter, err := T.KW.Admin().Users(T.user_emails, 0, params, Query{"email:contains": T.filter})
+	if err != nil {
+		return err
+	}
 
 	for {
 		users, err = user_getter.Next()

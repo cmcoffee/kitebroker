@@ -15,11 +15,17 @@ func init() {
 	command.Register(new(user.ListTask))
 	command.Register(new(user.FolderUploadTask))
 	command.Register(new(user.FolderDownloadTask))
+	//command.RegisterAdmin(new(admin.BulkDownloaderTask))
 	//command.Register(new(user.MembershipTask))
+	//command.Register(new(user.JIRATask))
 
 	// Register Signature Only Tasks:
 	command.RegisterAdmin(new(admin.FolderFileExpiryTask))
 	command.RegisterAdmin(new(admin.UserProfilerTask))
 	command.RegisterAdmin(new(admin.FileCleanerTask))
 	command.RegisterAdmin(new(admin.UserRemoverTask))
+	command.RegisterAdmin(new(admin.MigrateProfileTask))
+	command.RegisterAdmin(new(admin.MoveMyFolder))
+	command.RegisterAdmin(new(admin.AddUserTask))
+	command.RegisterAdmin(new(admin.MetadataTask))
 }

@@ -149,14 +149,12 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 }
 
 // Perform External Download from a remote request.
-func (S *APIClient) WebDownload(req *http.Request, reqs ...*http.Request) ReadSeekCloser {
+func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 	if S.trans_limiter != nil {
 		S.trans_limiter <- struct{}{}
 	}
 
 	var last_byte []int64
-
-	reqs = append([]*http.Request{req}[0:], reqs[0:]...)
 
 	for _, v := range reqs {
 		v.Header.Set("Content-Type", "application/octet-stream")
@@ -511,6 +509,8 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		}
 	}
 
+
+
 //	var kw_file_info KiteObject
 
 //	if flags.Has(IsFile) {
@@ -546,10 +546,19 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 			}
 		}
 	} else {
-		uid, err = s.newFolderUpload(dst.ID, filename, size, mod_time)
+		files, err := s.Folder(dst.ID).Files(SetParams(Query{"deleted": false, "name": filename}))
 		if err != nil {
 			return nil, err
 		}
+		if len(files) == 0 {
+			uid, err = s.newFolderUpload(dst.ID, filename, size, mod_time)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			return s.Upload(filename, size, mod_time, overwrite_newer, auto_version, resume, files[0], src)
+		}
+
 	}
 
 	UploadRecord.Name = filename
@@ -565,6 +574,25 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 
 	return
 }
+
+//Quiet Download
+func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
+	if file == nil {
+		return nil, fmt.Errorf("nil file object provided.")
+	}
+
+	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
+
+	err = s.SetToken(s.Username, req)
+
+	return s.WebDownload(req), err
+}	
+
 
 // Downloads a file to from Kiteworks
 func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
@@ -590,6 +618,14 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		return fmt.Errorf("nil file object provided.")
 	}
 
+	if IsBlank(file.ClientModified) {
+		if !IsBlank(file.ClientCreated) {
+			file.ClientModified = file.ClientCreated
+		} else {
+			file.ClientModified = file.Created
+		}
+	}
+
 	mtime, err := ReadKWTime(file.ClientModified)
 	if err != nil {
 		return err
@@ -611,6 +647,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	if err != nil {
 		return err 
 	}
+	defer f.Close()
 
 	fstat, err := os.Stat(tmp_file_name)
 	if err != nil && !os.IsNotExist(err) {
@@ -621,6 +658,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	if err != nil {
 		return
 	}
+	defer dst.Close()
 
 	if fstat != nil {
 		offset, err := dst.Seek(fstat.Size(), 0)
@@ -640,9 +678,6 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 
 		_, err := io.Copy(dst, f)
 		if err != nil {
-			f.Close()
-			dst.Close()
-
 			if file.AdminQuarantineStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
 				os.Remove(tmp_file_name)
@@ -661,9 +696,6 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 			return err
 		}
 	}
-
-	f.Close()
-	dst.Close()
 
 	err = Rename(tmp_file_name, dest_file)
 	if err != nil {

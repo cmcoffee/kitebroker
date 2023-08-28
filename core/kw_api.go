@@ -296,21 +296,33 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 			}
 			return auth, nil
 		}
+		// For client ccrednetial authentication, grant_type needs to be password.
 		postform.Add("grant_type", "password")
 		postform.Add("username", username)
 		postform.Add("password", password)
 	} else {
+		// Retrieve the signature key from our config.
 		signature := K.GetSignature()
+
+		// Spin up randomizer seed on unix epoch in nano seconds for nonce.
 		randomizer := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
 		nonce := randomizer.Int() % 999999
+
+		// Create timestamp
 		timestamp := int64(time.Now().Unix())
 
+		// Create our base string for authentication, including client_id, the email, timestamp on nonce, using |@@| as seperators.
 		base_string := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d", client_id, username, timestamp, nonce)
 
+		// Create a new Keyed-Hash Message Authentication Code(HMAC), using an SHA1 Hash, using the signature key for the HMAC.
 		mac := hmac.New(sha1.New, []byte(signature))
+		// Now write write the base string from above through the hmac interface.
 		mac.Write([]byte(base_string))
+		// Hex encode the resulting SUM of the HMAC.
 		signature = hex.EncodeToString(mac.Sum(nil))
 
+		// Auth code sent to the oauth/token endpoint will consist will be similar to the original base string, but base64 encoded client_id,
+		// as well as the addition of the now hashed string tacked on the end, which the server will use to verify.
 		auth_code := fmt.Sprintf("%s|@@|%s|@@|%d|@@|%d|@@|%s",
 			base64.StdEncoding.EncodeToString([]byte(client_id)),
 			base64.StdEncoding.EncodeToString([]byte(username)),

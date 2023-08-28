@@ -73,7 +73,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 	T.dwnld_limiter = NewLimitGroup(50)
 
 	T.db.downloads = T.DB.Table("downloads")
-	T.db.files = T.DB.Shared(fmt.Sprintf("sync:%s:%s", T.KW.Username, T.input.dst)).Table("downloads")
+	T.db.files = T.DB.Bucket(fmt.Sprintf("sync:%s:%s", T.KW.Username, T.input.dst)).Table("downloads")
 	T.db.files.Drop()
 
 	T.input.dst, err = filepath.Abs(T.input.dst)

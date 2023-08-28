@@ -38,6 +38,7 @@ func (C APIClient) clear_token(username string) {
 	}
 }
 
+// Identify token specific errors for retrying.
 func (C APIClient) isTokenError(username string, err error) bool {
 	if C.TokenErrorCodes != nil {
 		if IsAPIError(err, C.TokenErrorCodes[0:]...) {
@@ -46,6 +47,11 @@ func (C APIClient) isTokenError(username string, err error) bool {
 		}
 	} else {
 		if IsAPIError(err, "ERR_AUTH_PROFILE_CHANGED", "ERR_INVALID_GRANT", "INVALID_GRANT", "ERR_AUTH_UNAUTHORIZED") {
+			// Don't retry on suspended accounts.
+			if strings.Contains(strings.ToLower(err.Error()), "suspended") {
+				C.clear_token(username)
+				return false
+			}
 			C.clear_token(username)
 			return true
 		}
@@ -53,11 +59,12 @@ func (C APIClient) isTokenError(username string, err error) bool {
 	return false
 }
 
+// Identify API errors that should be retried.
 func (C APIClient) isRetryError(err error) bool {
 	if C.RetryErrorCodes != nil {
 		return IsAPIError(err, C.RetryErrorCodes[0:]...)
 	} else {
-		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR", "ERR_ACCESS_USER", "HTTP_STATUS_503", "HTTP_STATUS_502")
+		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR", "HTTP_STATUS_503", "HTTP_STATUS_502")
 	}
 	return false
 }
@@ -66,6 +73,7 @@ func (C APIClient) NewAPIError() *apiError {
 	return new(apiError)
 }*/
 
+// Indiciate this is not an error.
 func (e APIError) noError() bool {
 	if e.err == nil {
 		return true

@@ -23,7 +23,8 @@ type FileCleanerTask struct {
 	files_count Tally
 	folders_count Tally
 	space_recovered Tally
-	pcache Table
+	//pcache Table
+	profiles     map[int]KWProfile
 	users        Table
 	KiteBrokerTask
 }
@@ -64,11 +65,15 @@ func (T *FileCleanerTask) Init() (err error) {
 
 func (T *FileCleanerTask) Main() (err error) {
 	T.limiter = NewLimitGroup(50)
-	T.pcache = OpenCache().Table("profiles")
+	//T.pcache = OpenCache().Table("profiles")
 	T.folders_count = T.Report.Tally("Folders Analyzed")
 	T.files_count = T.Report.Tally("Files Analyzed")
 	T.user_count = T.Report.Tally("Analyzed Users")
 	T.users = T.DB.Table("users")
+	T.profiles, err = T.KW.Profiles()
+	if err != nil { 
+		return err
+	}
 	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
 
 	if !T.input.dry_run {
@@ -85,21 +90,24 @@ func (T *FileCleanerTask) Main() (err error) {
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-
+/*
 	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
 		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
 		if err != nil {
 			return err
 		}
 		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
-	}
+	}*/
 
 	/*user_count, err := T.KW.Admin().UserCount(T.input.user_emails, params)
 	if err != nil {
 		return err
 	}*/
 
-	user_getter := T.KW.Admin().Users(T.input.user_emails, params)
+	user_getter, err := T.KW.Admin().Users(T.input.user_emails, T.input.profile_id, params)
+	if err != nil {
+		return err
+	}
 
 	for {
 		users, err := user_getter.Next()
@@ -110,16 +118,17 @@ func (T *FileCleanerTask) Main() (err error) {
 			break
 		}	
 		for _, user := range users {
-			err_start := ErrCount()
 			T.user_count.Add(1)
+			err_start := ErrCount()
 			if T.input.resume && T.users.Get(user.Email, nil) {
 				continue
 			}
 			if T.input.profile_id > 0 && user.UserTypeID != T.input.profile_id {
-				Log("Skipping %s, user does not match required profile_id of %d.", user.Email, T.input.profile_id)
+				Log("%s: user does not match required profile_id of %d.", user.Email, T.input.profile_id)
 				continue
 			}
 			if user.Suspended || user.Deactivated || !user.Verified || !user.Active {
+				Notice("%s: account is not currently active, skipping user.", user.Email)
 				continue
 			}
 			if _, err := T.GetFileExpiration(&user); err != nil && err == ErrNoExpire {
@@ -183,38 +192,18 @@ var ErrNoExpire = fmt.Errorf("No File Expiry.")
 
 // Finds out the expiration settings for the user in question.
 func (T *FileCleanerTask) GetFileExpiration(user *KiteUser) (file_expiration time.Time, err error) {
-	var profile struct {
-		Features struct {
-			FileTime   int `json:"fileLifetime"`
-		} `json:"features"`
+	if T.input.max_file_age >= 0 {
+		return T.getExpiryTime(T.input.max_file_age), nil
 	}
 
-	if found := T.pcache.Get(fmt.Sprintf("%d", user.UserTypeID), &profile); found {
+	if profile, ok := T.profiles[user.UserTypeID]; ok {
 		if profile.Features.FileTime <= 0 {
 			return T.getExpiryTime(9999999), ErrNoExpire
 		}
 		return T.getExpiryTime(profile.Features.FileTime), nil
 	}
 
-	if T.input.max_file_age >= 0 {
-		profile.Features.FileTime = T.input.max_file_age
-	} else {
-		err = T.KW.Session(user.Email).Call(APIRequest{
-			Method: "GET",
-			Path:   SetPath("/rest/profiles/%d", user.UserTypeID),
-			Output: &profile,
-		})
-		if err != nil {
-			return
-		}
-
-	}
-
-	T.pcache.Set(fmt.Sprintf("%d", user.UserTypeID), &profile)
-	if profile.Features.FileTime <= 0 {
-		return T.getExpiryTime(9999999), ErrNoExpire
-	}
-	return T.getExpiryTime(profile.Features.FileTime), nil
+	return T.getExpiryTime(9999999), ErrNoExpire
 }
 
 func (T *FileCleanerTask) CheckFile(sess *KWSession, user *KiteUser, file *KiteObject) {

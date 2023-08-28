@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"sync"
 )
 
 type APIClient struct {
@@ -38,6 +39,7 @@ type APIClient struct {
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
+	token_lock       sync.Mutex                          // Mutex for dealing with token expiry.
 }
 
 const (
@@ -385,6 +387,9 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 		return fmt.Errorf("APIClient: TokenStore not initalized.")
 	}
 
+	s.token_lock.Lock()
+	defer s.token_lock.Unlock()
+
 	token, err := s.TokenStore.Load(username)
 	if err != nil {
 		return err
@@ -392,7 +397,7 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 
 	// If we find a token, check if it's still valid.
 	if token != nil {
-		if token.Expires <= time.Now().Unix() {
+		if token.Expires <= time.Now().Unix() - 300 {
 			// First attempt to use a refresh token if there is one.
 			token, err = s.refreshToken(username, token)
 			if err != nil && s.secrets.signature_key == nil {
@@ -689,7 +694,7 @@ func snoop_response(respStatus string, body *bytes.Buffer) {
 	return
 }
 
-func (s APIClient) SendRequest(username string, req *http.Request) (resp *http.Response, err error) {
+func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.Response, err error) {
 	var transport http.Transport
 
 	// Allows invalid certs if set to "no" in config.
@@ -759,7 +764,7 @@ func (s APIClient) NewRequest(method, path string) (req *http.Request, err error
 }
 
 // kiteworks API Call Wrapper
-func (s APIClient) Call(api_req APIRequest) (err error) {
+func (s *APIClient) Call(api_req APIRequest) (err error) {
 	if s.limiter != nil {
 		s.limiter <- struct{}{}
 		defer func() { <-s.limiter }()
@@ -836,7 +841,7 @@ func (s APIClient) BackoffTimer(retry uint) {
 
 // Call handler which allows for easier getting of multiple-object arrays.
 // An offset of -1 will provide all results, any positive offset will only return the requested results.
-func (s APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
+func (s *APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
 
 	output := req.Output
 	params := req.Params

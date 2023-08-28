@@ -27,6 +27,7 @@ type UserRemoverTask struct {
 		limit int
 		csv_file string
 		inactive_days uint
+		ignore_inactivity bool
 	}
 	limit int
 	prefix string
@@ -56,6 +57,7 @@ func (T *UserRemoverTask) Init() (err error) {
 	T.last_activity = make(map[string]time.Time)
 
 	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Specify inactive user(s) to cleanup")
+	T.Flags.BoolVar(&T.input.ignore_inactivity, "danger", "Overrides Inactivity Flag for accounts.")
 	T.Flags.BoolVar(&T.input.all_users, "all_users", "Process all inactive users.")
 	T.Flags.UintVar(&T.input.inactive_days, "inactive_days", 0, "Maximum number in days of inactivity.")
 	T.Flags.BoolVar(&T.input.unverified, "unverified", "Delete only users who are unverified.")
@@ -92,7 +94,7 @@ func (T *UserRemoverTask) Init() (err error) {
 		return fmt.Errorf("Must either run with --all_users, provide a --profile_id or specify --users.")
 	}
 
-	if !T.input.all_users && (len(T.input.user_emails) < 1 || T.input.profile_id != 0) && !T.read_csv_file {
+	if T.input.all_users && (len(T.input.user_emails) > 0 || T.input.profile_id != 0) && !T.read_csv_file {
 		return fmt.Errorf("--all_users is incompatible with --users and --profile_id.")
 	}
 
@@ -153,7 +155,7 @@ func (T *UserRemoverTask) Main() (err error) {
 			T.input.user_emails = append(T.input.user_emails, k)
 		}
 	}
-
+/*
 	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
 		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
 		if err != nil {
@@ -161,23 +163,24 @@ func (T *UserRemoverTask) Main() (err error) {
 		}
 		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
 	}
-
-	user_count := len(T.input.user_emails)
-
-	message := func() string {
-		return fmt.Sprintf("Please wait ... [users: processed %d of %d, removed %d]", T.user_count.Value(), user_count, T.user_removed.Value())
-	}
-
-	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
-	PleaseWait.Show()
-
+*/
 	user_list := T.input.user_emails
 
 	if T.input.all_users {
 		user_list = nil
 	}
 
-	user_getter := T.KW.Admin().Users(user_list, params)
+	user_getter, err := T.KW.Admin().Users(user_list, T.input.profile_id, params)
+	if err != nil {
+		return err
+	}
+
+	message := func() string {
+		return fmt.Sprintf("Please wait ... [users: processed %d of %d, removed %d]", T.user_count.Value(), user_getter.Total(), T.user_removed.Value())
+	}
+
+	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
+	PleaseWait.Show()
 
 	for {
 		users, err := user_getter.Next()
@@ -216,6 +219,27 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 
 	const time_format = "02 Jan 2006 15:04:05"
 
+	pad_zero := func(in string) (out string) {
+		if len(in) == 1 {
+			return fmt.Sprintf("0%s", in)
+		} else {
+			return in
+		}
+	}
+
+	rewrite_time := func(input string) string {
+		split_string := strings.Split(input, "/")
+		if len(split_string) == 3 {
+			mn := split_string[0]
+			dy := split_string[1]
+			yr_split := strings.Split(split_string[2], " ")
+			if len(yr_split) > 1 {
+				return fmt.Sprintf("20%s-%s-%sT%s:00Z", yr_split[0], pad_zero(mn), pad_zero(dy), yr_split[1])
+			}
+		}
+		return input
+	}
+
 	for i, val := range records {
 		if i == 0 {
 			continue
@@ -226,26 +250,34 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 		}
 		parse_time, err := time.Parse(time_format, ttp)
 		if err != nil {
-			Err("Cannot parse last activity time for %s on line %d: Expected 'DY Mon YEAR HR:MN:SC', got '%s' ... skipping user.", val[0], i, ttp)
-			continue
+			ttp = rewrite_time(ttp)
+			parse_time, err = time.Parse(time.RFC3339, ttp)
+			if err != nil {
+				Err("Cannot parse last activity time for %s on line %d: Expected 'DY Mon YEAR HR:MN:SC' or 'YEAR-MON-DAYTHR:MNZ', got '%s' ... skipping user.", val[0], i, ttp)
+				continue
+			}
 		}
-		T.last_activity[strings.ToLower(val[0])] = parse_time
+		email := strings.ToLower(val[0])
+		email = strings.TrimSuffix(email, " (sso)")
+		email = strings.TrimSuffix(email, " (ldap)")
 
+		T.last_activity[strings.ToLower(email)] = parse_time
 	}
 	return nil
 }
 
 func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	T.user_count.Add(1)	
+	Log("Inspecting user %s...", input.Email)
 
-	if T.input.profile_id > 0 {
-		if input.ProfileID != T.input.profile_id {
-			return false
-		}
-	}
+	//if T.input.profile_id > 0 {
+	//	if input.ProfileID != T.input.profile_id {
+	//		return false
+	//	}
+	//}
 
 	if !input.Deactivated {
-		if input.Verified {
+		if input.Verified && !T.input.ignore_inactivity {
 			return false
 		}
 		if T.inactivity_time.IsZero() {

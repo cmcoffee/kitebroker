@@ -195,7 +195,7 @@ func (m *menu) Show() {
 
 func get_taskstore(name string, is_admin bool) Database {
 	if is_admin {
-		return global.db.Shared(name)
+		return global.db.Bucket(name)
 	} else {
 		global.db.Get("kitebroker", "account", &global.user.Username)
 		return global.db.Sub(global.user.Username).Sub(name)

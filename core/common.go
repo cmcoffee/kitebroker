@@ -36,11 +36,43 @@ type FlagSet struct {
 
 // Required for each task object.
 type KiteBrokerTask struct {
-	Flags  FlagSet
-	DB     Database
-	Cache  Database
-	Report *TaskReport
-	KW     KWSession
+	Flags   FlagSet
+	DB      Database
+	Cache   Database
+	Report  *TaskReport
+	KW      KWSession
+	Limiter LimitGroup
+}
+
+func (T *KiteBrokerTask) SetLimiter(limit int) {
+	T.Limiter = NewLimitGroup(limit)
+}
+
+func (T *KiteBrokerTask) Wait() {
+	if T.Limiter == nil {
+		return
+	}
+	T.Limiter.Wait()
+}
+
+func (T *KiteBrokerTask) Try() bool {
+	if T.Limiter == nil {
+		return false
+	}
+	return T.Limiter.Try()
+}
+
+func (T *KiteBrokerTask) Done() {
+	if T.Limiter != nil {
+		T.Limiter.Done()
+	}
+}
+
+func (T *KiteBrokerTask) Add(input int) {
+	if T.Limiter == nil {
+		T.SetLimiter(50)
+	}
+	T.Limiter.Add(input)
 }
 
 // Return specified KiteBrokerTask
@@ -302,25 +334,28 @@ func (e Error) Error() string { return string(e) }
 // Creates folders.
 func MkDir(name ...string) (err error) {
 	for _, path := range name {
-		subs := strings.Split(path, string(os.PathSeparator))
-		for i := 0; i < len(subs); i++ {
-			p := strings.Join(subs[0:i+1], string(os.PathSeparator))
-			if p == "" {
-				p = "."
-			}
-			f, err := os.Stat(p)
-			if err != nil {
-				if os.IsNotExist(err) {
-					err = os.Mkdir(p, 0766)
-					if err != nil {
+		err = os.MkdirAll(path, 0766)
+		if err != nil {
+			subs := strings.Split(path, string(os.PathSeparator))
+			for i := 0; i < len(subs); i++ {
+				p := strings.Join(subs[0:i+1], string(os.PathSeparator))
+				if p == "" {
+					p = "."
+				}
+				f, err := os.Stat(p)
+				if err != nil {
+					if os.IsNotExist(err) {
+						err = os.Mkdir(p, 0766)
+						if err != nil && !os.IsExist(err) {
+							return err
+						}
+					} else {
 						return err
 					}
-				} else {
-					return err
 				}
-			}
-			if f != nil && !f.IsDir() {
-				return fmt.Errorf("mkdir: %s: file exists", f.Name())
+				if f != nil && !f.IsDir() {
+					return fmt.Errorf("mkdir: %s: file exists", f.Name())
+				}
 			}
 		}
 	}
@@ -360,8 +395,19 @@ func CombinePath(name ...string) string {
 	if len(name) < 2 {
 		return name[0]
 	}
-	return fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH))
+	return NormalizePath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
 }
+
+
+func NormalizePath(path string) string {
+	path = strings.Replace(path, "/", SLASH, -1)
+	subs := strings.Split(path, SLASH)
+	for i, v := range subs {
+		subs[i] = strings.TrimSpace(v)
+	}
+	return strings.Join(subs, SLASH)
+}
+
 
 // Path rename.
 func Rename(oldpath, newpath string) error {
