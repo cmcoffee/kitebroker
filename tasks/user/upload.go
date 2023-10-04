@@ -198,7 +198,8 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 	return
 }
 
-/*
+// Replaced with Kitebroker core code.
+/* 
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
 	defer T.file_count.Add(1)
 	if folder.ID == 0 {

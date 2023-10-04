@@ -20,6 +20,7 @@ func init() {
 	//command.Register(new(user.JIRATask))
 
 	// Register Signature Only Tasks:
+	command.RegisterAdmin(new(admin.CSVOnboardTask))
 	command.RegisterAdmin(new(admin.FolderFileExpiryTask))
 	command.RegisterAdmin(new(admin.UserProfilerTask))
 	command.RegisterAdmin(new(admin.FileCleanerTask))

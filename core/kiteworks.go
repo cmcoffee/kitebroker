@@ -57,6 +57,7 @@ type KiteObject struct {
 	MailID                int            `json:"mail_id,omitempty"`
 	Links                 []KiteLinks    `json:"links,omitempty"`
 	IsShared              bool           `json:"isShared,omitempty"`
+	Locked                bool           `json:"locked,omitempty"`
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
 }
 
@@ -202,7 +203,7 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 }
 
 type KiteActivity struct {
-	Successful bool `json:"successful"`
+	Successful int `json:"successful"`
 	Created	string `json:"created"`
 	Message	string `json:"message"`
 	Event	string `json:"event"`
@@ -472,6 +473,17 @@ func (s kw_rest_admin) Profiles(params ...interface{}) (profiles []KWProfile, er
 type kw_rest_file struct {
 	file_id string
 	*KWSession
+}
+
+func (s kw_rest_file) Unlock() (err error) {
+	err = s.Call(APIRequest{
+		Version: 27,
+		Method: "PATCH",
+		Path:   SetPath("/rest/files/%s/actions/unlock", s.file_id),
+		Output: nil,
+		Params: nil,
+	})
+	return
 }
 
 func (s KWSession) File(file_id string) kw_rest_file {
@@ -1038,10 +1050,9 @@ func (K kw_profile) Get() (profile KWProfile, err error) {
 
 type folderCrawler struct {
 	processor func(*KWSession, *KiteObject) (error)
-	limiter LimitGroup
-	session KWSession
+	folder_limiter LimitGroup
+	file_chan chan *KiteObject
 	all_stop int32
-	*KWSession
 }
 
 type abortError struct {
@@ -1074,16 +1085,56 @@ func abortCheck(err error) (error, bool) {
 
 func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error), folders...KiteObject) {
 	crawler := new(folderCrawler)
-	crawler.limiter = NewLimitGroup(50)
+	crawler.folder_limiter = NewLimitGroup(50)
+	file_limiter := NewLimitGroup(50)
 	crawler.processor = processor
+	crawler.file_chan = make(chan *KiteObject, 1000)
+
+	file_limiter.Add(1)
+	go func (user *KWSession) {
+		defer file_limiter.Done()
+		for {
+			m := <-crawler.file_chan
+			if m == nil {
+				return
+			}
+			if atomic.LoadInt32(&crawler.all_stop) > 0 || crawler.processor == nil {
+				continue
+			}
+			if file_limiter.Try() {
+				go func(user *KWSession, object *KiteObject) {
+					defer file_limiter.Done()
+						err, abort := abortCheck(processor(user, object))
+						if err != nil {
+							Err("%s - %s: %v", user.Username, object.Name, err)
+						}
+						if abort {
+							atomic.AddInt32(&crawler.all_stop, 1)
+						}	
+				}(s, m)
+			} else {
+				err, abort := abortCheck(processor(user, m))
+				if err != nil {
+					Err("%s - %s: %v", user.Username, m.Name, err)
+				}
+				if abort {
+					atomic.AddInt32(&crawler.all_stop, 1)
+				}	
+			}
+
+		}
+	}(s)
+
 	for _, f := range folders {
-		crawler.limiter.Add(1)
+		crawler.folder_limiter.Add(1)
 		go func(user *KWSession, folder KiteObject) {
-			defer crawler.limiter.Done()
+			defer crawler.folder_limiter.Done()
 			crawler.process(s, &folder)
 		}(s, f)
 	}
-	crawler.limiter.Wait()
+	crawler.folder_limiter.Wait()
+	crawler.file_chan<-nil
+	file_limiter.Wait()
 	return
 }
 
@@ -1114,9 +1165,9 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 			folders = folders[0:0]
 			if len(next) > 0 {
 				for i, o := range next {
-					if F.limiter.Try() {
+					if F.folder_limiter.Try() {
 						go func(user *KWSession, folder *KiteObject) {
-							defer F.limiter.Done()
+							defer F.folder_limiter.Done()
 							F.process(user, folder)
 						}(user, o)
 					} else {
@@ -1158,17 +1209,7 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 							if atomic.LoadInt32(&F.all_stop) > 0 {
 								return
 							}
-							if F.processor != nil {
-								err, abort := abortCheck(F.processor(user, &childs[i]))
-								if err != nil {
-									Err("%s - %s: %v", user.Username, childs[i].Name, err)
-								}
-								if abort {
-									atomic.AddInt32(&F.all_stop, 1)
-									return
-								}
-							}
-
+							F.file_chan<-&childs[i]
 					}
 				}
 			} else {

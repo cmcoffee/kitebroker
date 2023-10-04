@@ -9,6 +9,7 @@ import (
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/xsync"
+	"github.com/cmcoffee/go-snuglib/swapreader"
 	//"github.com/cmcoffee/go-snuglib/kvlite"
 	//"github.com/cmcoffee/go-snuglib/options"
 	"io"
@@ -195,6 +196,7 @@ type (
 	LimitGroup      = xsync.LimitGroup
 	ConfigStore     = cfg.Store
 	ReadSeekCloser  = nfo.ReadSeekCloser
+	SwapReader      = swapreader.Reader
 )
 
 var error_counter uint32
@@ -425,11 +427,18 @@ func IsBlank(input ...string) bool {
 }
 
 // Remove leading and trailing quotation marks on string.
-func Dequote(input *string) {
-	if len(*input) > 0 && (*input)[0] == '"' {
-		*input = (*input)[:1]
+func Dequote(input string) string {
+	var output string
+	output = input 
+	if len(output) > 0 && (output)[0] == '"' {
+		output = output[1:]
 	}
-	if len(*input) > 0 && (*input)[len(*input)-1] == '"' {
-		*input = (*input)[:len(*input)-1]
+	if len(output) > 0 && (output)[len(output)-1] == '"' {
+		output = output[:len(output)-1]
 	}
+	return output
+}
+
+func Delete(path string) error {
+	return os.Remove(NormalizePath(path))
 }
