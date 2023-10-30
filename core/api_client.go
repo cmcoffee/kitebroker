@@ -397,13 +397,15 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 
 	// If we find a token, check if it's still valid.
 	if token != nil {
-		if token.Expires <= time.Now().Unix() - 300 {
+		if token.Expires <= time.Now().Unix() {
+			Debug("Access token expired, using refresh token instead.")
 			// First attempt to use a refresh token if there is one.
 			token, err = s.refreshToken(username, token)
 			if err != nil && s.secrets.signature_key == nil {
 				Debug("Unable to use refresh token: %v", err)
 				Fatal("Access token has expired, must reauthenticate for new access token.")
 			}
+			Debug("Refresh token success.")
 			err = nil
 		}
 	}
@@ -485,7 +487,7 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 		return nil, err
 	}
 
-	if err := DecodeJSON(resp, &auth); err != nil {
+	if err := DecodeJSON(resp, &new_token); err != nil {
 		return nil, err
 	}
 
@@ -496,6 +498,7 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 
 	auth.AccessToken = new_token.AccessToken
 	auth.RefreshToken = new_token.RefreshToken
+	auth.Scope = new_token.Scope
 
 	return auth, nil
 }

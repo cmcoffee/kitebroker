@@ -11,13 +11,9 @@ import (
 
 func init() {
 	// Register Universal Tasks:
-	// WIP // command.Register("send_file", "Send files/folders in kiteworks.", new(user.SendFileTask))
 	command.Register(new(user.ListTask))
 	command.Register(new(user.FolderUploadTask))
 	command.Register(new(user.FolderDownloadTask))
-	//command.RegisterAdmin(new(admin.BulkDownloaderTask))
-	//command.Register(new(user.MembershipTask))
-	//command.Register(new(user.JIRATask))
 
 	// Register Signature Only Tasks:
 	command.RegisterAdmin(new(admin.CSVOnboardTask))

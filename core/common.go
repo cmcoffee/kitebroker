@@ -89,6 +89,16 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
+func MyRoot() (string) {
+	exec, err := os.Executable()
+	Critical(err)
+
+	root, err := filepath.Abs(filepath.Dir(exec))
+	Critical(err)
+
+	return GetPath(root)
+}
+
 func (f *FlagSet) Text() (output []string) {
 	return f.FlagArgs
 }
@@ -212,7 +222,7 @@ func Err(input ...interface{}) {
 	msg := nfo.Stringer(input...)
 	nfo.Err(msg)
 	if err_table != nil {
-		err_table.Set(fmt.Sprintf("%d", err_table.CountKeys()), fmt.Sprintf("<%v> %s", time.Now().Round(time.Second), msg))
+		err_table.Set(fmt.Sprintf("%d", atomic.LoadUint32(&error_counter)), fmt.Sprintf("<%v> %s", time.Now().Round(time.Second), msg))
 	}
 }
 

@@ -51,7 +51,7 @@ func (T *MigrateProfileTask) Init() (err error) {
 	T.SRC.APIClient = new(APIClient)
 
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Destination KW Profile ID")
-	T.Flags.StringVar(&T.SRC.Server, "dst_server", "<source kw server>", "Dest KW Server")
+	T.Flags.StringVar(&T.SRC.Server, "src_server", "<source kw server>", "Source KW Server")
 	T.Flags.StringVar(&T.input.src_admin_user, "src_admin", "<admin@domain.com>", "Source Admin User Account")
 	T.Flags.StringVar(&T.SRC.ApplicationID, "src_app_id", "<app id>", "Source Client App ID")
 	T.Flags.StringVar(&secret, "src_client_secret", "<client_secret>", "Source Client Secret")
@@ -59,7 +59,7 @@ func (T *MigrateProfileTask) Init() (err error) {
 	T.Flags.StringVar(&T.SRC.RedirectURI, "src_redirect_uri", "https://kitebroker/", "Source Redirect URI")
 	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com", "User(s) to copy.")
 	T.Flags.Order("src_profile_id","src_server","src_appid","src_secret")
-	T.Flags.BoolVar(&T.input.delete_user_first, "delete_user_first", "Delete user prior to migration.")
+	T.Flags.BoolVar(&T.input.delete_user_first, "delete_user_first", "Delete destination user prior to migration.")
 	T.Flags.StringVar(&T.new_domain, "new_domain", "<new_domain.com>", "Replace users domain with domain specified.")
 	if err := T.Flags.Parse(); err != nil {
 	 	return err

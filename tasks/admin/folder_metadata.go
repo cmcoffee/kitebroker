@@ -274,7 +274,7 @@ func (T *MetadataTask) FolderProcessor(sess KWSession, obj KiteObject) {
 						continue
 				}
 			}
-			if obj.Locked {
+			if obj.Locked() {
 				if err := sess.File(obj.ID).Unlock(); err != nil {
 					if !IsAPIError(err, "ERR_ENTITY_UNLOCKED") {
 						Err("[%s] Error unlocking file %s: %s", sess.Username, obj.Path, err)

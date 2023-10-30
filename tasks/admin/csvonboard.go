@@ -137,20 +137,20 @@ func (T *CSVOnboardTask) Main() (err error) {
 		}
 		return err
 	}	
-	defer f.Close()
 	scanner := bufio.NewScanner(f)
 
 	err_file, err := os.OpenFile(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		f.Close()
 		return err
 	}
-	defer err_file.Close()
 
 	done_file, err := os.OpenFile(NormalizePath(fmt.Sprintf("%s/%s", out_path, done_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		err_file.Close()
+		f.Close()
 		return err
 	}
-	defer done_file.Close()
 
 	T.folder_map = make(map[string]string)
 	i := 0
@@ -191,6 +191,9 @@ func (T *CSVOnboardTask) Main() (err error) {
 			Critical(err)
 		}
 	}
+	err_file.Close()
+	done_file.Close()
+	f.Close()
 	if errors == 0 {
 		Critical(os.Remove(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename))))
 	}

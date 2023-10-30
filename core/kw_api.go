@@ -172,6 +172,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 		}
 		if token != nil {
 			if token.Expires <= time.Now().Unix() {
+				Debug("Access token expired, using refresh token instead.")
 				// First attempt to use a refresh token if there is one.
 				token, err = session.refreshToken(username, token)
 				if err != nil {
@@ -180,6 +181,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 					}
 					token = nil
 				} else {
+					Debug("Refresh token success.")
 					if err := K.TokenStore.Save(username, token); err != nil {
 						return &session, err
 					}

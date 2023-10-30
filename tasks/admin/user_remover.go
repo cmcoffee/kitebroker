@@ -234,7 +234,7 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 			dy := split_string[1]
 			yr_split := strings.Split(split_string[2], " ")
 			if len(yr_split) > 1 {
-				return fmt.Sprintf("20%s-%s-%sT%s:00Z", yr_split[0], pad_zero(mn), pad_zero(dy), yr_split[1])
+				return fmt.Sprintf("%s-%s-%sT%s:00Z", yr_split[0], pad_zero(mn), pad_zero(dy), yr_split[1])
 			}
 		}
 		return input

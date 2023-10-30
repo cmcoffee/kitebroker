@@ -57,8 +57,23 @@ type KiteObject struct {
 	MailID                int            `json:"mail_id,omitempty"`
 	Links                 []KiteLinks    `json:"links,omitempty"`
 	IsShared              bool           `json:"isShared,omitempty"`
-	Locked                bool           `json:"locked,omitempty"`
+	IsLocked                interface{}    `json:"locked,omitempty"`
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
+}
+
+func (K *KiteObject) Locked() bool {
+	if x, ok := K.IsLocked.(bool); ok {
+		return x
+	}
+	if x, ok := K.IsLocked.(int); ok {
+		switch x {
+		case 0:
+			return false
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // Returns the Expiration in time.Time.
