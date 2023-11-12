@@ -8,21 +8,22 @@ import (
 	"github.com/cmcoffee/go-snuglib/cfg"
 	"github.com/cmcoffee/go-snuglib/eflag"
 	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/go-snuglib/xsync"
 	"github.com/cmcoffee/go-snuglib/swapreader"
+	"github.com/cmcoffee/go-snuglib/xsync"
 	//"github.com/cmcoffee/go-snuglib/kvlite"
 	//"github.com/cmcoffee/go-snuglib/options"
+	"bytes"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
-	"io/ioutil"
-	"bytes"
 )
 
 var err_table *Table
+
 func SetErrTable(input Table) {
 	err_table = &input
 	err_table.Drop()
@@ -33,7 +34,6 @@ type FlagSet struct {
 	FlagArgs []string
 	*eflag.EFlagSet
 }
-
 
 // Required for each task object.
 type KiteBrokerTask struct {
@@ -81,7 +81,7 @@ func (T *KiteBrokerTask) Get() *KiteBrokerTask {
 	return T
 }
 
-// Parse flags assocaited with task.
+// Parse flags associated with task.
 func (f *FlagSet) Parse() (err error) {
 	if err = f.EFlagSet.Parse(f.FlagArgs[0:]); err != nil {
 		return err
@@ -89,7 +89,7 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
-func MyRoot() (string) {
+func MyRoot() string {
 	exec, err := os.Executable()
 	Critical(err)
 
@@ -123,7 +123,7 @@ func GetBodyBytes(input []byte) func() (io.ReadCloser, error) {
 }
 
 // Allows a KitebrokerTask to launch another KiteBrokerTask.
-func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...map[string]interface{}) (err error) {
+func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args ...map[string]interface{}) (err error) {
 	var arg_string []string
 	for _, arg := range args {
 		for k, v := range arg {
@@ -131,21 +131,21 @@ func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args...m
 			if len(k) == 1 {
 				dash = "-"
 			} else {
-					dash = "--"
+				dash = "--"
 			}
 			switch x := v.(type) {
-				case string:
-					if k == "args" {
-						arg_string = append(arg_string, x)
-					} else {
-						arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, x))
-					}
-				case []string:
-					for _, line := range x {
-						arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, line))
-					}
-				default:
-					arg_string = append(arg_string, fmt.Sprintf("%s%s=%v", dash, k, v))
+			case string:
+				if k == "args" {
+					arg_string = append(arg_string, x)
+				} else {
+					arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, x))
+				}
+			case []string:
+				for _, line := range x {
+					arg_string = append(arg_string, fmt.Sprintf("%s%s=%s", dash, k, line))
+				}
+			default:
+				arg_string = append(arg_string, fmt.Sprintf("%s%s=%v", dash, k, v))
 			}
 		}
 	}
@@ -172,26 +172,26 @@ const (
 
 // Import from go-nfo.
 var (
-	Log             = nfo.Log      // Standard Log Output
-	Fatal           = nfo.Fatal    // Fatal Log Output & Exit.
-	Notice          = nfo.Notice   // Notice Log Output
-	Flash           = nfo.Flash    // Flash to Stderr
-	Stdout          = nfo.Stdout   // Send to Stdout
-	Warn            = nfo.Warn     // Warn Log Output
-	Defer           = nfo.Defer    // Global Application Deffer
-	Debug           = nfo.Debug    // Debug Log Output
-	Trace           = nfo.Trace    // Trace Log Output
-	Exit            = nfo.Exit     // End Application, Run Global Defer.
-	PleaseWait      = nfo.PleaseWait // Set Loading Prompt
-	Stderr          = nfo.Stderr     // Send to Stderr
-	ProgressBar     = nfo.ProgressBar // Set Progress Bar animation
-	Path            = filepath.Clean  // Provide clean path
+	Log             = nfo.Log             // Standard Log Output
+	Fatal           = nfo.Fatal           // Fatal Log Output & Exit.
+	Notice          = nfo.Notice          // Notice Log Output
+	Flash           = nfo.Flash           // Flash to Stderr
+	Stdout          = nfo.Stdout          // Send to Stdout
+	Warn            = nfo.Warn            // Warn Log Output
+	Defer           = nfo.Defer           // Global Application Deffer
+	Debug           = nfo.Debug           // Debug Log Output
+	Trace           = nfo.Trace           // Trace Log Output
+	Exit            = nfo.Exit            // End Application, Run Global Defer.
+	PleaseWait      = nfo.PleaseWait      // Set Loading Prompt
+	Stderr          = nfo.Stderr          // Send to Stderr
+	ProgressBar     = nfo.ProgressBar     // Set Progress Bar animation
+	Path            = filepath.Clean      // Provide clean path
 	TransferCounter = nfo.TransferCounter // Tranfer Animation
 	NewLimitGroup   = xsync.NewLimitGroup // Limiter Group
-	FormatPath      = filepath.FromSlash // Convert to standard path with *nix style delimiters.
-	GetPath         = filepath.ToSlash // Conver to OS specific path with correct slash delimiters.
-	Info            = nfo.Aux         // Log as standrd INFO
-	HumanSize       = nfo.HumanSize   // Convert bytes int64 to B/KB/MB/GB/TB.
+	FormatPath      = filepath.FromSlash  // Convert to standard path with *nix style delimiters.
+	GetPath         = filepath.ToSlash    // Conver to OS specific path with correct slash delimiters.
+	Info            = nfo.Aux             // Log as standrd INFO
+	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.
 )
 
 var (
@@ -202,11 +202,11 @@ var (
 )
 
 type (
-	BitFlag         = xsync.BitFlag
-	LimitGroup      = xsync.LimitGroup
-	ConfigStore     = cfg.Store
-	ReadSeekCloser  = nfo.ReadSeekCloser
-	SwapReader      = swapreader.Reader
+	BitFlag        = xsync.BitFlag
+	LimitGroup     = xsync.LimitGroup
+	ConfigStore    = cfg.Store
+	ReadSeekCloser = nfo.ReadSeekCloser
+	SwapReader     = swapreader.Reader
 )
 
 var error_counter uint32
@@ -410,7 +410,6 @@ func CombinePath(name ...string) string {
 	return NormalizePath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
 }
 
-
 func NormalizePath(path string) string {
 	path = strings.Replace(path, "/", SLASH, -1)
 	subs := strings.Split(path, SLASH)
@@ -419,7 +418,6 @@ func NormalizePath(path string) string {
 	}
 	return strings.Join(subs, SLASH)
 }
-
 
 // Path rename.
 func Rename(oldpath, newpath string) error {
@@ -439,7 +437,7 @@ func IsBlank(input ...string) bool {
 // Remove leading and trailing quotation marks on string.
 func Dequote(input string) string {
 	var output string
-	output = input 
+	output = input
 	if len(output) > 0 && (output)[0] == '"' {
 		output = output[1:]
 	}

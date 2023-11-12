@@ -23,7 +23,7 @@ type FolderUploadTask struct {
 	upload_chan  chan *upload
 	file_count   Tally
 	folder_count Tally
-	transfered   Tally
+	transferred   Tally
 	uploads      Table
 	cache        FileCache
 	KiteBrokerTask
@@ -51,7 +51,7 @@ func (T *FolderUploadTask) Init() (err error) {
 	T.Flags.StringVar(&T.input.dst, "remote_kw_folder", "<remote folder>", "Specify kiteworks folder you wish to upload to.")
 	T.Flags.MultiVar(&T.input.src, "src", "<local file/folder>", "Specify local path to folder or file you wish to upload.")
 	T.Flags.BoolVar(&T.input.overwrite_newer, "overwrite_newer", "Overwrite newer files on server.")
-	T.Flags.BoolVar(&T.input.move, "move", "Remove source files upon succesful upload.")
+	T.Flags.BoolVar(&T.input.move, "move", "Remove source files upon successful upload.")
 	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", "Do not upload file if file exists on server already.")
 	T.Flags.Order("overwrite_newer", "move")
 	T.Flags.CLIArgs("src", "remote_kw_folder")
@@ -115,7 +115,7 @@ func (T *FolderUploadTask) Main() (err error) {
 */
 	T.file_count = T.Report.Tally("Files")
 	T.folder_count = T.Report.Tally("Folders")
-	T.transfered = T.Report.Tally("Transfered", HumanSize)
+	T.transferred = T.Report.Tally("Transferred", HumanSize)
 
 	message := func() string {
 		return fmt.Sprintf("Please wait ... [files: %d/folders: %d]", T.file_count.Value(), T.folder_count.Value())
@@ -190,7 +190,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 		return err
 	}
 
-	x := TransferCounter(f, T.transfered.Add)
+	x := TransferCounter(f, T.transferred.Add)
 	defer f.Close()
 
 	_, err = T.KW.Upload(finfo.Name(), finfo.Size(), finfo.ModTime(), T.input.overwrite_newer, !T.input.dont_overwrite, true, *folder, x)
@@ -216,7 +216,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 
 	transfer_file := func(local_path string, uid int) (err error) {
 		upload_counter := func(num int) {
-			T.transfered.Add(int64(num))
+			T.transferred.Add(int64(num))
 		}
 
 		f, err := os.Open(local_path)

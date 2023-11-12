@@ -15,8 +15,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 	"sync"
+	"time"
 )
 
 type APIClient struct {
@@ -39,25 +39,24 @@ type APIClient struct {
 	ErrorScanner    func(body []byte) APIError           // Reads body of response and interprets any errors.
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
-	token_lock       sync.Mutex                          // Mutex for dealing with token expiry.
+	token_lock      sync.Mutex                           // Mutex for dealing with token expiry.
 }
 
 const (
 	_is_retry_error = 1 << iota
 	_is_token_error
-
 )
 
 type APIRetryEngine struct {
-	api APIClient
+	api     APIClient
 	attempt uint
-	uid string
-	user string
-	dest string
+	uid     string
+	user    string
+	dest    string
 }
 
 func (s APIClient) InitRetry(user string, dest string) *APIRetryEngine {
-	return &APIRetryEngine {
+	return &APIRetryEngine{
 		s,
 		0,
 		string(RandBytes(8)),
@@ -91,7 +90,7 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 		}
 	}
 
-	if flag.Has(_is_token_error|_is_retry_error) {
+	if flag.Has(_is_token_error | _is_retry_error) {
 		if a.attempt == 0 {
 			if a.api.Retries > 0 {
 				Debug("[#%s]: %s -> %s: %s (will retry)", a.uid, a.user, a.dest, err.Error())
@@ -297,12 +296,12 @@ func (K APIClient) GetClientSecret() string {
 // APISession model
 type APIRequest struct {
 	Username string
-	Version int
-	Header  http.Header
-	Method  string
-	Path    string
-	Params  []interface{}
-	Output  interface{}
+	Version  int
+	Header   http.Header
+	Method   string
+	Path     string
+	Params   []interface{}
+	Output   interface{}
 }
 
 // SetPath shortcut.
@@ -384,7 +383,7 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 // Add Bearer token to APIClient requests.
 func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 	if s.TokenStore == nil {
-		return fmt.Errorf("APIClient: TokenStore not initalized.")
+		return fmt.Errorf("APIClient: TokenStore not initialized.")
 	}
 
 	s.token_lock.Lock()
@@ -412,7 +411,7 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 
 	if token == nil {
 		if s.NewToken == nil {
-			return fmt.Errorf("APIClient: NewToken not initalized.")
+			return fmt.Errorf("APIClient: NewToken not initialized.")
 		}
 		s.TokenStore.Delete(username)
 		token, err = s.NewToken(username)
@@ -555,14 +554,12 @@ func (r readCloser) Close() (err error) {
 	return r.closer()
 }
 
-
 func newReadCloser(src io.Reader, close_func func() error) io.ReadCloser {
 	return readCloser{
 		close_func,
 		src,
 	}
 }
-
 
 // Allows snooping the body of response.
 func snoopReader(src io.ReadCloser, min int) (snoop_reader io.Reader, output io.ReadCloser, err error) {
@@ -587,7 +584,7 @@ func snoopReader(src io.ReadCloser, min int) (snoop_reader io.Reader, output io.
 
 	err = nil
 
-	return 
+	return
 }
 
 // Checks http.Response for error messages and returns any if found.
@@ -628,7 +625,7 @@ func (K APIClient) respErrorCheck(resp *http.Response) (err error) {
 	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
 		return nil
 	}
-	
+
 	snoop_response(resp.Status, &snoop_buffer)
 
 	e.Register(fmt.Sprintf("HTTP_STATUS_%d", resp.StatusCode), resp.Status)
@@ -679,11 +676,11 @@ func snoop_response(respStatus string, body *bytes.Buffer) {
 	dec := json.NewDecoder(body)
 	str := body.String()
 	if err := dec.Decode(&snoop_generic); err != nil {
-		Trace("<-- REPONSE BODY: \n%s\n", str)
+		Trace("<-- RESPONSE BODY: \n%s\n", str)
 		return
 	}
 	if snoop_generic != nil {
-		for v, _ := range snoop_generic {
+		for v := range snoop_generic {
 			switch v {
 			case "refresh_token":
 				fallthrough
@@ -743,7 +740,7 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 		err = s.respErrorCheck(resp)
 	}
 
-	return 
+	return
 }
 
 // New API Client Request.

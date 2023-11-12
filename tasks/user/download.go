@@ -24,7 +24,7 @@ type FolderDownloadTask struct {
 	folders          map[int]string
 	folder_count     Tally
 	file_count       Tally
-	transfered       Tally
+	transferred       Tally
 	files_downloaded Tally
 	dwnld_chan       chan *download
 	KiteBrokerTask
@@ -84,7 +84,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 	T.folder_count = T.Report.Tally("Folders Analyzed")
 	T.file_count = T.Report.Tally("Files Analyzed")
 	T.files_downloaded = T.Report.Tally("Files Downloaded")
-	T.transfered = T.Report.Tally("Transfered", HumanSize)
+	T.transferred = T.Report.Tally("Transferred", HumanSize)
 
 	message := func() string {
 		return fmt.Sprintf("Please wait ... [files: %d/folders: %d]", T.file_count.Value(), T.folder_count.Value())
@@ -284,7 +284,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		}
 	}
 
-	err = T.KW.LocalDownload(file, local_path, T.transfered.Add)
+	err = T.KW.LocalDownload(file, local_path, T.transferred.Add)
 	if err != nil {
 		return err
 	}
@@ -412,7 +412,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	if fstat == nil || fstat.Size() != file.Size {
 		update_transfer := func(num int) {
-			T.transfered.Add(num)
+			T.transferred.Add(num)
 		}
 		f = TransferCounter(f, update_transfer)
 		_, err := io.Copy(dst, f)

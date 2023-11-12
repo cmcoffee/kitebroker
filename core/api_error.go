@@ -12,6 +12,7 @@ type APIError struct {
 	codes   []string
 	err     map[string]struct{}
 }
+
 /*
 type APIError interface {
 	Register(code, message string)
@@ -68,6 +69,7 @@ func (C APIClient) isRetryError(err error) bool {
 	}
 	return false
 }
+
 /*
 func (C APIClient) NewAPIError() *apiError {
 	return new(apiError)

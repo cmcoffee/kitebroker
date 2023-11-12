@@ -32,7 +32,7 @@ func (m *menu) cmd_text(cmd string, desc string) {
 
 const (
 	_normal_task = 1 << iota
-	_admin_task 
+	_admin_task
 	_hidden_task
 )
 
@@ -63,7 +63,6 @@ func (m *menu) RegisterName(name string, task Task) {
 func (m *menu) RegisterHidden(task Task) {
 	m.register(task.Name(), _hidden_task, task)
 }
-
 
 // Sets the flags for the task.
 func set_task_flags(task Task, Flags FlagSet) {
@@ -139,12 +138,12 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	}
 
 	switch t_flag {
-		case _admin_task:
-			m.admin_tasks = append(m.admin_tasks, name)
-		case _hidden_task:
-			m.hidden_tasks = append(m.hidden_tasks, name)
-		default:
-			m.tasks = append(m.tasks, name)
+	case _admin_task:
+		m.admin_tasks = append(m.admin_tasks, name)
+	case _hidden_task:
+		m.hidden_tasks = append(m.hidden_tasks, name)
+	default:
+		m.tasks = append(m.tasks, name)
 	}
 }
 
@@ -294,7 +293,7 @@ func (m *menu) Select(input [][]string) (err error) {
 			} else {
 				// Task already is initialized, so clone the task and parse new variables provided by task file.
 				i := 0
-				for k, _ := range m.entries {
+				for k := range m.entries {
 					if strings.Contains(k, args[0]) {
 						i++
 					}
@@ -312,8 +311,8 @@ func (m *menu) Select(input [][]string) (err error) {
 				return fmt.Errorf("No such command: '%s' found.\n\n", args[0])
 			} else {
 				if source != "exit" {
- 					return fmt.Errorf("%s: No such command: '%s' found.\n\n", args[len(args)-1], args[0])
- 				}
+					return fmt.Errorf("%s: No such command: '%s' found.\n\n", args[len(args)-1], args[0])
+				}
 			}
 		}
 		m.mutex.RUnlock()
@@ -359,7 +358,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					set_task_session(x.task, global.user)
 					set_task_report(x.task, NewTaskReport(name, source, x.flags))
 					report := Defer(func() error {
-						task_report_summary(x.task, ErrCount() - pre_errors)
+						task_report_summary(x.task, ErrCount()-pre_errors)
 						return nil
 					})
 					if err := x.task.Main(); err != nil {
@@ -382,7 +381,7 @@ func (m *menu) Select(input [][]string) (err error) {
 
 		PleaseWait.Hide()
 
-		// Stop here if this is non-continous.
+		// Stop here if this is non-continuous.
 		if global.freq == 0 {
 			return nil
 		}

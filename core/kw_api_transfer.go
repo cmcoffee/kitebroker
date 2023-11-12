@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"github.com/cmcoffee/go-snuglib/iotimeout"
 	"io"
-	"os"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -21,8 +21,8 @@ const (
 )
 
 var (
-	ErrNoUploadID = errors.New("Upload ID not found.")
-	ErrUploadNoResp = errors.New("Unexpected empty resposne from server.")
+	ErrNoUploadID     = errors.New("Upload ID not found.")
+	ErrUploadNoResp   = errors.New("Unexpected empty resposne from server.")
 	ErrUploadFinished = errors.New("Upload already marked as complete.")
 )
 
@@ -77,7 +77,7 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 				err = PrefixAPIError("Download Error", err)
 				return 0, err
 			} else {
-				return 0, fmt.Errorf("Download Error: %s", err)	
+				return 0, fmt.Errorf("Download Error: %s", err)
 			}
 		}
 
@@ -197,7 +197,7 @@ func (s *streamReadCloser) Close() (err error) {
 
 // Reads bytes from source, pushes through mimewriter to bytes.Buffer, and reads from bytes.Buffer.
 func (s *streamReadCloser) Read(p []byte) (n int, err error) {
-	
+
 	// If we have stuff in our output buffer, read from there.
 	// If not, reset the bytes buffer and read from source.
 	if s.w_buff.Len() > 0 {
@@ -214,7 +214,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 	// Get length of incoming []byte slice.
 	p_len := int64(len(p))
 
-	if sz := s.chunkSize-s.size; sz > 0 {
+	if sz := s.chunkSize - s.size; sz > 0 {
 		if sz > p_len {
 			sz = p_len
 		}
@@ -228,7 +228,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 				return n, err
 			}
 		}
-	
+
 		// We're writing to a bytes.Buffer.
 		_, err = s.f_writer.Write(p[0:n])
 		if err != nil {
@@ -254,7 +254,7 @@ func (s *streamReadCloser) Read(p []byte) (n int, err error) {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path...string) (*KiteObject, error) {
+func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path ...string) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -307,13 +307,13 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		}
 	}
 
-	transfered_bytes := upload_data.UploadedSize
+	transferred_bytes := upload_data.UploadedSize
 
 	w_buff := new(bytes.Buffer)
 
 	var resp_data *KiteObject
 
-	for transfered_bytes < total_bytes || total_bytes == 0 {
+	for transferred_bytes < total_bytes || total_bytes == 0 {
 		w_buff.Reset()
 
 		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI))
@@ -339,7 +339,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 			}
 
 			req.URL.RawQuery = q.Encode()
-			ChunkSize = total_bytes - transfered_bytes
+			ChunkSize = total_bytes - transferred_bytes
 		}
 
 		err = w.WriteField("compressionMode", "NORMAL")
@@ -395,7 +395,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		}
 
 		ChunkIndex++
-		transfered_bytes = transfered_bytes + ChunkSize
+		transferred_bytes = transferred_bytes + ChunkSize
 		if total_bytes == 0 {
 			break
 		}
@@ -458,10 +458,10 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	dest_path = fmt.Sprintf("%s/", dest_path)
 
 	switch dst.Type {
-		case "d":
-			flags.Set(IsFolder)
-		case "f":
-			flags.Set(IsFile)
+	case "d":
+		flags.Set(IsFolder)
+	case "f":
+		flags.Set(IsFile)
 	}
 
 	if overwrite_newer {
@@ -473,11 +473,11 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	}
 
 	var UploadRecord struct {
-		Name string
-		ID int
+		Name           string
+		ID             int
 		ClientModified time.Time
-		Size int64
-		Created time.Time
+		Size           int64
+		Created        time.Time
 	}
 
 	target := fmt.Sprintf("%s:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
@@ -487,7 +487,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		if uploads.Get(target, &UploadRecord) {
 			s.Call(APIRequest{
 				Method: "DELETE",
-				Path: SetPath("/rest/uploads/%d", UploadRecord.ID),
+				Path:   SetPath("/rest/uploads/%d", UploadRecord.ID),
 			})
 			uploads.Unset(target)
 		}
@@ -509,22 +509,20 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		}
 	}
 
+	//	var kw_file_info KiteObject
 
-
-//	var kw_file_info KiteObject
-
-//	if flags.Has(IsFile) {
-//		kw_file_info = dst
-		//dst, err = s.Folder("0").Find(dst.Path)
-		//if err != nil {
-		//	return nil, err
-		//}
+	//	if flags.Has(IsFile) {
+	//		kw_file_info = dst
+	//dst, err = s.Folder("0").Find(dst.Path)
+	//if err != nil {
+	//	return nil, err
+	//}
 	//} else {
 	//	kw_file_info, err = s.Folder(dst.ID).Find(filename)
 	//	if err != nil && err != ErrNotFound {
 	//		return nil, err
 	//	}
-	//} 
+	//}
 
 	if flags.Has(IsFile) {
 		modified, _ := ReadKWTime(dst.ClientModified)
@@ -591,8 +589,7 @@ func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 	err = s.SetToken(s.Username, req)
 
 	return s.WebDownload(req), err
-}	
-
+}
 
 // Downloads a file to from Kiteworks
 func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
@@ -645,7 +642,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 
 	f, err := s.Download(file)
 	if err != nil {
-		return err 
+		return err
 	}
 	defer f.Close()
 
@@ -705,4 +702,3 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	err = os.Chtimes(dest_file, time.Now(), mtime)
 	return
 }
-

@@ -56,7 +56,7 @@ type KWAPI struct {
 // kiteworks Session.
 type KWSession struct {
 	Username string
-	db Database
+	db       Database
 	*KWAPI
 }
 
@@ -76,7 +76,7 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 
 	api_req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_req.Version))
 	api_req.Username = K.Username
-	
+
 	return K.APIClient.Call(api_req)
 }
 
@@ -198,7 +198,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 // Set User Credentials for kw_api.
 func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*KWSession, error) {
 	if K.TokenStore == nil {
-		return nil, fmt.Errorf("APIClient: NewToken not initalized.")
+		return nil, fmt.Errorf("APIClient: NewToken not initialized.")
 	}
 
 	if IsBlank(K.GetSignature()) {

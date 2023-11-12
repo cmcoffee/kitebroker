@@ -24,22 +24,22 @@ const (
 
 // Global Variables
 var global struct {
-	cfg       ConfigStore
-	db        Database
-	cache     Database
-	auth_mode int
-	user      KWSession
-	kw        *KWAPI
-	freq      time.Duration
-	root      string
-	setup     bool
-	snoop     bool
-	debug     bool
-	sysmode   bool
+	cfg           ConfigStore
+	db            Database
+	cache         Database
+	auth_mode     int
+	user          KWSession
+	kw            *KWAPI
+	freq          time.Duration
+	root          string
+	setup         bool
+	snoop         bool
+	debug         bool
+	sysmode       bool
 	new_task_file bool
-	pause     bool
-	as_user   string
-	gen_token bool
+	pause         bool
+	as_user       string
+	gen_token     bool
 }
 
 func init() {
@@ -108,10 +108,9 @@ func main() {
 	flags.Order("task", "new_task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
 
-
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
-	
+
 	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
@@ -140,7 +139,7 @@ func main() {
 
 	if global.gen_token {
 		nfo.Animations = false
-		command.Select([][]string{[]string{"exit"}})
+		command.Select([][]string{{"exit"}})
 		if _, err := global.user.MyUser(); err != nil {
 			Fatal(err)
 			Exit(1)
@@ -180,7 +179,7 @@ func main() {
 		return
 	}
 
-	// Now we will go crtical on the config file not loading.
+	// Now we will go critical on the config file not loading.
 	if cfg_err != nil {
 		Notice("No config file found at %s, creating new configuration file.", FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 		global.cfg.Save()

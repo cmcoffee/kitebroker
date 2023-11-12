@@ -6,10 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
-	"github.com/cmcoffee/go-snuglib/options"
-	"github.com/cmcoffee/go-snuglib/nfo"
 	"github.com/cmcoffee/go-snuglib/kvlite"
+	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/go-snuglib/options"
+	. "github.com/cmcoffee/kitebroker/core"
 	"net"
 	"os"
 	"strings"
@@ -157,6 +157,7 @@ func load_api_configs() (app_id, app_secret string) {
 // Default Configuration File.
 const default_config_file = `
 [configuration]
+user_login = 
 server =
 auth_flow = signature
 redirect_uri = https://kitebroker/
@@ -498,7 +499,7 @@ func config_api(configure_api, test_required bool) {
 			return false
 		}
 		tested = true
-		Log("[SUCCESS]: %s reports succesful API communications!", global.kw.Server)
+		Log("[SUCCESS]: %s reports successful API communications!", global.kw.Server)
 		pause()
 		bad_test = false
 		return true
@@ -506,7 +507,7 @@ func config_api(configure_api, test_required bool) {
 
 	setup.Func("Test Current API Configuration.", test_api)
 
-	// Display configuraiton menu
+	// Display configuration menu
 	enter_setup := func() {
 		for {
 			tested = false
@@ -525,7 +526,7 @@ func config_api(configure_api, test_required bool) {
 					break
 				}
 			} else if bad_test {
-				if nfo.GetConfirm("\nCould not succesfully validate settings, save anyway?") {
+				if nfo.GetConfirm("\nCould not successfully validate settings, save anyway?") {
 					save_config()
 					break
 				} else {
@@ -537,7 +538,7 @@ func config_api(configure_api, test_required bool) {
 		if test_required && (bad_test || !tested) {
 			os.Exit(1)
 		}
- 	}
+	}
 
 	if !configure_api {
 		if !load_api() {

@@ -3,11 +3,11 @@ package core
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"reflect"
 	"strings"
-	"time"
-	"net/url"
 	"sync/atomic"
+	"time"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
@@ -57,7 +57,7 @@ type KiteObject struct {
 	MailID                int            `json:"mail_id,omitempty"`
 	Links                 []KiteLinks    `json:"links,omitempty"`
 	IsShared              bool           `json:"isShared,omitempty"`
-	IsLocked                interface{}    `json:"locked,omitempty"`
+	IsLocked              interface{}    `json:"locked,omitempty"`
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
 }
 
@@ -97,17 +97,17 @@ type KiteLinks struct {
 
 // Permission information
 type KitePermission struct {
-	ID         int    `json:"id"`
-	Name       string `json:"name"`
+	ID   int    `json:"id"`
+	Name string `json:"name"`
 	//Rank       int    `json:"rank"`
-	Modifiable bool   `json:"modifiable"`
-	Disabled   bool   `json:"disabled"`
+	Modifiable bool `json:"modifiable"`
+	Disabled   bool `json:"disabled"`
 }
 
 func (s KWSession) FolderRoles() (result []KitePermission, err error) {
 	return result, s.DataCall(APIRequest{
 		Method: "GET",
-		Path: SetPath("/rest/roles"),
+		Path:   SetPath("/rest/roles"),
 		Output: &result,
 	}, -1, 1000)
 }
@@ -120,10 +120,9 @@ type kw_rest_folder struct {
 type PubSub struct {
 	Queue string `json:"queueName"`
 	Token string `json:"jwtToken"`
-	URIS []string
+	URIS  []string
 	*KWSession
 }
-
 
 func (s kw_rest_folder) Sub(sub_folders bool, regex string) (result PubSub, err error) {
 	params := PostJSON{"file": PostJSON{"subfolders": sub_folders, "folderId": s.folder_id}}
@@ -134,10 +133,10 @@ func (s kw_rest_folder) Sub(sub_folders bool, regex string) (result PubSub, err 
 
 	err = s.Call(APIRequest{
 		Method: "POST",
-		Path: "/rest/pubsub/subscribe",
+		Path:   "/rest/pubsub/subscribe",
 		Params: SetParams(params),
 		Output: &result,
-	})	
+	})
 
 	if err != nil {
 		return
@@ -149,7 +148,7 @@ func (s kw_rest_folder) Sub(sub_folders bool, regex string) (result PubSub, err 
 
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path: "/rest/pubsub/config",
+		Path:   "/rest/pubsub/config",
 		Output: &URI,
 	})
 
@@ -173,7 +172,7 @@ func (s PubSub) Listen() (err error) {
 func (s PubSub) UnSub() (err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
-		Path: "/rest/pubsub/unsubscribe",
+		Path:   "/rest/pubsub/unsubscribe",
 		Params: SetParams(PostJSON{"queueName": s.Queue}),
 	})
 
@@ -186,7 +185,7 @@ func (s KWSession) Folder(folder_id string) kw_rest_folder {
 		&s,
 	}
 }
- 
+
 func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
@@ -218,37 +217,37 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 }
 
 type KiteActivity struct {
-	Successful int `json:"successful"`
-	Created	string `json:"created"`
-	Message	string `json:"message"`
-	Event	string `json:"event"`
-	ID      int    `json:"id"`
-	Data struct {
+	Successful int    `json:"successful"`
+	Created    string `json:"created"`
+	Message    string `json:"message"`
+	Event      string `json:"event"`
+	ID         int    `json:"id"`
+	Data       struct {
 		Comment struct {
 			Content string `json:"content"`
 		} `json:"comment"`
 		File struct {
 			Uploader struct {
 				Name string `json:"name"`
-				ID string `json:"guid"`
+				ID   string `json:"guid"`
 			} `json:"file_uploader"`
 		} `json:"file"`
 		Successful bool `json:"succcessful`
 	} `json:"data"`
-	User	struct {
-		UserID string `json:"userId"`
-		ProfileIcon  string `json:"profileIcon"`
-		Name string `json:"name"`
+	User struct {
+		UserID      string `json:"userId"`
+		ProfileIcon string `json:"profileIcon"`
+		Name        string `json:"name"`
 	} `json:"user"`
 }
 
 func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
 		Version: 27,
-		Method: "GET",
-		Path:   SetPath("/rest/folders/%s/activities", s.folder_id),
-		Output: &result,
-		Params: SetParams(params),
+		Method:  "GET",
+		Path:    SetPath("/rest/folders/%s/activities", s.folder_id),
+		Output:  &result,
+		Params:  SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -262,7 +261,7 @@ func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output Ki
 	})
 	return
 }
- 
+
 func (s kw_rest_folder) Delete(params ...interface{}) (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
@@ -374,7 +373,7 @@ func (s KWSession) Admin() kw_rest_admin {
 func (s kw_rest_admin) Register(email string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",
-		Path: "/rest/users/register",
+		Path:   "/rest/users/register",
 		Params: SetParams(PostJSON{"email": email, "password": "NewAccount#123"}),
 	})
 }
@@ -382,7 +381,7 @@ func (s kw_rest_admin) Register(email string) (err error) {
 func (s kw_rest_admin) ActivateUser(userid int) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
-		Path: SetPath("/rest/admin/users/%d", userid),
+		Path:   SetPath("/rest/admin/users/%d", userid),
 		Params: SetParams(PostJSON{"suspended": false, "verified": true, "deactivated": false}),
 	})
 	return
@@ -456,14 +455,14 @@ func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (
 func (s kw_rest_admin) DeleteUser(user KiteUser, params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "DELETE",
-		Path: SetPath("/rest/admin/users/%v", user.ID),
+		Path:   SetPath("/rest/admin/users/%v", user.ID),
 		Params: SetParams(params),
 	})
 }
 
 func (s kw_rest_admin) FindProfile(name string) (profile KWProfile, err error) {
 	profiles, err := s.Profiles()
-	if err != nil { 
+	if err != nil {
 		return profile, err
 	}
 	for _, v := range profiles {
@@ -478,7 +477,7 @@ func (s kw_rest_admin) FindProfile(name string) (profile KWProfile, err error) {
 func (s kw_rest_admin) Profiles(params ...interface{}) (profiles []KWProfile, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path: "/rest/admin/profiles",
+		Path:   "/rest/admin/profiles",
 		Params: SetParams(params),
 		Output: &profiles,
 	}, -1, 1000)
@@ -493,10 +492,10 @@ type kw_rest_file struct {
 func (s kw_rest_file) Unlock() (err error) {
 	err = s.Call(APIRequest{
 		Version: 27,
-		Method: "PATCH",
-		Path:   SetPath("/rest/files/%s/actions/unlock", s.file_id),
-		Output: nil,
-		Params: nil,
+		Method:  "PATCH",
+		Path:    SetPath("/rest/files/%s/actions/unlock", s.file_id),
+		Output:  nil,
+		Params:  nil,
 	})
 	return
 }
@@ -508,10 +507,10 @@ func (s KWSession) File(file_id string) kw_rest_file {
 func (s kw_rest_file) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
 		Version: 27,
-		Method: "GET",
-		Path:   SetPath("/rest/files/%s/activities", s.file_id),
-		Output: &result,
-		Params: SetParams(params),
+		Method:  "GET",
+		Path:    SetPath("/rest/files/%s/activities", s.file_id),
+		Output:  &result,
+		Params:  SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -544,14 +543,14 @@ func (s kw_rest_file) PermDelete() (err error) {
 }
 
 type KiteSource struct {
-	URL string `json:"sourceURL"`
-	Description string `json:"description"`
-	ID string `json:"id"`
-	SourceTypeID int `json"sourceTypeId"`
-	PinnedTime string `json:"pinnedTime"`
-	Name string `json:"name"`
-	SourceByUser bool `json:"sourceByUser"`
-	Pinned bool `json:"pinned"`
+	URL          string `json:"sourceURL"`
+	Description  string `json:"description"`
+	ID           string `json:"id"`
+	SourceTypeID int    `json"sourceTypeId"`
+	PinnedTime   string `json:"pinnedTime"`
+	Name         string `json:"name"`
+	SourceByUser bool   `json:"sourceByUser"`
+	Pinned       bool   `json:"pinned"`
 }
 
 type kw_source struct {
@@ -569,10 +568,10 @@ func (s KWSession) Source(source_id string) kw_source {
 func (s kw_source) Folders(params ...interface{}) (folders []KiteObject, err error) {
 	err = s.DataCall(APIRequest{
 		Version: 26,
-		Method: "GET",
-		Path: SetPath("/rest/sources/%s/folders", s.source_id),
-		Output: &folders,
-		Params: SetParams(params),
+		Method:  "GET",
+		Path:    SetPath("/rest/sources/%s/folders", s.source_id),
+		Output:  &folders,
+		Params:  SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -580,7 +579,7 @@ func (s kw_source) Folders(params ...interface{}) (folders []KiteObject, err err
 func (s KWSession) Sources(params ...interface{}) (sources []KiteSource, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
-		Path: "/rest/sources",
+		Path:   "/rest/sources",
 		Output: &sources,
 		Params: SetParams(params),
 	}, -1, 1000)
@@ -675,7 +674,7 @@ func (s kw_rest_file) Recover(params ...interface{}) (err error) {
 func (s kw_rest_folder) MoveToFolder(folder_id string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",
-		Path: SetPath("/rest/folders/%s/actions/move", s.folder_id),
+		Path:   SetPath("/rest/folders/%s/actions/move", s.folder_id),
 		Params: SetParams(PostJSON{"destinationFolderId": folder_id}),
 	})
 }
@@ -727,7 +726,7 @@ type KiteQuota struct {
 func (s KWSession) MyQuota() (quota KiteQuota, err error) {
 	err = s.Call(APIRequest{
 		Method: "GET",
-		Path: "/rest/users/me/quota",
+		Path:   "/rest/users/me/quota",
 		Output: &quota,
 	})
 	return
@@ -760,18 +759,18 @@ func (s kw_rest_admin) UserCount(emails []string, params ...interface{}) (users 
 
 // Get Users
 type GetUsers struct {
-	offset    int
-	filter    Query
-	profile_id int
-	emails    []string
-	email_map map[string]interface{}
-	params    []interface{}
-	orig_params []interface{}
-	session   *kw_rest_admin
-	user_total int
+	offset       int
+	filter       Query
+	profile_id   int
+	emails       []string
+	email_map    map[string]interface{}
+	params       []interface{}
+	orig_params  []interface{}
+	session      *kw_rest_admin
+	user_total   int
 	failed_users int
-	show_errors bool
-	completed bool
+	show_errors  bool
+	completed    bool
 }
 
 // Returns total failed users.
@@ -857,7 +856,7 @@ func (s kw_rest_admin) Users(emails []string, profile_id int, params ...interfac
 			for _, email := range profile_emails {
 				upmap[strings.ToLower(email)] = struct{}{}
 			}
-			for e, _ := range T.email_map {
+			for e := range T.email_map {
 				if _, ok := upmap[e]; !ok {
 					if len(T.emails) > 0 {
 						Err("%s does not meet required profile id [%d], skipping user..", e, T.profile_id)
@@ -873,7 +872,7 @@ func (s kw_rest_admin) Users(emails []string, profile_id int, params ...interfac
 		}
 		T.emails = nil
 		if len(T.email_map) <= 100 {
-			for e, _ := range T.email_map {
+			for e := range T.email_map {
 				T.emails = append(T.emails, e)
 			}
 		}
@@ -889,20 +888,19 @@ func (s kw_rest_admin) Users(emails []string, profile_id int, params ...interfac
 		T.user_total, _ = T.session.UserCount(nil, T.orig_params)
 	}
 
-
 	return &T, nil
 }
 
 // Return a set of users to process.
 func (T *GetUsers) Next() (users []KiteUser, err error) {
-		if T.completed {
-			return
-		}
+	if T.completed {
+		return
+	}
 
-		if len(T.emails) > 0 {
-				T.completed = true
-				return T.findEmails()
-		}
+	if len(T.emails) > 0 {
+		T.completed = true
+		return T.findEmails()
+	}
 
 	for {
 		var raw_users []KiteUser
@@ -1020,10 +1018,10 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 }
 
 type KiteRoles struct {
-	ID int `json:"id"`
-	Name string `json:"name"`
-	Rank int `json:"rank"`
-	Type string `json:"type"`
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Rank  int    `json:"rank"`
+	Type  string `json:"type"`
 	Links string `json:"links"`
 }
 
@@ -1040,6 +1038,7 @@ func (s KWSession) Roles() (output []KiteRoles, err error) {
 	output = Roles.Out
 	return
 }
+
 /*
 type kw_profile struct {
 	profile_id int
@@ -1064,10 +1063,10 @@ func (K kw_profile) Get() (profile KWProfile, err error) {
 }*/
 
 type folderCrawler struct {
-	processor func(*KWSession, *KiteObject) (error)
+	processor      func(*KWSession, *KiteObject) error
 	folder_limiter LimitGroup
-	file_chan chan *KiteObject
-	all_stop int32
+	file_chan      chan *KiteObject
+	all_stop       int32
 }
 
 type abortError struct {
@@ -1075,7 +1074,7 @@ type abortError struct {
 }
 
 func AbortError(err error) abortError {
-	return abortError {
+	return abortError{
 		err: err,
 	}
 }
@@ -1098,7 +1097,7 @@ func abortCheck(err error) (error, bool) {
 	}
 }
 
-func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error), folders...KiteObject) {
+func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error, folders ...KiteObject) {
 	crawler := new(folderCrawler)
 	crawler.folder_limiter = NewLimitGroup(50)
 	file_limiter := NewLimitGroup(50)
@@ -1106,7 +1105,7 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error
 	crawler.file_chan = make(chan *KiteObject, 1000)
 
 	file_limiter.Add(1)
-	go func (user *KWSession) {
+	go func(user *KWSession) {
 		defer file_limiter.Done()
 		for {
 			m := <-crawler.file_chan
@@ -1119,13 +1118,13 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error
 			if file_limiter.Try() {
 				go func(user *KWSession, object *KiteObject) {
 					defer file_limiter.Done()
-						err, abort := abortCheck(processor(user, object))
-						if err != nil {
-							Err("%s - %s: %v", user.Username, object.Name, err)
-						}
-						if abort {
-							atomic.AddInt32(&crawler.all_stop, 1)
-						}	
+					err, abort := abortCheck(processor(user, object))
+					if err != nil {
+						Err("%s - %s: %v", user.Username, object.Name, err)
+					}
+					if abort {
+						atomic.AddInt32(&crawler.all_stop, 1)
+					}
 				}(s, m)
 			} else {
 				err, abort := abortCheck(processor(user, m))
@@ -1134,7 +1133,7 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error
 				}
 				if abort {
 					atomic.AddInt32(&crawler.all_stop, 1)
-				}	
+				}
 			}
 
 		}
@@ -1148,7 +1147,7 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) (error
 		}(s, f)
 	}
 	crawler.folder_limiter.Wait()
-	crawler.file_chan<-nil
+	crawler.file_chan <- nil
 	file_limiter.Wait()
 	return
 }
@@ -1209,7 +1208,7 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 						Err("%s - %s: %v", user.Username, folders[n].Path, err)
 					}
 					if abort {
-						atomic.AddInt32(&F.all_stop, 1) 
+						atomic.AddInt32(&F.all_stop, 1)
 						return
 					}
 				}
@@ -1218,13 +1217,13 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 			if err == nil {
 				for i := 0; i < len(childs); i++ {
 					switch childs[i].Type {
-						case "d":
-							next = append(next, &childs[i])	
-						default:
-							if atomic.LoadInt32(&F.all_stop) > 0 {
-								return
-							}
-							F.file_chan<-&childs[i]
+					case "d":
+						next = append(next, &childs[i])
+					default:
+						if atomic.LoadInt32(&F.all_stop) > 0 {
+							return
+						}
+						F.file_chan <- &childs[i]
 					}
 				}
 			} else {
@@ -1258,18 +1257,16 @@ func (K kw_profile) Get(id int) (profile *KWProfile, err error) {
 	}
 }
 
-
-
 type KWProfile struct {
-	ID int `json:"id"`
-	Name string `json:"name"`
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
 	Features struct {
 		AllowSFTP    bool  `json:"allowSftp"`
 		MaxStorage   int64 `json:"maxStorage"`
 		SendExternal bool  `json:"sendExternal`
 		FolderCreate int   `json:"folderCreate"`
-		FileTime   int `json:"fileLifetime"`
-		FolderTime int `json:"folderExpirationLimit"`
+		FileTime     int   `json:"fileLifetime"`
+		FolderTime   int   `json:"folderExpirationLimit"`
 	} `json:"features"`
 }
 
@@ -1277,10 +1274,10 @@ func (K KWSession) Profiles() (output map[int]KWProfile, err error) {
 	var profiles []KWProfile
 	err = K.DataCall(APIRequest{
 		Version: 20,
-		Method: "GET",
-		Path:	SetPath("/rest/profiles"),
-		Output: &profiles,
-	}, -1, 1000);
+		Method:  "GET",
+		Path:    SetPath("/rest/profiles"),
+		Output:  &profiles,
+	}, -1, 1000)
 	if err != nil {
 		return nil, err
 	}
@@ -1290,7 +1287,6 @@ func (K KWSession) Profiles() (output map[int]KWProfile, err error) {
 	}
 	return
 }
-
 
 type dli_admin struct {
 	*KWSession
@@ -1312,7 +1308,7 @@ func (K dli_admin) ActivityCount(input KiteUser, number_of_days_ago int) (activi
 		Path:   SetPath("/rest/dli/users/%v/activities", input.ID),
 		Params: SetParams(Query{"noDayBack": number_of_days_ago}),
 		Output: &activity,
-	}, -1, 1000);
+	}, -1, 1000)
 	if err != nil {
 		return 1, err
 	}
@@ -1325,14 +1321,14 @@ func (K dli_admin) CheckForActivity(user KiteUser, number_of_days int) (found bo
 	start_date := time.Now().UTC().Add((time.Hour * 24) * time.Duration(1) * -1)
 
 	var report []struct {
-		ID string `json:"id"`
+		ID     string `json:"id"`
 		Status string `json:"status"`
 	}
 
 	err = K.DataCall(APIRequest{
 		Method: "POST",
-		Path: SetPath("/rest/dli/exports/users/%v", user.ID),
-		Params: SetParams(PostJSON{"startDate": WriteKWTime(start_date), "endDate": WriteKWTime(end_date), "types":[]string{"activities"}}, Query{"returnEntity": true}),
+		Path:   SetPath("/rest/dli/exports/users/%v", user.ID),
+		Params: SetParams(PostJSON{"startDate": WriteKWTime(start_date), "endDate": WriteKWTime(end_date), "types": []string{"activities"}}, Query{"returnEntity": true}),
 		Output: &report,
 	}, -1, 1000)
 
@@ -1347,23 +1343,22 @@ func (K dli_admin) CheckForActivity(user KiteUser, number_of_days int) (found bo
 	path := SetPath("/rest/dli/exports/%s", report[0].ID)
 
 	defer K.Call(APIRequest{
-			Method: "DELETE",
-			Path: path,
-		})
-
+		Method: "DELETE",
+		Path:   path,
+	})
 
 	status := report[0].Status
 
 	for status == "inprocess" {
 		time.Sleep(time.Second)
 		var r_status struct {
-			ID string `json:"id"`
+			ID     string `json:"id"`
 			Status string `json:"status"`
 		}
 
 		err = K.Call(APIRequest{
 			Method: "GET",
-			Path: path,
+			Path:   path,
 			Output: &r_status,
 		})
 
