@@ -14,7 +14,6 @@ type FolderFileExpiryTask struct {
 		folders            []string
 		folder_days        int
 		file_days          int
-		resume             bool
 		recover_deleted    bool
 		dont_extend        bool
 		dont_modify_folder bool
@@ -22,10 +21,10 @@ type FolderFileExpiryTask struct {
 		fzero              bool
 		file_expiry_only   bool
 	}
-	profiles     map[int]KWProfile
-	limiter      LimitGroup
-	user_count   Tally
-	folder_count Tally
+	profiles      map[int]KWProfile
+	limiter       LimitGroup
+	user_count    Tally
+	folder_count  Tally
 	skipped_users int64
 	KiteBrokerTask
 }
@@ -115,7 +114,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 	}
 
 	message := func() string {
-			return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", user_counter(), total_users, T.folder_count.Value())
+		return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", user_counter(), total_users, T.folder_count.Value())
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
@@ -239,9 +238,9 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 	}
 
 	err = sess.Call(APIRequest{
-		Method:  "PUT",
-		Path:    SetPath("/rest/folders/%s", folder.ID),
-		Params:  SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),
+		Method: "PUT",
+		Path:   SetPath("/rest/folders/%s", folder.ID),
+		Params: SetParams(params, PostForm{"applyFileLifetimeToFiles": !T.input.dont_extend}),
 	})
 	if err != nil && IsAPIError(err, "ERR_ENTITY_IS_SYNC_DIR") {
 		return T.ChangeFiles(sess, user, folder)
@@ -274,7 +273,7 @@ func (T *FolderFileExpiryTask) ChangeFiles(sess *KWSession, user *KiteUser, fold
 	if fold_exp.IsZero() {
 		folder_expiry = 0
 	} else {
-		folder_expiry = int(time.Now().UTC().Sub(fold_exp).Hours() / 24) * -1
+		folder_expiry = int(time.Now().UTC().Sub(fold_exp).Hours()/24) * -1
 	}
 
 	var files []KiteObject

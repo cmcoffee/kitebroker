@@ -1,11 +1,11 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
+	"encoding/csv"
 	"fmt"
+	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"strings"
-	"encoding/csv"
 	"sync"
 	"time"
 	//"strings"
@@ -14,17 +14,17 @@ import (
 type MetadataTask struct {
 	// input variables
 	input struct {
-		profile_id         int
-		user_emails        []string
-		folders            []string
-		output_file        string
-		max_days           int
-		no_overwrite       bool
+		profile_id   int
+		user_emails  []string
+		folders      []string
+		output_file  string
+		max_days     int
+		no_overwrite bool
 	}
-	csv_writer   *csv.Writer
-	user_count   Tally
-	folder_count Tally
-	file_count   Tally
+	csv_writer    *csv.Writer
+	user_count    Tally
+	folder_count  Tally
+	file_count    Tally
 	skipped_users int64
 	file_activity map[string]bool
 	record_lock   sync.RWMutex
@@ -68,8 +68,8 @@ func (T *MetadataTask) Init() (err error) {
 func (T *MetadataTask) Write(path string, user string) (err error) {
 	T.locker.Lock()
 	defer T.locker.Unlock()
-	Log("%s,%s,\"%s\"",path,user,T.msg)
-	err = T.csv_writer.Write([]string{path,user,T.msg})
+	Log("%s,%s,\"%s\"", path, user, T.msg)
+	err = T.csv_writer.Write([]string{path, user, T.msg})
 	if err == nil {
 		T.csv_writer.Flush()
 	}
@@ -85,7 +85,6 @@ func (T *MetadataTask) Main() (err error) {
 	T.folder_count = T.Report.Tally("Folders Scanned")
 	T.msg = fmt.Sprintf("No Download/Upload/View File Activties found within %d days.", T.input.max_days)
 
-
 	filename_split := strings.Split(T.input.output_file, ".")
 	if len(filename_split) == 1 {
 		filename_split = append(filename_split, ".csv")
@@ -95,14 +94,14 @@ func (T *MetadataTask) Main() (err error) {
 
 	var wg sync.WaitGroup
 
-	for i := 0;;i++{
+	for i := 0; ; i++ {
 		if i > 0 {
 			filename = fmt.Sprintf("%s (%d).%s", filename_split[0], i, filename_split[1])
 		} else {
 			filename = strings.Join(filename_split[0:], ".")
 		}
 
-  		_, err := os.Stat(filename)
+		_, err := os.Stat(filename)
 		if err != nil && os.IsNotExist(err) {
 			file, err := os.OpenFile(filename, os.O_CREATE|os.O_RDWR, 0644)
 			if err != nil {
@@ -137,12 +136,11 @@ func (T *MetadataTask) Main() (err error) {
 	}
 
 	message := func() string {
-			return fmt.Sprintf("Please wait ... [users: %d of %d/folders scanned: %d/files scanned: %d]", user_counter(), total_users, T.folder_count.Value(), T.file_count.Value())
+		return fmt.Sprintf("Please wait ... [users: %d of %d/folders scanned: %d/files scanned: %d]", user_counter(), total_users, T.folder_count.Value(), T.file_count.Value())
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-
 
 	for {
 		users, err := user_getter.Next()
@@ -164,7 +162,7 @@ func (T *MetadataTask) Main() (err error) {
 						continue
 					}
 					wg.Add(1)
-					go func(sess KWSession, folder_obj KiteObject) () {
+					go func(sess KWSession, folder_obj KiteObject) {
 						defer wg.Done()
 						T.FolderProcessor(sess, folder_obj)
 					}(sess, folder_obj)
@@ -177,7 +175,7 @@ func (T *MetadataTask) Main() (err error) {
 				}
 				for _, v := range folders {
 					wg.Add(1)
-					go func(sess KWSession, folder_obj KiteObject) () {
+					go func(sess KWSession, folder_obj KiteObject) {
 						defer wg.Done()
 						T.FolderProcessor(sess, folder_obj)
 					}(sess, v)
@@ -186,7 +184,6 @@ func (T *MetadataTask) Main() (err error) {
 		}
 		wg.Wait()
 	}
-
 
 	return
 }
@@ -206,7 +203,7 @@ func (T *MetadataTask) CheckForActivity(folder_id string) bool {
 func (T *MetadataTask) FolderProcessor(sess KWSession, obj KiteObject) {
 	start_folder := obj
 	fproc := func(user *KWSession, obj *KiteObject) (err error) {
-		time_start := time.Now().AddDate(0, 0, T.input.max_days * -1)
+		time_start := time.Now().AddDate(0, 0, T.input.max_days*-1)
 		if T.CheckForActivity(start_folder.ID) {
 			return AbortError(nil)
 		}
@@ -226,7 +223,7 @@ func (T *MetadataTask) FolderProcessor(sess KWSession, obj KiteObject) {
 			T.folder_count.Add(1)
 			if obj.Name == "My Folder" {
 				T.UpdateActivity(start_folder.ID)
-				return AbortError(nil)				
+				return AbortError(nil)
 			}
 			if created.After(time_start) {
 				T.UpdateActivity(start_folder.ID)
@@ -238,11 +235,11 @@ func (T *MetadataTask) FolderProcessor(sess KWSession, obj KiteObject) {
 			//}
 			//for _, a := range activities {
 			//if a.Data.Comment.Content != "" {
-		//		Log("[%s]: %s: %s", a.User.Name, a.Message, a.Data.Comment.Content)
-		//	} else {
-				//Log("[%s] %s - %s - %s", obj.Path, a.Created, a.User.Name, a.Message)
-				//Critical(T.Write(obj.Path, a.Created, a.User.Name, a.Message))
-	//	}
+			//		Log("[%s]: %s: %s", a.User.Name, a.Message, a.Data.Comment.Content)
+			//	} else {
+			//Log("[%s] %s - %s - %s", obj.Path, a.Created, a.User.Name, a.Message)
+			//Critical(T.Write(obj.Path, a.Created, a.User.Name, a.Message))
+			//	}
 			//}
 		} else if obj.Type == "f" {
 			if created.After(time_start) || modified.After(time_start) {
@@ -257,21 +254,21 @@ func (T *MetadataTask) FolderProcessor(sess KWSession, obj KiteObject) {
 			T.file_count.Add(1)
 			for _, a := range activities {
 				switch a.Event {
-					case "download":
-						fallthrough
-					case "view_file":
-						act_created, err := ReadKWTime(a.Created)
-						if err != nil {
-							Err("%s/%s: %v", obj.Path, obj.Name, err)
-							T.UpdateActivity(start_folder.ID)
-							return AbortError(nil)
-						}
-						if act_created.After(time_start) {
-							T.UpdateActivity(start_folder.ID)
-							return AbortError(nil)
-						}
-					default:
-						continue
+				case "download":
+					fallthrough
+				case "view_file":
+					act_created, err := ReadKWTime(a.Created)
+					if err != nil {
+						Err("%s/%s: %v", obj.Path, obj.Name, err)
+						T.UpdateActivity(start_folder.ID)
+						return AbortError(nil)
+					}
+					if act_created.After(time_start) {
+						T.UpdateActivity(start_folder.ID)
+						return AbortError(nil)
+					}
+				default:
+					continue
 				}
 			}
 			if obj.Locked() {

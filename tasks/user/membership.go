@@ -1,21 +1,21 @@
 package user
 
 import (
+	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
 	"strings"
-	"fmt"
 )
 
 // Object for task.
 type MembershipTask struct {
-	target string
-	add_users []string
-	rem_users []string
-	role string
-	role_id int
-	notify bool
+	target       string
+	add_users    []string
+	rem_users    []string
+	role         string
+	role_id      int
+	notify       bool
 	notify_files bool
-	roles []KiteRoles
+	roles        []KiteRoles
 	KiteBrokerTask
 }
 
@@ -98,7 +98,7 @@ func (T *MembershipTask) AddUsers() {
 		Err(err)
 		return
 	}
-	role_id, err := T.FindRoleID(T.role) 
+	role_id, err := T.FindRoleID(T.role)
 	if err != nil {
 		Fatal(err)
 	}
@@ -109,8 +109,6 @@ func (T *MembershipTask) AddUsers() {
 	} else {
 		Log("Successfully updated %v on %s.", T.add_users, folder.Path)
 	}
-
-
 
 }
 

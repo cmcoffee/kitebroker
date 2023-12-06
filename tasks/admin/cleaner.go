@@ -8,24 +8,24 @@ import (
 
 type FileCleanerTask struct {
 	input struct {
-		all_users bool
-		user_emails []string
+		all_users    bool
+		user_emails  []string
 		profile_id   int
-		folders []string
+		folders      []string
 		max_file_age int
-		perm_delete bool
-		resume bool
-		dry_run bool
+		perm_delete  bool
+		resume       bool
+		dry_run      bool
 	}
-	user_count   Tally
-	limiter LimitGroup
-	files_removed Tally
-	files_count Tally
-	folders_count Tally
+	user_count      Tally
+	limiter         LimitGroup
+	files_removed   Tally
+	files_count     Tally
+	folders_count   Tally
 	space_recovered Tally
 	//pcache Table
-	profiles     map[int]KWProfile
-	users        Table
+	profiles map[int]KWProfile
+	users    Table
 	KiteBrokerTask
 }
 
@@ -50,7 +50,7 @@ func (T *FileCleanerTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.resume, "resume", "Resume previous deletion of files.")
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
 	T.Flags.BoolVar(&T.input.all_users, "all_users", "Clean out all users files past their profile expiration.")
-	T.Flags.Order("users","folder","max_days","perm")
+	T.Flags.Order("users", "folder", "max_days", "perm")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -58,7 +58,6 @@ func (T *FileCleanerTask) Init() (err error) {
 	if !T.input.all_users && T.input.profile_id < 1 && len(T.input.user_emails) == 0 {
 		err = fmt.Errorf("Select users based on --profile_id or --users.")
 	}
-
 
 	return
 }
@@ -71,7 +70,7 @@ func (T *FileCleanerTask) Main() (err error) {
 	T.user_count = T.Report.Tally("Analyzed Users")
 	T.users = T.DB.Table("users")
 	T.profiles, err = T.KW.Profiles()
-	if err != nil { 
+	if err != nil {
 		return err
 	}
 	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
@@ -90,14 +89,14 @@ func (T *FileCleanerTask) Main() (err error) {
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-/*
-	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
-		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
-		if err != nil {
-			return err
-		}
-		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
-	}*/
+	/*
+		if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
+			user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
+			if err != nil {
+				return err
+			}
+			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
+		}*/
 
 	/*user_count, err := T.KW.Admin().UserCount(T.input.user_emails, params)
 	if err != nil {
@@ -116,7 +115,7 @@ func (T *FileCleanerTask) Main() (err error) {
 		}
 		if len(users) == 0 {
 			break
-		}	
+		}
 		for _, user := range users {
 			T.user_count.Add(1)
 			err_start := ErrCount()
@@ -180,12 +179,12 @@ func (T *FileCleanerTask) Main() (err error) {
 	}
 
 	T.limiter.Wait()
- 	return nil
+	return nil
 
 }
 
 func (T *FileCleanerTask) getExpiryTime(days int) time.Time {
-		return time.Now().UTC().Add((time.Hour * 24) * time.Duration(days) * -1)
+	return time.Now().UTC().Add((time.Hour * 24) * time.Duration(days) * -1)
 }
 
 var ErrNoExpire = fmt.Errorf("No File Expiry.")
@@ -299,6 +298,5 @@ func (T *FileCleanerTask) ProcessFolder(sess *KWSession, user *KiteUser, folder 
 		n++
 	}
 	return
-
 
 }

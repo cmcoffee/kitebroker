@@ -39,13 +39,13 @@ func (T *UserProfilerTask) Init() (err error) {
 	T.Flags.BoolVar(&T.deactivated, "deactivated", "Apply only to users that are deactivated.")
 	T.Flags.BoolVar(&T.unverified, "unverified", "Apply only to users that are unverfied.")
 	T.Flags.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
-	T.Flags.Order("new_profile_id", "old_profile_id","deactivated","unverified","domain_filter","users")
+	T.Flags.Order("new_profile_id", "old_profile_id", "deactivated", "unverified", "domain_filter", "users")
 	T.Flags.CLIArgs("users")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
 
-	if T.old_profile_id == 0 && !T.deactivated && !T.unverified && T.filter == NONE && len(T.user_emails) == 0 { 
+	if T.old_profile_id == 0 && !T.deactivated && !T.unverified && T.filter == NONE && len(T.user_emails) == 0 {
 		return fmt.Errorf("You must provide some type of user filter: --deactivated, --unverified, --old_profile_id, --users or --domain_filter.")
 	}
 
@@ -110,7 +110,7 @@ func (T *UserProfilerTask) Main() (err error) {
 				if T.old_profile_id != 0 && user.UserTypeID != T.old_profile_id {
 					return
 				}
-				
+
 				if err := T.change_profile(user.ID); err != nil {
 					Err("%s: %s", user.Email, err.Error())
 				} else {

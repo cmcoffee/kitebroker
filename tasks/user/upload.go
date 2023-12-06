@@ -6,8 +6,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"time"
 	"strings"
+	"time"
 )
 
 type FolderUploadTask struct {
@@ -23,7 +23,7 @@ type FolderUploadTask struct {
 	upload_chan  chan *upload
 	file_count   Tally
 	folder_count Tally
-	transferred   Tally
+	transferred  Tally
 	uploads      Table
 	cache        FileCache
 	KiteBrokerTask
@@ -89,30 +89,30 @@ func (T *FolderUploadTask) Main() (err error) {
 		}
 	}
 
-/*
-	if IsBlank(T.input.dst) {
-		user_info, err := T.KW.MyUser()
-		if err != nil {
-			return err
-		}
-		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
-		if err != nil {
-			return err
-		}
-	} else {
-		base_folder, err = T.KW.Folder("0").Find(T.input.dst)
-		if err != nil {
-			if err == ErrNotFound {
-				base_folder, err = T.KW.Folder("0").NewFolder(T.input.dst)
-				if err != nil {
-					return err
+	/*
+		if IsBlank(T.input.dst) {
+			user_info, err := T.KW.MyUser()
+			if err != nil {
+				return err
+			}
+			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
+			if err != nil {
+				return err
+			}
+		} else {
+			base_folder, err = T.KW.Folder("0").Find(T.input.dst)
+			if err != nil {
+				if err == ErrNotFound {
+					base_folder, err = T.KW.Folder("0").NewFolder(T.input.dst)
+					if err != nil {
+						return err
+					}
+				} else {
+					return fmt.Errorf("%s: %v", T.input.dst, err)
 				}
-			} else {
-				return fmt.Errorf("%s: %v", T.input.dst, err)
 			}
 		}
-	}
-*/
+	*/
 	T.file_count = T.Report.Tally("Files")
 	T.folder_count = T.Report.Tally("Folders")
 	T.transferred = T.Report.Tally("Transferred", HumanSize)
@@ -183,7 +183,7 @@ func (T *FolderUploadTask) Main() (err error) {
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
 	if T.cache.Check(finfo, folder) == true {
 		return nil
-	} 
+	}
 
 	f, err := os.Open(local_path)
 	if err != nil {
@@ -199,7 +199,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 }
 
 // Replaced with Kitebroker core code.
-/* 
+/*
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
 	defer T.file_count.Add(1)
 	if folder.ID == 0 {
@@ -246,7 +246,7 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 				return nil
 			}
 		}
-	} 
+	}
 
 	kw_file_info, err := T.KW.Folder(folder.ID).Find(finfo.Name())
 	if err != nil && err != ErrNotFound {
@@ -357,7 +357,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 				break
 			}
 		}
-		
+
 		target := current[n]
 
 		if n+1 < len(current)-1 {

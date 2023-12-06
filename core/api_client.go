@@ -731,8 +731,6 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 	if req.Body != nil {
 		req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
 		client.Timeout = 0
-	} else {
-		client.Timeout = s.RequestTimeout
 	}
 
 	resp, err = client.Do(req)

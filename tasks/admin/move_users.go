@@ -1,8 +1,8 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
 	"fmt"
+	. "github.com/cmcoffee/kitebroker/core"
 )
 
 type MoveMyFolder struct {

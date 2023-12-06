@@ -8,7 +8,7 @@ import (
 // Object for task.
 type ListTask struct {
 	input struct {
-		folder string
+		folder         string
 		human_readable bool
 	}
 	KiteBrokerTask
@@ -23,7 +23,7 @@ func (T ListTask) Name() string {
 	return "ls"
 }
 
-func (T ListTask) Desc() string { 
+func (T ListTask) Desc() string {
 	return "List folders and/or files in kiteworks."
 }
 
@@ -31,7 +31,7 @@ func (T ListTask) Desc() string {
 func (T *ListTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.human_readable, "human_readable", "Present sizes in human-readable format.")
 	T.Flags.Shorten("human_readable", 'h')
-	
+
 	T.Flags.StringVar(&T.input.folder, "path", "<remote file/folder>", "Folder/Files you want to list.")
 
 	T.Flags.CLIArgs("path")
@@ -41,11 +41,10 @@ func (T *ListTask) Init() (err error) {
 		return err
 	}
 
-
 	return nil
 }
 
-func (T ListTask) displayResult(object...KiteObject) {
+func (T ListTask) displayResult(object ...KiteObject) {
 	for _, v := range object {
 		if v.Type == "d" {
 			var t_str string

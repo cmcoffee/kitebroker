@@ -7,15 +7,15 @@ import (
 
 type AddUserTask struct {
 	input struct {
-		all_users bool
+		all_users   bool
 		user_emails []string
-		profile_id   int
-		folders []string
+		profile_id  int
+		folders     []string
 		user_to_add string
 	}
-	limiter      LimitGroup
-	user_count   Tally
-	folder_count Tally
+	limiter       LimitGroup
+	user_count    Tally
+	folder_count  Tally
 	skipped_users int64
 	KiteBrokerTask
 }
@@ -50,7 +50,6 @@ func (T *AddUserTask) Init() (err error) {
 		err = fmt.Errorf("Must provide a --downloader.")
 	}
 
-
 	return
 }
 
@@ -68,7 +67,7 @@ func (T *AddUserTask) Main() (err error) {
 	total_users := user_getter.Total()
 
 	message := func() string {
-			return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", T.user_count.Value(), total_users, T.folder_count.Value())
+		return fmt.Sprintf("Please wait ... [users: %d of %d/folders: %d]", T.user_count.Value(), total_users, T.folder_count.Value())
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
@@ -135,8 +134,6 @@ func (T *AddUserTask) Main() (err error) {
 	return nil
 }
 
-
-
 func (T *AddUserTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *KiteObject) {
 	if folder.Path != "My Folder" {
 		err := sess.Folder(folder.ID).AddUsersToFolder([]string{T.input.user_to_add}, 2, false, false)
@@ -155,4 +152,3 @@ func (T *AddUserTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *Kit
 		}
 	}
 }
-

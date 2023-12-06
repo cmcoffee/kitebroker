@@ -1,32 +1,32 @@
 package admin
 
 import (
+	"bufio"
+	"encoding/csv"
+	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
-	"strings"
-	"encoding/csv"
-	"sync"
-	"fmt"
-	"sort"
 	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
 	"time"
-	"bufio"
 )
 
 var folder_perms = map[string]int{
-	"downloader": 2,
+	"downloader":   2,
 	"collaborator": 3,
-	"manager": 4, 
-	"viewer": 2,
+	"manager":      4,
+	"viewer":       2,
 }
 
 type CSVOnboardTask struct {
 	// input variables
 	input struct {
-		csv_file           string
-		manager            string
-		out_path           string
-		subscribe          bool
+		csv_file  string
+		manager   string
+		out_path  string
+		subscribe bool
 	}
 	user_count   Tally
 	folder_count Tally
@@ -53,7 +53,7 @@ func (T *CSVOnboardTask) Init() (err error) {
 	T.Flags.StringVar(&T.input.csv_file, "in_file", "users.csv", "CSV File to Import from.")
 	T.Flags.StringVar(&T.input.out_path, "out_path", "<.>", "Folder to save completed CSVs to.")
 	T.Flags.BoolVar(&T.input.subscribe, "sub", "Subscribe new members to notifications.")
-	T.Flags.Order("in_file","out_path","manager")
+	T.Flags.Order("in_file", "out_path", "manager")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -75,13 +75,13 @@ func (T *CSVOnboardTask) LookupFolder(path string) (string, error) {
 	} else {
 		return v, nil
 	}
-} 
+}
 
 func (T CSVOnboardTask) LookupPermission(permission string) (int, error) {
 	lc_permission := strings.ToLower(permission)
 	if v, ok := folder_perms[lc_permission]; !ok {
-		var perms_list []string 
-		for k, _ := range folder_perms {
+		var perms_list []string
+		for k := range folder_perms {
 			perms_list = append(perms_list, k)
 		}
 		sort.Strings(perms_list)
@@ -126,8 +126,8 @@ func (T *CSVOnboardTask) Main() (err error) {
 
 	ext := filepath.Ext(filename)
 
-	errors_filename := fmt.Sprintf("%s-%d.failures.csv", strings.TrimSuffix(filename,ext), current_time)
-	done_filename := fmt.Sprintf("%s-%d.complete.csv", strings.TrimSuffix(filename,ext), current_time)
+	errors_filename := fmt.Sprintf("%s-%d.failures.csv", strings.TrimSuffix(filename, ext), current_time)
+	done_filename := fmt.Sprintf("%s-%d.complete.csv", strings.TrimSuffix(filename, ext), current_time)
 
 	f, err := os.Open(T.input.csv_file)
 	if err != nil {
@@ -136,7 +136,7 @@ func (T *CSVOnboardTask) Main() (err error) {
 			return nil
 		}
 		return err
-	}	
+	}
 	scanner := bufio.NewScanner(f)
 
 	err_file, err := os.OpenFile(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -174,7 +174,7 @@ func (T *CSVOnboardTask) Main() (err error) {
 			Critical(err)
 			_, err = err_file.WriteString(fmt.Sprintf("%s\n", text))
 			Critical(err)
-			errors++			
+			errors++
 			continue
 		}
 		users := strings.Split(row[2], ",")
@@ -193,10 +193,14 @@ func (T *CSVOnboardTask) Main() (err error) {
 	}
 	err_file.Close()
 	done_file.Close()
-	f.Close()
 	if errors == 0 {
-		Critical(os.Remove(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename))))
+		if err := os.Remove(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename))); err != nil {
+			Err(err)
+		}
 	}
-	Critical(os.Remove(T.input.csv_file))
+	f.Close()
+	if err := os.Remove(T.input.csv_file); err != nil {
+		Err(err)
+	}
 	return nil
 }

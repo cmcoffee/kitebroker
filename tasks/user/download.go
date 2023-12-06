@@ -11,7 +11,7 @@ type FolderDownloadTask struct {
 	input struct {
 		src        []string
 		dst        string
-		track bool
+		track      bool
 		owned_only bool
 		move       bool
 	}
@@ -24,7 +24,7 @@ type FolderDownloadTask struct {
 	folders          map[int]string
 	folder_count     Tally
 	file_count       Tally
-	transferred       Tally
+	transferred      Tally
 	files_downloaded Tally
 	dwnld_chan       chan *download
 	KiteBrokerTask
@@ -53,9 +53,9 @@ func (T *FolderDownloadTask) Init() (err error) {
 	T.Flags.MultiVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
 	T.Flags.BoolVar(&T.input.track, "track", "Track downloads. (Prevents files from being redownloaded)")
-	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon succesful download.")
+	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon successful download.")
 	T.Flags.Order("src", "dst", "track", "owner", "move")
-	T.Flags.CLIArgs("src","dst")
+	T.Flags.CLIArgs("src", "dst")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -144,7 +144,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 		}
 	}()
 
-	for i, _ := range folders {
+	for i := range folders {
 		T.folder_count.Add(1)
 		T.crawl_limiter.Add(1)
 
@@ -264,7 +264,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	var dl_record uint
 
 	T.file_count.Add(1)
-	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)	
+	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
 
 	clear_from_db := func(file_id string) {
 		for _, k := range T.db.downloads.Keys() {

@@ -6,8 +6,8 @@ import (
 
 // Object for task.
 type TaskObject struct {
-	bool_value bool
-	counter    Tally
+	bool_value     bool
+	counter        Tally
 	KiteBrokerTask // Every task object needs this!
 }
 

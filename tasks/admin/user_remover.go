@@ -1,43 +1,43 @@
 package admin
 
 import (
+	"encoding/csv"
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"encoding/csv"
 	"os"
-	"time"
 	"strings"
+	"time"
 )
 
 type UserRemoverTask struct {
 	input struct {
-		all_users bool
-		profile_id int
-		user_emails []string
-		unverified bool
-		suspended bool
-		deactivated bool
-		reassign_to string
-		dry_run bool
-		retain_perms bool
-		delete_myfolder bool
-		remote_wipe bool
-		withdraw_links bool
-		external_only bool
-		limit int
-		csv_file string
-		inactive_days uint
+		all_users         bool
+		profile_id        int
+		user_emails       []string
+		unverified        bool
+		suspended         bool
+		deactivated       bool
+		reassign_to       string
+		dry_run           bool
+		retain_perms      bool
+		delete_myfolder   bool
+		remote_wipe       bool
+		withdraw_links    bool
+		external_only     bool
+		limit             int
+		csv_file          string
+		inactive_days     uint
 		ignore_inactivity bool
 	}
-	limit int
-	prefix string
-	user_count Tally
-	user_removed Tally
-	inactivity_time time.Time
-	read_csv_file bool
-	last_activity map[string]time.Time
+	limit            int
+	prefix           string
+	user_count       Tally
+	user_removed     Tally
+	inactivity_time  time.Time
+	read_csv_file    bool
+	last_activity    map[string]time.Time
 	reassign_to_sess KWSession
-	reassign_to_id int
+	reassign_to_id   int
 	KiteBrokerTask
 }
 
@@ -141,7 +141,6 @@ func (T *UserRemoverTask) Main() (err error) {
 		params = SetParams(params, Query{"suspended": true})
 	}
 
-
 	if !T.read_csv_file {
 		if T.input.all_users {
 			user_emails, err := T.KW.Admin().GetAllUsers(params)
@@ -151,19 +150,19 @@ func (T *UserRemoverTask) Main() (err error) {
 			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
 		}
 	} else {
-		for k, _ := range T.last_activity {
+		for k := range T.last_activity {
 			T.input.user_emails = append(T.input.user_emails, k)
 		}
 	}
-/*
-	if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
-		user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
-		if err != nil {
-			return err
+	/*
+		if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
+			user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
+			if err != nil {
+				return err
+			}
+			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
 		}
-		T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
-	}
-*/
+	*/
 	user_list := T.input.user_emails
 
 	if T.input.all_users {
@@ -192,7 +191,7 @@ func (T *UserRemoverTask) Main() (err error) {
 		}
 
 		for _, user := range users {
-			if (T.limit > 0 || T.limit < 0) {
+			if T.limit > 0 || T.limit < 0 {
 				if T.RemoveUser(user) {
 					T.limit--
 				}
@@ -267,7 +266,7 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 }
 
 func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
-	T.user_count.Add(1)	
+	T.user_count.Add(1)
 	Log("Inspecting user %s...", input.Email)
 
 	//if T.input.profile_id > 0 {
@@ -284,7 +283,7 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 			return false
 		}
 	}
-	
+
 	if T.input.unverified {
 		if input.Verified {
 			return false
@@ -329,7 +328,7 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	if !IsBlank(T.input.reassign_to) {
 		params = SetParams(params, Query{"retainToUser": T.reassign_to_id, "retainData": true})
 	} else {
-		params= SetParams(params, Query{"retainData": false, "deleteUnsharedData": true})
+		params = SetParams(params, Query{"retainData": false, "deleteUnsharedData": true})
 	}
 
 	params = SetParams(params, Query{"retainPermissionToSharedData": T.input.retain_perms})
