@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/iotimeout"
+	"github.com/cmcoffee/snugforge/iotimeout"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -48,6 +48,7 @@ func (K *APIClient) chunksCalc(total_size int64) (total_chunks int64) {
 const (
 	wd_started = 1 << iota
 	wd_closed
+	wd_no_api_errors
 )
 
 // Webdownloader for external sources
@@ -63,6 +64,8 @@ type web_downloader struct {
 	request_timeout time.Duration
 }
 
+
+
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
 		W.req = W.reqs[0]
@@ -73,7 +76,7 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 		W.flag.Set(wd_started)
 		W.resp, err = W.api.SendRequest(NONE, W.req)
 		if err != nil {
-			if IsAPIError(err) {
+			if IsAPIError(err) && !W.flag.Has(wd_no_api_errors) {
 				err = PrefixAPIError("Download Error", err)
 				return 0, err
 			} else {
@@ -123,6 +126,10 @@ func (W *web_downloader) Close() error {
 
 // Seek an offset within the download, added Range header to request.
 func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
+	if offset == -500 && whence == -500 {
+		W.flag.Set(wd_no_api_errors)
+		return 0, nil
+	}
 	if offset < 0 {
 		return 0, fmt.Errorf("Can't read before the start of the file.")
 	}
@@ -588,7 +595,10 @@ func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 
 	err = s.SetToken(s.Username, req)
 
-	return s.WebDownload(req), err
+	downloader := s.WebDownload(req)
+	downloader.Seek(-500, -500)
+
+	return downloader, err
 }
 
 // Downloads a file to from Kiteworks
@@ -655,15 +665,16 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	if err != nil {
 		return
 	}
-	defer dst.Close()
 
 	if fstat != nil {
 		offset, err := dst.Seek(fstat.Size(), 0)
 		if err != nil {
+            dst.Close()
 			return err
 		}
 		_, err = f.Seek(offset, 0)
 		if err != nil {
+			dst.Close()
 			return err
 		}
 	}
@@ -677,16 +688,19 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		if err != nil {
 			if file.AdminQuarantineStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
+                dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
 			if file.AVStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
+                dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
 			if file.DLPStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
+                dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
@@ -694,6 +708,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		}
 	}
 
+    dst.Close()
 	err = Rename(tmp_file_name, dest_file)
 	if err != nil {
 		return err

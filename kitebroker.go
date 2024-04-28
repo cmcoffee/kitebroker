@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "23.11.30"
+	VERSION = "24.04.01"
 )
 
 const (
@@ -166,7 +166,6 @@ func main() {
 	}
 
 	// We need to do a quick look to see what commands we display for --help
-
 	//err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {

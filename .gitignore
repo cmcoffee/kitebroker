@@ -17,6 +17,8 @@ tasks/classified/*
 classified.go
 
 # svn & cvs
+add_repo.sh
+update_docs.sh
 update.sh
 .svn
 CVS

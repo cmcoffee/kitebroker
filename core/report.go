@@ -3,7 +3,7 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/eflag"
+	"github.com/cmcoffee/snugforge/eflag"
 	"strings"
 	"sync"
 	"sync/atomic"

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"github.com/cmcoffee/kitebroker/tasks/admin/sftp_gw"
 	"github.com/cmcoffee/kitebroker/tasks/admin"
 	"github.com/cmcoffee/kitebroker/tasks/user"
 )
@@ -25,4 +26,6 @@ func init() {
 	command.RegisterAdmin(new(admin.MoveMyFolder))
 	command.RegisterAdmin(new(admin.AddUserTask))
 	command.RegisterAdmin(new(admin.MetadataTask))
+	command.RegisterAdmin(new(admin.FolderReportTask))
+	command.RegisterAdmin(new(sftp_gw.SFTPGWTask))
 }

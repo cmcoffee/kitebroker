@@ -4,6 +4,7 @@ import (
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
 	"io/ioutil"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -182,6 +183,10 @@ func (T *FolderUploadTask) Main() (err error) {
 
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
 	if T.cache.Check(finfo, folder) == true {
+		return nil
+	}
+
+	if finfo.Mode().Type() == fs.ModeSymlink {
 		return nil
 	}
 

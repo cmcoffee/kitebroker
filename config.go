@@ -6,9 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/kvlite"
-	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/go-snuglib/options"
+	//"github.com/cmcoffee/snugforge/kvlite"
+	"github.com/cmcoffee/snugforge/nfo"
+	"github.com/cmcoffee/snugforge/options"
 	. "github.com/cmcoffee/kitebroker/core"
 	"net"
 	"os"
@@ -193,38 +193,38 @@ func init_database() {
 	//Defer(global.db.Close)
 }
 
-// Opens go-kvlite database using mac address for lock.
-func SecureDatabase(file string) (*DBase, error) {
-	// Provides us the mac address of the first interface.
-	get_mac_addr := func() []byte {
-		ifaces, err := net.Interfaces()
-		Critical(err)
+func get_mac_addr() ([]byte) {
+	ifaces, err := net.Interfaces()
+	Critical(err)
 
-		for _, v := range ifaces {
-			if len(v.HardwareAddr) == 0 {
-				continue
-			}
-			return v.HardwareAddr
+	for _, v := range ifaces {
+		if len(v.HardwareAddr) == 0 {
+			continue
 		}
-		return nil
+		return v.HardwareAddr
 	}
+	return nil
+}
 
-	db, err := kvlite.Open(file, get_mac_addr()[0:]...)
+// Opens go-kvlite database using mac address for lock.
+func SecureDatabase(file string) (Database, error) {
+	// Provides us the mac address of the first interface.
+	db, err := OpenDB(file, _unlock_db()[0:]...)
 	if err != nil {
-		if err == kvlite.ErrBadPadlock {
+		if err == ErrBadPadlock {
 			Notice("Hardware changes detected, you will need to reauthenticate.")
-			if err := kvlite.CryptReset(file); err != nil {
+			if err := ResetDB(file); err != nil {
 				return nil, err
 			}
 		} else {
 			return nil, err
 		}
-		db, err = kvlite.Open(file, get_mac_addr()[0:]...)
+		db, err = OpenDB(file, _unlock_db()[0:]...)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &DBase{db}, nil
+	return db, nil
 }
 
 // Initialize Logging.
@@ -289,6 +289,37 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	block, _ = aes.NewCipher(key)
 	cipher.NewCFBDecrypter(block, key[0:block.BlockSize()]).XORKeyStream(decoded, decoded)
 
+	return
+}
+
+func _db_lock_status() bool {
+	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
+		return false
+	}
+	return true
+}
+
+func _set_db_locker() {
+	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
+		global.cfg.Unset("do_not_modify", "db_locker")
+		return
+	} else {
+		mac := get_mac_addr()
+		random := RandBytes(40)
+		db_lock_code := string(encrypt(mac, random))
+		Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
+	}
+	return
+}
+
+func _unlock_db() (padlock []byte) {
+	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
+		code := []byte(dbs[0:40])
+		db_lock_code := []byte(dbs[40:])
+		padlock = decrypt(db_lock_code, code)
+	} else {
+		padlock = get_mac_addr()
+	}
 	return
 }
 
@@ -375,6 +406,7 @@ func config_api(configure_api, test_required bool) {
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
 	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 10)
 	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 65", 1, 65)
+	lock_db := advanced.Bool("Machine Locked", _db_lock_status())
 
 	setup.Options("Advanced", advanced, false)
 
@@ -385,7 +417,6 @@ func config_api(configure_api, test_required bool) {
 		Critical(global.cfg.Set("configuration", "server", strings.TrimPrefix(strings.ToLower(*server), "https://")))
 		Critical(global.cfg.Set("configuration", "ssl_verify", *ssl_verify))
 		set_api_configs(client_app_id, client_app_secret)
-		Critical(global.cfg.Save())
 		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
 			global.db.CryptSet("kitebroker", "signature", &signature)
 		}
@@ -395,6 +426,10 @@ func config_api(configure_api, test_required bool) {
 		dbConfig.set_max_api_calls(*max_api_calls)
 		dbConfig.set_max_file_transfer(*max_file_transfer)
 		dbConfig.set_chunk_size_mb(*chunk_size_mb)
+		if _db_lock_status() != *lock_db {
+			_set_db_locker()
+		}
+		Critical(global.cfg.TrimSave())
 
 	}
 

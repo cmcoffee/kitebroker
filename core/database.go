@@ -1,7 +1,7 @@
 package core
 
 import (
-	"github.com/cmcoffee/go-snuglib/kvlite"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 type Database interface {
@@ -17,6 +17,19 @@ type Database interface {
 	Tables() []string
 	Table(table string) Table
 	Close()
+}
+
+var (
+	ResetDB = kvlite.CryptReset
+	ErrBadPadlock = kvlite.ErrBadPadlock
+)
+
+func OpenDB(filename string, padlock ...byte) (Database, error) {
+	db, err := kvlite.Open(filename, padlock[0:]...)
+	if err != nil {
+		return nil, err
+	}
+	return &DBase{db}, nil
 }
 
 // Wrapper around go-kvlite.

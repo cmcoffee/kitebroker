@@ -7,7 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/iotimeout"
+	"github.com/cmcoffee/snugforge/iotimeout"
 	"io"
 	"io/ioutil"
 	"net"
@@ -178,6 +178,14 @@ func (K *APIClient) SetLimiter(max_calls int) {
 	if K.limiter == nil {
 		K.limiter = make(chan struct{}, max_calls)
 	}
+}
+
+// Returns the configured API Limit.
+func (K *APIClient) GetLimit() int {
+	if K.limiter != nil {
+		return cap(K.limiter)
+	}
+	return 1
 }
 
 // Configures maximum number of simultaneous file transfers.

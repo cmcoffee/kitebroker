@@ -2,8 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/eflag"
-	//"github.com/cmcoffee/go-snuglib/nfo"
+	"github.com/cmcoffee/snugforge/eflag"
 	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"runtime"
@@ -111,7 +110,7 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 		m.entries = make(map[string]*menu_elem)
 	}
 	cmd_name := strings.Split(name, ":")[0]
-	flags := &FlagSet{EFlagSet: eflag.NewFlagSet(cmd_name, eflag.ReturnErrorOnly)}
+	flags := &FlagSet{EFlagSet: NewFlagSet(cmd_name, ReturnErrorOnly)}
 	flags.SyntaxName(fmt.Sprintf("%s %s", os.Args[0], cmd_name))
 	flags.ShowSyntax = true
 	flags.AdaptArgs = true
@@ -159,6 +158,9 @@ func (m *menu) Show() {
 	}
 
 	for _, k := range m.tasks {
+		if IsBlank(m.entries[k].desc) {
+			continue
+		}
 		m.cmd_text(k, m.entries[k].desc)
 	}
 
@@ -180,6 +182,9 @@ func (m *menu) Show() {
 
 	if global.auth_mode == SIGNATURE_AUTH {
 		for _, k := range m.admin_tasks {
+			if IsBlank(m.entries[k].desc) {
+				continue
+			}
 			m.cmd_text(k, m.entries[k].desc)
 		}
 		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
@@ -209,7 +214,12 @@ func write_task_file(name, desc string, flags *FlagSet) {
 		if input.Usage == NONE {
 			return
 		}
-		Stdout("# %s\n#\n", input.Usage)
+		usage := strings.Split(input.Usage, "\n")
+		for _, v := range usage {
+			v = strings.Replace(v, "\t", "", -1)
+			Stdout("# %s\n", v)
+		}
+		Stdout("#\n")
 		if len(input.Value.String()) == 0 {
 			if input.DefValue[0] == '"' {
 				Stdout("#%s = \"%s\"", input.Name, input.DefValue[2:len(input.DefValue)-2])

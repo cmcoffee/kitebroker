@@ -5,13 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/cmcoffee/go-snuglib/cfg"
-	"github.com/cmcoffee/go-snuglib/eflag"
-	"github.com/cmcoffee/go-snuglib/nfo"
-	"github.com/cmcoffee/go-snuglib/swapreader"
-	"github.com/cmcoffee/go-snuglib/xsync"
-	//"github.com/cmcoffee/go-snuglib/kvlite"
-	//"github.com/cmcoffee/go-snuglib/options"
+	"github.com/cmcoffee/snugforge/cfg"
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
+	"github.com/cmcoffee/snugforge/swapreader"
+	"github.com/cmcoffee/snugforge/xsync"
+	//"github.com/cmcoffee/snugforge/kvlite"
+	//"github.com/cmcoffee/snugforge/options"
 	"bytes"
 	"io"
 	"io/ioutil"
@@ -199,6 +199,11 @@ var (
 	leftToRight     = nfo.LeftToRight // Transfer Monitor Direction
 	rightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
 	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
+)
+
+var (
+	NewFlagSet      = eflag.NewFlagSet
+	ReturnErrorOnly = eflag.ReturnErrorOnly
 )
 
 type (

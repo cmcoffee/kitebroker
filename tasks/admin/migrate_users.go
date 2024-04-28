@@ -20,12 +20,18 @@ type MigrateProfileTask struct {
 		src_redirect      string
 		user_emails       []string
 		delete_user_first bool
+		cleanup			  bool
+		deactivate_src_user bool
 	}
 	old_domain          string
 	new_domain          string
 	SRC                 KWAPI
 	users               map[string]struct{}
 	limiter             LimitGroup
+	folders_count      Tally
+	files_count        Tally
+	files_copied        Tally
+	transfer_counter    Tally
 	src_dst_profile_map map[int]int
 	// Required for all tasks
 	KiteBrokerTask
@@ -64,6 +70,8 @@ func (T *MigrateProfileTask) Init() (err error) {
 	T.Flags.Order("src_profile_id", "src_server", "src_appid", "src_secret")
 	T.Flags.BoolVar(&T.input.delete_user_first, "delete_user_first", "Delete destination user prior to migration.")
 	T.Flags.StringVar(&T.new_domain, "new_domain", "<new_domain.com>", "Replace users domain with domain specified.")
+	T.Flags.BoolVar(&T.input.cleanup, "cleanup", "Remove source files if they exist on destination already.")
+	T.Flags.BoolVar(&T.input.deactivate_src_user, "deactivate", "Deactivate Users after copy command")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -77,8 +85,6 @@ func (T *MigrateProfileTask) Init() (err error) {
 	T.SRC.SetDatabase(OpenCache())
 	T.SRC.Signature(sig)
 	T.SRC.ClientSecret(secret)
-	T.SRC.SetLimiter(10)
-	T.SRC.SetTransferLimiter(10)
 	T.SRC.VerifySSL = false
 	T.SRC.Retries = 3
 	T.SRC.ConnectTimeout = time.Second * 12
@@ -101,17 +107,33 @@ func (T *MigrateProfileTask) MapProfiles() (err error) {
 	for _, v := range dst_profiles {
 		dst_profile_map[strings.ToLower(v.Name)] = v.ID
 	}
-	for _, v := range src_profiles {
-		if x, ok := dst_profile_map[strings.ToLower(v.Name)]; ok {
-			T.src_dst_profile_map[v.ID] = x
-		} else {
-			Fatal("Profile from source could not be found on destination system: %s", v.Name)
+	if !T.input.cleanup {
+		for _, v := range src_profiles {
+			if x, ok := dst_profile_map[strings.ToLower(v.Name)]; ok {
+				T.src_dst_profile_map[v.ID] = x
+			} 
 		}
 	}
 	return nil
 }
 
 func (T *MigrateProfileTask) Main() (err error) {
+	T.folders_count = T.Report.Tally("Folders Analyzed")
+	T.files_count = T.Report.Tally("Files Analyzed")
+	T.files_copied = T.Report.Tally("Files Copied")
+	T.transfer_counter = T.Report.Tally("Total Transfered", HumanSize)
+
+	T.SRC.SetLimiter(T.KW.APIClient.GetLimit())
+	T.SRC.SetTransferLimiter(T.KW.APIClient.GetTransferLimit())
+
+	message := func() string {
+		return fmt.Sprintf("Working .. [ Folders Analyzed: %d | Files Analyzed: %d | Files Tranfered: %d(%s) ]", T.folders_count.Value(), T.files_count.Value(), T.files_copied.Value(),HumanSize(T.transfer_counter.Value()))
+	}
+
+	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
+	PleaseWait.Show()
+
+
 	var copy_users []KiteUser
 
 	split := strings.Split(T.input.user_emails[0], "@")
@@ -154,25 +176,33 @@ func (T *MigrateProfileTask) Main() (err error) {
 			break
 		}
 		for _, u := range users {
-			if T.input.delete_user_first {
-				Debug("Deleting %s", T.SwapEmails(u.Email))
-				user, err := T.KW.Admin().FindUser(T.SwapEmails(u.Email))
-				if err != nil {
-					return err
+			if !T.input.cleanup {
+				if T.input.delete_user_first {
+					Debug("Deleting %s", T.SwapEmails(u.Email))
+					user, err := T.KW.Admin().FindUser(T.SwapEmails(u.Email))
+					if err != nil {
+						return err
+					}
+					if T.SwapEmails(u.Email) != user.Email {
+						continue
+					}
+					params := SetParams(Query{"retainData": false, "deleteUnsharedData": true})
+					err = T.KW.Admin().DeleteUser(*user, params)
+					if err != nil {
+						return err
+					}
 				}
-				if T.SwapEmails(u.Email) != user.Email {
+
+				if _, ok := T.src_dst_profile_map[u.UserTypeID]; !ok {
+					Err("Could not find profile mapping for %s on destination system, skipping user.", u.Email)
 					continue
 				}
-				params := SetParams(Query{"retainData": false, "deleteUnsharedData": true})
-				err = T.KW.Admin().DeleteUser(*user, params)
-				if err != nil {
-					return err
-				}
-			}
-			if _, err := T.KW.Admin().NewUser(T.SwapEmails(u.Email), T.src_dst_profile_map[u.UserTypeID], true, false); err != nil {
-				if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
-					Err("Could not create users %s: %v, skipping user.", u, err)
-					continue
+
+				if _, err := T.KW.Admin().NewUser(T.SwapEmails(u.Email), T.src_dst_profile_map[u.UserTypeID], true, false); err != nil {
+					if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
+						Err("Could not create users %s: %v, skipping user.", u.Email, err)
+						continue
+					}
 				}
 			}
 			T.users[u.Email] = struct{}{}
@@ -234,6 +264,10 @@ func (T *MigrateProfileTask) CopyUser(src_user KiteUser) (err error) {
 
 	T.ProcessFolder(&migration_user, &src_folder)
 	T.limiter.Wait()
+
+	if T.input.deactivate_src_user {
+		err = T.SRC.Session(T.input.src_admin_user).Admin().DeactivateUser(src_user.ID)
+	}
 	return
 
 }
@@ -265,10 +299,22 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 	if folder.CurrentUserRole.ID != 5 || folder.Path == "basedir" {
 		return nil
 	}
-	dest_folder, err := migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).ResolvePath(folder.Path)
-	if err != nil {
-		return err
+	T.folders_count.Add(1)
+
+	var dest_folder KiteObject
+
+	if !T.input.cleanup {
+		dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).ResolvePath(folder.Path)
+		if err != nil {
+			return err
+		}
+	} else {
+		dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).Find(folder.Path)
+		if err != nil {
+			return err
+		}
 	}
+
 
 	children, err := migration_users.src_sess.Folder(folder.ID).Files()
 	if err != nil {
@@ -280,9 +326,19 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 		return err
 	}
 
-	err = T.SetPerms(migration_users, &dest_folder, members)
-	if err != nil {
-		return err
+	var new_member_list []KiteMember
+
+	for _, v := range members {
+		if !IsBlank(v.User.Email) {
+			new_member_list = append(new_member_list, v)
+		}
+	}
+
+	if !T.input.cleanup {
+		err = T.SetPerms(migration_users, &dest_folder, new_member_list)
+		if err != nil {
+			return err
+		}
 	}
 
 	dest_children, err := migration_users.dst_sess.Folder(dest_folder.ID).Files()
@@ -303,29 +359,51 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 		if f.Type != "f" {
 			continue
 		}
-		if IsBlank(f.ClientModified) {
-			f.ClientModified = f.Created
-		}
+		T.files_count.Add(1)
+		//if IsBlank(f.ClientModified) {
+			f.ClientModified = f.Modified
+		//}
 
 		if v, ok := file_map[f.Name]; ok {
 			Debug("%s->%s: [%d vs %d] [%v vs %v]", f.Name, v.Name, v.Size, f.Size, v.ClientModified, f.ClientModified)
 
 			if f.ClientModified == v.ClientModified {
 				if v.Size != f.Size {
+					if T.input.cleanup {
+						continue
+					}
 					Debug("%s: Deleting.", v.Name)
 					if err := migration_users.dst_sess.File(v.ID).Delete(); err != nil {
 						Err("%s: %v", v.Name, err)
 					}
 				} else {
-					Debug("%s: Skipping file, already uploaded.", f.Name)
+					if T.input.cleanup {
+						if v.ClientModified == f.ClientModified && v.Fingerprint == f.Fingerprint {
+							Debug("%s/%s: Deleting source as file is same on server.", v.Path, v.Name)
+							if err := migration_users.src_sess.File(f.ID).Delete(); err != nil {
+								Err("%s: %v", f.Name, err)
+							}
+							continue
+						}
+					} else {
+						Debug("%s: Skipping file, already uploaded.", f.Name)
+					}
 					continue
 				}
 			} else {
-				Debug("%s: Deleting.", v.Name)
-				if err := migration_users.dst_sess.File(v.ID).Delete(); err != nil {
-					Err("%s: %v", v.Name, err)
+				if T.input.cleanup {
+					Debug("%s: Deleting.", v.Name)
+					if err := migration_users.dst_sess.File(v.ID).Delete(); err != nil {
+						Err("%s: %v", v.Name, err)
+					}
 				}
 			}
+		}
+
+
+		// We don't copy any files on a cleanup run.
+		if T.input.cleanup {
+			continue
 		}
 
 		down, err := migration_users.src_sess.QDownload(&f)
@@ -341,7 +419,10 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 
 		_, err = migration_users.dst_sess.Upload(f.Name, f.Size, modtime, false, false, true, dest_folder, down)
 		if err != nil {
-			Err("%s: %s", f.Name, err.Error())
+			Err("[%s] %s: %s", migration_users.dst_sess.Username, f.Name, err.Error())
+		} else {
+			T.files_copied.Add(1)
+			T.transfer_counter.Add64(f.Size)
 		}
 	}
 

@@ -20,7 +20,7 @@ type FileInfo interface {
 
 type KiteMember struct {
 	ID     string         `json:"objectId"`
-	RoleID int            `json:"roleId`
+	RoleID int            `json:"roleId"`
 	User   KiteUser       `json:"user"`
 	Role   KitePermission `json:"role"`
 }
@@ -383,6 +383,15 @@ func (s kw_rest_admin) ActivateUser(userid int) (err error) {
 		Method: "PUT",
 		Path:   SetPath("/rest/admin/users/%d", userid),
 		Params: SetParams(PostJSON{"suspended": false, "verified": true, "deactivated": false}),
+	})
+	return
+}
+
+func (s kw_rest_admin) DeactivateUser(userid int) (err error) {
+	err = s.Call(APIRequest{
+		Method: "PUT",
+		Path:   SetPath("/rest/admin/users/%d", userid),
+		Params: SetParams(PostJSON{"suspended": true, "verified": true, "deactivated": false}),
 	})
 	return
 }
