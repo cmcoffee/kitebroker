@@ -1,12 +1,11 @@
 package core
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/mimebody"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"strconv"
@@ -186,79 +185,6 @@ func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 	}
 }
 
-// Multipart filestreamer
-type streamReadCloser struct {
-	chunkSize int64
-	size      int64
-	w_buff    *bytes.Buffer
-	source    io.ReadCloser
-	eof       bool
-	f_writer  io.Writer
-	mwrite    *multipart.Writer
-}
-
-// Dummy close function for requst.Body.
-func (s *streamReadCloser) Close() (err error) {
-	return nil
-}
-
-// Reads bytes from source, pushes through mimewriter to bytes.Buffer, and reads from bytes.Buffer.
-func (s *streamReadCloser) Read(p []byte) (n int, err error) {
-
-	// If we have stuff in our output buffer, read from there.
-	// If not, reset the bytes buffer and read from source.
-	if s.w_buff.Len() > 0 {
-		return s.w_buff.Read(p)
-	} else {
-		s.w_buff.Reset()
-	}
-
-	// We've reached the EOF, return to process.
-	if s.eof {
-		return 0, io.EOF
-	}
-
-	// Get length of incoming []byte slice.
-	p_len := int64(len(p))
-
-	if sz := s.chunkSize - s.size; sz > 0 {
-		if sz > p_len {
-			sz = p_len
-		}
-
-		// Read into the byte slice provided from source.
-		n, err := s.source.Read(p[0:sz])
-		if err != nil {
-			if err == io.EOF {
-				s.eof = true
-			} else {
-				return n, err
-			}
-		}
-
-		// We're writing to a bytes.Buffer.
-		_, err = s.f_writer.Write(p[0:n])
-		if err != nil {
-			return n, err
-		}
-
-		// Clear out the []byte slice provided.
-		for i := 0; i < n; i++ {
-			p[i] = 0
-		}
-
-		s.size = s.size + int64(n)
-	} else {
-		s.eof = true
-	}
-
-	// Close out the mime stream.
-	if s.eof {
-		s.mwrite.Close()
-	}
-
-	return s.w_buff.Read(p)
-}
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path ...string) (*KiteObject, error) {
@@ -316,13 +242,9 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 
 	transferred_bytes := upload_data.UploadedSize
 
-	w_buff := new(bytes.Buffer)
-
 	var resp_data *KiteObject
 
 	for transferred_bytes < total_bytes || total_bytes == 0 {
-		w_buff.Reset()
-
 		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI))
 		if err != nil {
 			return nil, err
@@ -332,10 +254,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 
 		Trace("[kiteworks]: %s", s.Username)
 		Trace("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
-
-		w := multipart.NewWriter(w_buff)
-
-		req.Header.Set("Content-Type", "multipart/form-data; boundary="+w.Boundary())
+		Trace("--> HEADER: Content-Type: [multipart/form-data]")
 
 		if ChunkIndex == upload_data.TotalChunks-1 {
 			q := req.URL.Query()
@@ -344,55 +263,26 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 			for k, v := range q {
 				Trace("\\-> QUERY: %s VALUE: %s", k, v)
 			}
-
 			req.URL.RawQuery = q.Encode()
 			ChunkSize = total_bytes - transferred_bytes
 		}
 
-		err = w.WriteField("compressionMode", "NORMAL")
-		if err != nil {
-			return nil, err
+		fields := make(map[string]string)
+		fields["compressionMode"] = "NORMAL"
+		fields["index"] = fmt.Sprintf("%d", ChunkIndex+1)
+		fields["compressionSize"] = fmt.Sprintf("%d", ChunkSize)
+		fields["originalSize"] = fmt.Sprintf("%d", ChunkSize)
+		
+		req.Body = iotimeout.NewReadCloser(src, s.RequestTimeout)
+		mimebody.ConvertFormFile(req, "content", filename, fields, ChunkSize)
+
+		for k, v := range fields {
+			Trace("\\-> FORM FIELD: %s=%s", k, v)
 		}
 
-		err = w.WriteField("index", fmt.Sprintf("%d", ChunkIndex+1))
-		if err != nil {
-			return nil, err
-		}
-
-		err = w.WriteField("compressionSize", fmt.Sprintf("%d", ChunkSize))
-		if err != nil {
-			return nil, err
-		}
-
-		err = w.WriteField("originalSize", fmt.Sprintf("%d", ChunkSize))
-		if err != nil {
-			return nil, err
-		}
-
-		f_writer, err := w.CreateFormFile("content", filename)
-		if err != nil {
-			return nil, err
-		}
-
-		Trace(w_buff.String())
-
-		post := &streamReadCloser{
-			ChunkSize,
-			0,
-			w_buff,
-			iotimeout.NewReadCloser(src, s.RequestTimeout),
-			false,
-			f_writer,
-			w,
-		}
-
-		req.Body = post
+		Trace("\\-> FORM DATA: name=\"content\"; filename=\"%s\"", filename)
 
 		resp, err := s.APIClient.SendRequest(s.Username, req)
-		if req.Body != nil {
-			req.Body.Close()
-		}
-
 		if err != nil {
 			return nil, err
 		}

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/mimebody"
 	"io"
 	"io/ioutil"
 	"net"
@@ -324,7 +325,10 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 		post_json PostJSON
 		query     Query
 		form      PostForm
+		mb        MimeBody
 	)
+
+	mb_set := false
 
 	process_vars := func(vars interface{}) {
 		switch x := vars.(type) {
@@ -352,6 +356,9 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 					form[key] = val
 				}
 			}
+		case MimeBody:
+			mb = x
+			mb_set = true
 		}
 	}
 
@@ -384,6 +391,9 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 	}
 	if form != nil {
 		output = append(output, form)
+	}
+	if mb_set {
+		output = append(output, mb)
 	}
 	return
 }
@@ -518,6 +528,14 @@ type PostForm map[string]interface{}
 
 // Add Query params to KWAPI request.
 type Query map[string]interface{}
+
+type MimeBody struct {
+	FieldName string
+	FileName string
+	Source   io.ReadCloser
+	AddFields map[string]string
+	Limit    int64
+}
 
 // Sets signature key.
 func (K *APIClient) Signature(signature_key string) {
@@ -797,6 +815,8 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 		Trace("--> HEADER: %s: %s", k, v)
 	}
 
+	skip_getBody := false
+
 	for _, in := range api_req.Params {
 		switch i := in.(type) {
 		case PostForm:
@@ -826,6 +846,19 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 				Trace("\\-> QUERY: %s=%s", k, q[k])
 			}
 			req.URL.RawQuery = q.Encode()
+		case MimeBody:
+			req.Body = i.Source
+			mimebody.ConvertFormFile(req, i.FieldName, i.FileName, i.AddFields, i.Limit)
+			skip_getBody = true
+			Trace("--> HEADER: Content-Type: [multipart/form-data]")
+			for k, v := range i.AddFields {
+				Trace("\\-> FORM FIELD: %s=%s", k, v)
+			}
+			if !IsBlank(i.FileName) {
+				Trace("\\-> FORM DATA: name=\"%s\"; filename=\"%s\"", i.FieldName, i.FileName)
+			} else {
+				Trace("\\-> FORM DATA: name=\"%s\"", i.FieldName)
+			}
 		case nil:
 			continue
 		default:
@@ -833,7 +866,9 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 		}
 	}
 
-	req.GetBody = GetBodyBytes(body)
+	if !skip_getBody {
+		req.GetBody = GetBodyBytes(body)
+	}
 
 	return s.Fulfill(api_req.Username, req, api_req.Output)
 }

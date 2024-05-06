@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"io"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
@@ -396,6 +397,14 @@ func (s kw_rest_admin) DeactivateUser(userid int) (err error) {
 	return
 }
 
+func (s kw_rest_admin) UpdateUser(userid int,params ...interface{}) (err error) {
+	return s.Call(APIRequest{
+		Method: "PUT",
+		Path: SetPath("/rest/admin/users/%d", userid),
+		Params: SetParams(params),
+	})
+}
+
 // Creates a new user on the system.
 func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify bool) (user *KiteUser, err error) {
 	err = s.Call(APIRequest{
@@ -439,6 +448,21 @@ func (s kw_rest_admin) GetAllUsers(params ...interface{}) (emails []string, err 
 	for _, u := range users {
 		emails = append(emails, u.Email)
 	}
+	return
+}
+
+
+func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, send_notification, partial_success bool) (err error) {
+	uexists := fmt.Sprintf("%v", update_if_exists)
+	snotify := fmt.Sprintf("%v", send_notification)
+	psuccess := fmt.Sprintf("%v", partial_success)
+
+	err = s.Call(APIRequest{
+		Version: 25,
+		Method: "POST",
+		Path: "/rest/admin/users/actions/import",
+		Params: SetParams(MimeBody{"content", "import_data.csv", csv, map[string]string{"updateIfExists": uexists, "sendNotification": snotify, "partialSuccess": psuccess}, -1}),
+	})
 	return
 }
 
@@ -739,6 +763,14 @@ func (s KWSession) MyQuota() (quota KiteQuota, err error) {
 		Output: &quota,
 	})
 	return
+}
+
+func (s KWSession) UpdateMobile(phone string) (err error) {
+	return s.Call(APIRequest{
+		Method: "PUT",
+		Path: "/rest/users/me/mobileNumber",
+		Params: SetParams(PostJSON{"mobileNumber": phone}),
+	})
 }
 
 // Get total count of users.

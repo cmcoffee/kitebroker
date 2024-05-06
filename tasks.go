@@ -28,4 +28,5 @@ func init() {
 	command.RegisterAdmin(new(admin.MetadataTask))
 	command.RegisterAdmin(new(admin.FolderReportTask))
 	command.RegisterAdmin(new(sftp_gw.SFTPGWTask))
+	command.RegisterAdmin(new(admin.UserInfoTask))
 }
