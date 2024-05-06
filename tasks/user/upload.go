@@ -3,8 +3,8 @@ package user
 import (
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"io/ioutil"
 	"io/fs"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"

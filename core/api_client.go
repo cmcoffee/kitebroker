@@ -531,10 +531,10 @@ type Query map[string]interface{}
 
 type MimeBody struct {
 	FieldName string
-	FileName string
-	Source   io.ReadCloser
+	FileName  string
+	Source    io.ReadCloser
 	AddFields map[string]string
-	Limit    int64
+	Limit     int64
 }
 
 // Sets signature key.

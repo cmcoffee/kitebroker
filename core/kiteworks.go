@@ -3,12 +3,12 @@ package core
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"reflect"
 	"strings"
 	"sync/atomic"
 	"time"
-	"io"
 )
 
 var ErrNotFound = errors.New("Requested item not found.")
@@ -397,10 +397,10 @@ func (s kw_rest_admin) DeactivateUser(userid int) (err error) {
 	return
 }
 
-func (s kw_rest_admin) UpdateUser(userid int,params ...interface{}) (err error) {
+func (s kw_rest_admin) UpdateUser(userid int, params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PUT",
-		Path: SetPath("/rest/admin/users/%d", userid),
+		Path:   SetPath("/rest/admin/users/%d", userid),
 		Params: SetParams(params),
 	})
 }
@@ -451,7 +451,6 @@ func (s kw_rest_admin) GetAllUsers(params ...interface{}) (emails []string, err 
 	return
 }
 
-
 func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, send_notification, partial_success bool) (err error) {
 	uexists := fmt.Sprintf("%v", update_if_exists)
 	snotify := fmt.Sprintf("%v", send_notification)
@@ -459,9 +458,9 @@ func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, s
 
 	err = s.Call(APIRequest{
 		Version: 25,
-		Method: "POST",
-		Path: "/rest/admin/users/actions/import",
-		Params: SetParams(MimeBody{"content", "import_data.csv", csv, map[string]string{"updateIfExists": uexists, "sendNotification": snotify, "partialSuccess": psuccess}, -1}),
+		Method:  "POST",
+		Path:    "/rest/admin/users/actions/import",
+		Params:  SetParams(MimeBody{"content", "import_data.csv", csv, map[string]string{"updateIfExists": uexists, "sendNotification": snotify, "partialSuccess": psuccess}, -1}),
 	})
 	return
 }
@@ -768,7 +767,7 @@ func (s KWSession) MyQuota() (quota KiteQuota, err error) {
 func (s KWSession) UpdateMobile(phone string) (err error) {
 	return s.Call(APIRequest{
 		Method: "PUT",
-		Path: "/rest/users/me/mobileNumber",
+		Path:   "/rest/users/me/mobileNumber",
 		Params: SetParams(PostJSON{"mobileNumber": phone}),
 	})
 }

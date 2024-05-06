@@ -10,17 +10,17 @@ import (
 type MigrateProfileTask struct {
 	// input variables
 	input struct {
-		dst_profile_id    int
-		src_profile_id    int
-		src_admin_user    string
-		src_server        string
-		src_appid         string
-		src_secret        string
-		src_sig           string
-		src_redirect      string
-		user_emails       []string
-		delete_user_first bool
-		cleanup			  bool
+		dst_profile_id      int
+		src_profile_id      int
+		src_admin_user      string
+		src_server          string
+		src_appid           string
+		src_secret          string
+		src_sig             string
+		src_redirect        string
+		user_emails         []string
+		delete_user_first   bool
+		cleanup             bool
 		deactivate_src_user bool
 	}
 	old_domain          string
@@ -28,8 +28,8 @@ type MigrateProfileTask struct {
 	SRC                 KWAPI
 	users               map[string]struct{}
 	limiter             LimitGroup
-	folders_count      Tally
-	files_count        Tally
+	folders_count       Tally
+	files_count         Tally
 	files_copied        Tally
 	transfer_counter    Tally
 	src_dst_profile_map map[int]int
@@ -111,7 +111,7 @@ func (T *MigrateProfileTask) MapProfiles() (err error) {
 		for _, v := range src_profiles {
 			if x, ok := dst_profile_map[strings.ToLower(v.Name)]; ok {
 				T.src_dst_profile_map[v.ID] = x
-			} 
+			}
 		}
 	}
 	return nil
@@ -127,12 +127,11 @@ func (T *MigrateProfileTask) Main() (err error) {
 	T.SRC.SetTransferLimiter(T.KW.APIClient.GetTransferLimit())
 
 	message := func() string {
-		return fmt.Sprintf("Working .. [ Folders Analyzed: %d | Files Analyzed: %d | Files Tranfered: %d(%s) ]", T.folders_count.Value(), T.files_count.Value(), T.files_copied.Value(),HumanSize(T.transfer_counter.Value()))
+		return fmt.Sprintf("Working .. [ Folders Analyzed: %d | Files Analyzed: %d | Files Tranfered: %d(%s) ]", T.folders_count.Value(), T.files_count.Value(), T.files_copied.Value(), HumanSize(T.transfer_counter.Value()))
 	}
 
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
-
 
 	var copy_users []KiteUser
 
@@ -315,7 +314,6 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 		}
 	}
 
-
 	children, err := migration_users.src_sess.Folder(folder.ID).Files()
 	if err != nil {
 		return err
@@ -361,7 +359,7 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 		}
 		T.files_count.Add(1)
 		//if IsBlank(f.ClientModified) {
-			f.ClientModified = f.Modified
+		f.ClientModified = f.Modified
 		//}
 
 		if v, ok := file_map[f.Name]; ok {
@@ -399,7 +397,6 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 				}
 			}
 		}
-
 
 		// We don't copy any files on a cleanup run.
 		if T.input.cleanup {

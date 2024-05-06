@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
+	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
-	. "github.com/cmcoffee/kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +14,7 @@ import (
 
 const (
 	APPNAME = "kitebroker"
-	VERSION = "24.05.05"
+	VERSION = "24.05.06"
 )
 
 const (

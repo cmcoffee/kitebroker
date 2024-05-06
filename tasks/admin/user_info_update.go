@@ -1,13 +1,13 @@
 package admin
 
 import (
+	"bytes"
+	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/csvp"
-	"os"
-	"fmt"
-	"strings"
-	"bytes"
 	"io/ioutil"
+	"os"
+	"strings"
 )
 
 type UserInfoTask struct {
@@ -85,7 +85,7 @@ func (T *UserInfoTask) Main() (err error) {
 
 		Log("Updating user info for: %s <%s> - ph: %s", name, email, phone)
 		T.buffer.WriteString("email,name,user_type_id,mobile_number\n")
-		T.buffer.WriteString(fmt.Sprintf("%s,%s,,%s\n", email,name,phone))
+		T.buffer.WriteString(fmt.Sprintf("%s,%s,,%s\n", email, name, phone))
 
 		return nil
 	}

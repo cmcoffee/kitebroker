@@ -1,9 +1,9 @@
 package core
 
 import (
-	"net/http"
 	"crypto/tls"
 	"fmt"
+	"net/http"
 	"net/url"
 )
 

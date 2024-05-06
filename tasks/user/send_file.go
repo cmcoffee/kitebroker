@@ -1,21 +1,21 @@
 package user
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
 	"fmt"
+	. "github.com/cmcoffee/kitebroker/core"
 )
 
 // Object for task.
 type SendFileTask struct {
 	in struct {
-		to []string
-		cc []string
-		bcc []string
+		to          []string
+		cc          []string
+		bcc         []string
 		expire_days int
-		subj string
-		body string
-		empty bool
-		src []string
+		subj        string
+		body        string
+		empty       bool
+		src         []string
 	}
 	KiteBrokerTask
 }
@@ -41,7 +41,7 @@ func (T *SendFileTask) Init() (err error) {
 	T.Flags.StringVar(&T.in.body, "body", "<message body>", "Body of send file email.")
 	T.Flags.MultiVar(&T.in.src, "src", "<folder/file>", "Folder or file you wish to send.")
 	T.Flags.BoolVar(&T.in.empty, "allow_empty", "Allow email to be sent without files.")
-	T.Flags.Order("to","cc","bcc","subj","body")
+	T.Flags.Order("to", "cc", "bcc", "subj", "body")
 
 	err = T.Flags.Parse()
 	if err != nil {

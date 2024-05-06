@@ -20,7 +20,7 @@ type Database interface {
 }
 
 var (
-	ResetDB = kvlite.CryptReset
+	ResetDB       = kvlite.CryptReset
 	ErrBadPadlock = kvlite.ErrBadPadlock
 )
 

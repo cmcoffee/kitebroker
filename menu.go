@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/snugforge/eflag"
 	. "github.com/cmcoffee/kitebroker/core"
+	"github.com/cmcoffee/snugforge/eflag"
 	"os"
 	"runtime"
 	"strings"

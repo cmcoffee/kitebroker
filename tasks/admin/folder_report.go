@@ -1,8 +1,8 @@
 package admin
 
 import (
-	"strings"
 	. "github.com/cmcoffee/kitebroker/core"
+	"strings"
 )
 
 type FolderReportTask struct {
@@ -46,24 +46,24 @@ func (T *FolderReportTask) Main() (err error) {
 			break
 		}
 		for _, user := range users {
-				sess := T.KW.Session(user.Email)
-				var folders []*KiteObject
-				if err := sess.DataCall(APIRequest{
-					Method: "GET",
-					Path:   "/rest/folders/top",
-					Params: SetParams(Query{"deleted": false, "with": "(currentUserRole)"}),
-					Output: &folders,
-				}, -1, 1000); err != nil {
-					Err("%s: %v", user.Email, err)
+			sess := T.KW.Session(user.Email)
+			var folders []*KiteObject
+			if err := sess.DataCall(APIRequest{
+				Method: "GET",
+				Path:   "/rest/folders/top",
+				Params: SetParams(Query{"deleted": false, "with": "(currentUserRole)"}),
+				Output: &folders,
+			}, -1, 1000); err != nil {
+				Err("%s: %v", user.Email, err)
+				continue
+			}
+			for _, v := range folders {
+				// Only process folders this user owns.
+				if v.CurrentUserRole.ID != 5 {
 					continue
 				}
-				for _, v := range folders {
-					// Only process folders this user owns.
-					if v.CurrentUserRole.ID != 5 {
-							continue
-					} 
-					T.ProcessFolder(&sess, &user, v)
-				}
+				T.ProcessFolder(&sess, &user, v)
+			}
 		}
 	}
 	return

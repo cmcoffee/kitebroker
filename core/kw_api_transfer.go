@@ -63,8 +63,6 @@ type web_downloader struct {
 	request_timeout time.Duration
 }
 
-
-
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
 		W.req = W.reqs[0]
@@ -185,7 +183,6 @@ func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 	}
 }
 
-
 // Uploads file from specific local path, uploads in chunks, allows resume.
 func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path ...string) (*KiteObject, error) {
 	if s.trans_limiter != nil {
@@ -272,7 +269,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		fields["index"] = fmt.Sprintf("%d", ChunkIndex+1)
 		fields["compressionSize"] = fmt.Sprintf("%d", ChunkSize)
 		fields["originalSize"] = fmt.Sprintf("%d", ChunkSize)
-		
+
 		req.Body = iotimeout.NewReadCloser(src, s.RequestTimeout)
 		mimebody.ConvertFormFile(req, "content", filename, fields, ChunkSize)
 
@@ -397,12 +394,21 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	var uid int
 
 	if uploads.Get(target, &UploadRecord) {
-		if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
-			Debug("Error attempting to resume file %s: %s", filename, err.Error())
-			delete_upload(target)
-		} else {
-			uploads.Unset(target)
-			return output, err
+		err_counter := 0
+		for {
+			if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
+				Debug("Error attempting to resume file %s: %s", filename, err.Error())
+				if (!IsAPIError(err) || s.isRetryError(err)) && err_counter < 3 {
+					s.BackoffTimer(uint(error_counter))
+					err_counter++
+					continue
+				}
+				delete_upload(target)
+				break
+			} else {
+				uploads.Unset(target)
+				return output, err
+			}
 		}
 	}
 
@@ -470,7 +476,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	return
 }
 
-//Quiet Download
+// Quiet Download
 func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
@@ -559,7 +565,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	if fstat != nil {
 		offset, err := dst.Seek(fstat.Size(), 0)
 		if err != nil {
-            dst.Close()
+			dst.Close()
 			return err
 		}
 		_, err = f.Seek(offset, 0)
@@ -578,19 +584,19 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		if err != nil {
 			if file.AdminQuarantineStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
-                dst.Close()
+				dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
 			if file.AVStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
-                dst.Close()
+				dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
 			if file.DLPStatus != "allowed" {
 				Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
-                dst.Close()
+				dst.Close()
 				os.Remove(tmp_file_name)
 				return nil
 			}
@@ -598,7 +604,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		}
 	}
 
-    dst.Close()
+	dst.Close()
 	err = Rename(tmp_file_name, dest_file)
 	if err != nil {
 		return err

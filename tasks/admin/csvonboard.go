@@ -24,14 +24,14 @@ var folder_perms = map[string]int{
 type CSVOnboardTask struct {
 	// input variables
 	input struct {
-		csv_file  string
-		manager   string
-		out_path  string
-		subscribe bool
+		csv_file              string
+		manager               string
+		out_path              string
+		subscribe             bool
 		restricted_profile_id int
-		internal_domains []string
-		downgrade_external bool
-		notify bool
+		internal_domains      []string
+		downgrade_external    bool
+		notify                bool
 	}
 	users_added  map[string]interface{}
 	user_count   Tally
@@ -73,8 +73,7 @@ func (T *CSVOnboardTask) Init() (err error) {
 	return
 }
 
-
-func (T *CSVOnboardTask) IsInternal(user string) (bool) {
+func (T *CSVOnboardTask) IsInternal(user string) bool {
 	lc_user := strings.ToLower(user)
 	split := strings.Split(lc_user, "@")
 	if len(split) < 2 {
@@ -85,7 +84,6 @@ func (T *CSVOnboardTask) IsInternal(user string) (bool) {
 	}
 	return false
 }
-
 
 func (T *CSVOnboardTask) CreateRestrictedUser(user string) (err error) {
 	T.user_lock.Lock()
@@ -106,7 +104,6 @@ func (T *CSVOnboardTask) CreateRestrictedUser(user string) (err error) {
 	T.users_added[lc_user] = struct{}{}
 	return nil
 }
-
 
 func (T *CSVOnboardTask) LookupFolder(path string) (string, error) {
 	T.record_lock.Lock()
@@ -157,18 +154,17 @@ func (T *CSVOnboardTask) AddUsersToFolder(path, permission string, users []strin
 		return
 	}
 
-
 	if len(T.input.internal_domains) > 0 {
 		var (
 			int_users []string
 			ext_users []string
 		)
-		
+
 		for _, user := range users {
 			if T.IsInternal(user) {
 				int_users = append(int_users, user)
 			} else {
-				if  T.input.restricted_profile_id > 0 {
+				if T.input.restricted_profile_id > 0 {
 					if e := T.CreateRestrictedUser(user); e != nil {
 						Err(e.Error())
 						continue
