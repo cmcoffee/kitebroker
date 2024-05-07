@@ -138,14 +138,14 @@ func (T *FolderUploadTask) Main() (err error) {
 			T.file_count.Add(1)
 			T.upload_wg.Add(1)
 			go func(up *upload) {
-				retry := T.KW.InitRetry(T.KW.Username, fmt.Sprintf("%s/%s", up.dest, up.finfo.Name()))
+				retry := T.KW.InitRetry(T.KW.Username, fmt.Sprintf("%s/%s", up.dest.Name, up.finfo.Name()))
 				defer T.upload_wg.Done()
 				for {
 					if err := T.UploadFile(up.path, up.finfo, up.dest); err != nil {
 						if retry.CheckForRetry(err) {
 							continue
 						}
-						Err("%s[%s]: %v", up.path, up.dest.ID, err)
+						Err("(%s) Unexpected error while uploading %s/%s: %s", T.KW.Username, up.path, up.finfo.Name(), err.Error())
 						T.file_count.Del(1)
 					}
 					return

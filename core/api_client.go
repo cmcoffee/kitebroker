@@ -53,16 +53,16 @@ type APIRetryEngine struct {
 	attempt uint
 	uid     string
 	user    string
-	dest    string
+	task    string
 }
 
-func (s APIClient) InitRetry(user string, dest string) *APIRetryEngine {
+func (s APIClient) InitRetry(username string, task_description string) *APIRetryEngine {
 	return &APIRetryEngine{
 		s,
 		0,
 		string(RandBytes(8)),
-		user,
-		dest,
+		username,
+		task_description,
 	}
 }
 
@@ -72,13 +72,13 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 
 	if err == nil {
 		if a.attempt > 0 {
-			Debug("[#%s]: success!! (retry %d/%d)", a.uid, a.attempt, a.api.Retries)
+			Debug("[#%s]: %s -> %v: success!! (retry %d/%d)", a.uid, a.user, a.task, a.attempt, a.api.Retries)
 		}
 		return false
 	}
 
 	if a.attempt > a.api.Retries {
-		Debug("[#%s]: %s -> %s: %s (exhausted retries)", a.uid, a.user, a.dest, err.Error())
+		Debug("[#%s] %s -> %v: %s (exhausted retries)", a.uid, a.user, a.task, err.Error())
 		return false
 	}
 
@@ -94,10 +94,10 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 	if flag.Has(_is_token_error | _is_retry_error) {
 		if a.attempt == 0 {
 			if a.api.Retries > 0 {
-				Debug("[#%s]: %s -> %s: %s (will retry)", a.uid, a.user, a.dest, err.Error())
+				Debug("[#%s] %s -> %s: %s (will retry)", a.uid, a.user, a.task, err.Error())
 			}
 		} else {
-			Debug("[#%s]: %s (retry %d/%d)", a.uid, err.Error(), a.attempt, a.api.Retries)
+			Debug("[#%s] %s -> %s: %s (retry %d/%d)", a.uid, a.user, a.task, err.Error(), a.attempt, a.api.Retries)
 		}
 	}
 

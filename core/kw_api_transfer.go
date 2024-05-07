@@ -372,6 +372,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		ClientModified time.Time
 		Size           int64
 		Created        time.Time
+		Attempts       uint
 	}
 
 	target := fmt.Sprintf("%s:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
@@ -394,21 +395,18 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	var uid int
 
 	if uploads.Get(target, &UploadRecord) {
-		err_counter := 0
-		for {
-			if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
+		if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
+			if (!s.KWAPI.APIClient.isRetryError(err) && !s.KWAPI.APIClient.isTokenError(s.Username, err)) || (UploadRecord.Attempts > s.Retries) {
 				Debug("Error attempting to resume file %s: %s", filename, err.Error())
-				if (!IsAPIError(err) || s.isRetryError(err)) && err_counter < 3 {
-					s.BackoffTimer(uint(error_counter))
-					err_counter++
-					continue
-				}
 				delete_upload(target)
-				break
 			} else {
-				uploads.Unset(target)
-				return output, err
+				UploadRecord.Attempts++
+				uploads.Set(target, &UploadRecord)
 			}
+			return nil, err
+		} else {
+			uploads.Unset(target)
+			return output, err
 		}
 	}
 

@@ -65,7 +65,7 @@ func (C APIClient) isRetryError(err error) bool {
 	if C.RetryErrorCodes != nil {
 		return IsAPIError(err, C.RetryErrorCodes[0:]...)
 	} else {
-		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR", "HTTP_STATUS_503", "HTTP_STATUS_502")
+		return IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR", "HTTP_STATUS_503", "HTTP_STATUS_502", "HTTP_STATUS_500")
 	}
 	return false
 }
