@@ -226,7 +226,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 	}
 	ChunkIndex := upload_data.UploadedChunks
 
-	src := transferMonitor(filename, total_bytes, leftToRight, source_reader, path...)
+	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader, path...)
 	defer src.Close()
 
 	if ChunkIndex > 0 {
@@ -510,7 +510,7 @@ func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
 
 	err = s.SetToken(s.Username, req)
 
-	return transferMonitor(file.Name, file.Size, rightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
+	return TransferMonitor(file.Name, file.Size, RightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
 }
 
 // Kiteworks File Download to Local File

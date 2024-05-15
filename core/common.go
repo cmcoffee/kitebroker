@@ -10,8 +10,6 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 	"github.com/cmcoffee/snugforge/swapreader"
 	"github.com/cmcoffee/snugforge/xsync"
-	//"github.com/cmcoffee/snugforge/kvlite"
-	//"github.com/cmcoffee/snugforge/options"
 	"bytes"
 	"io"
 	"io/ioutil"
@@ -191,15 +189,15 @@ var (
 	FormatPath      = filepath.FromSlash  // Convert to standard path with *nix style delimiters.
 	GetPath         = filepath.ToSlash    // Conver to OS specific path with correct slash delimiters.
 	Info            = nfo.Aux             // Log as standrd INFO
-	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.
-	NopReadSeekCloser = nfo.NopReadSeekCloser
+	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.      
 )
 
 var (
-	transferMonitor = nfo.TransferMonitor
-	leftToRight     = nfo.LeftToRight // Transfer Monitor Direction
-	rightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
-	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
+	TransferMonitor = nfo.TransferMonitor
+	LeftToRight     = nfo.LeftToRight // Transfer Monitor Direction
+	RightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
+	NoRate          = nfo.NoRate      // Transfer Monitor ProgressBar
+	NopSeekCloser   = nfo.NopSeekCloser
 )
 
 var (

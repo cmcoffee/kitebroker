@@ -371,6 +371,14 @@ func (s KWSession) Admin() kw_rest_admin {
 	return kw_rest_admin{&s}
 }
 
+func (s kw_rest_admin) Activities(offset int, limit int, params ...interface{}) (err error) {
+	return s.DataCall(APIRequest{
+		Method: "GET",
+		Path: "/rest/admin/activities",
+		Params: SetParams(params[0:]...),
+	}, offset, limit)
+}
+
 func (s kw_rest_admin) Register(email string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",

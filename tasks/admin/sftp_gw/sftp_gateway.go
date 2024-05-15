@@ -2,7 +2,7 @@ package sftp_gw
 
 import (
 	. "github.com/cmcoffee/kitebroker/core"
-	//"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh"
 	//"net"
 )
 
@@ -15,16 +15,45 @@ type SFTPGWTask struct {
 	KiteBrokerTask
 }
 
+type SSHServ struct {
+	KW KWSession
+	server_conf ssh.ServerConfig
+}
+
+
+func (S *SSHServ) PasswordCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+	user, err := S.KW.Admin().FindUser(conn.User())
+	if err != nil {
+		return nil, err
+	}
+	Log(user)
+	return nil, nil
+}
+
+func (S *SSHServ) PublicKeyCallback(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+	user, err := S.KW.Admin().FindUser(conn.User())
+	if err != nil {
+		return nil, err
+	}
+	Log(user)
+	return nil, nil
+}
+
+func (S *SSHServ) ConfigureServer(admin KWSession) {
+	S.KW = admin
+	S.server_conf.PasswordCallback = S.PasswordCallback
+}
+
 func (T SFTPGWTask) New() Task {
 	return new(SFTPGWTask)
 }
 
-func (T SFTPGWTask) Name() string {
-	return "sftp_gateway"
+func (T SFTPGWTask) Name() (string) {
+	return "sftp_gw"
 }
 
-func (T SFTPGWTask) Desc() string {
-	return "" // Incomplete
+func (T *SFTPGWTask) Desc() (string) {
+	return ""
 }
 
 func (T *SFTPGWTask) Init() (err error) {
@@ -38,6 +67,5 @@ func (T *SFTPGWTask) Init() (err error) {
 }
 
 func (T *SFTPGWTask) Main() (err error) {
-	// Main function
 	return nil
 }

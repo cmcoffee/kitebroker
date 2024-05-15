@@ -10,12 +10,13 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	_ "embed"
 )
 
-const (
-	APPNAME = "kitebroker"
-	VERSION = "24.05.06"
-)
+const APPNAME = "kitebroker"
+//go:embed version.txt
+var VERSION string
+
 
 const (
 	SIGNATURE_AUTH = iota
@@ -104,6 +105,7 @@ func main() {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")
 	}
 	flags.BoolVar(&global.gen_token, "auth_token_only", "Returns the generated auth token, then exits.")
+	update := flags.Bool("update", fmt.Sprintf("Checks for newer version of %s.", APPNAME))
 
 	flags.Order("task", "new_task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
@@ -120,6 +122,11 @@ func main() {
 		Stdout("### %s v%s ###", APPNAME, VERSION)
 		Stdout("\n")
 		Stdout("Written by Craig M. Coffee. (craig@snuglab.com)")
+		Exit(0)
+	}
+
+	if *update {
+		update_init()
 		Exit(0)
 	}
 
