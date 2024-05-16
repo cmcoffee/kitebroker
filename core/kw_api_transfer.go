@@ -207,7 +207,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		Output: &upload_data,
 	})
 	if err != nil {
-		return nil, err
+		return nil, ErrNoUploadID
 	}
 
 	if upload_data.Finished {
@@ -374,7 +374,6 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		ClientModified time.Time
 		Size           int64
 		Created        time.Time
-		Attempts       uint
 	}
 
 	target := fmt.Sprintf("%s:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
@@ -398,34 +397,14 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 
 	if uploads.Get(target, &UploadRecord) {
 		if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
-			if (!s.KWAPI.APIClient.isRetryError(err) && !s.KWAPI.APIClient.isTokenError(s.Username, err)) || (UploadRecord.Attempts > s.Retries) {
-				Debug("Error attempting to resume file %s: %s", filename, err.Error())
-				delete_upload(target)
-			} else {
-				UploadRecord.Attempts++
-				uploads.Set(target, &UploadRecord)
-			}
+			Debug("Error attempting to resume file %s: %s", filename, err.Error())
+			delete_upload(target)
 			return nil, err
 		} else {
 			uploads.Unset(target)
 			return output, err
 		}
 	}
-
-	//	var kw_file_info KiteObject
-
-	//	if flags.Has(IsFile) {
-	//		kw_file_info = dst
-	//dst, err = s.Folder("0").Find(dst.Path)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//} else {
-	//	kw_file_info, err = s.Folder(dst.ID).Find(filename)
-	//	if err != nil && err != ErrNotFound {
-	//		return nil, err
-	//	}
-	//}
 
 	if flags.Has(IsFile) {
 		modified, _ := ReadKWTime(dst.ClientModified)

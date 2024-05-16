@@ -63,7 +63,7 @@ func (T *UserInfoTask) Main() (err error) {
 		input = strings.ReplaceAll(input, ".", "")
 		if !strings.HasPrefix(input, "+") {
 			input = fmt.Sprintf("+1-%s", input)
-		} 
+		}
 		return input
 	}
 

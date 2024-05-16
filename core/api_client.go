@@ -49,20 +49,22 @@ const (
 )
 
 type APIRetryEngine struct {
-	api     APIClient
-	attempt uint
-	uid     string
-	user    string
-	task    string
+	api                     APIClient
+	attempt                 uint
+	uid                     string
+	user                    string
+	task                    string
+	addtl_retry_error_codes []string
 }
 
-func (s APIClient) InitRetry(username string, task_description string) *APIRetryEngine {
+func (s APIClient) InitRetry(username string, task_description string, addtl_retry_error_codes ...string) *APIRetryEngine {
 	return &APIRetryEngine{
 		s,
 		0,
 		string(RandBytes(8)),
 		username,
 		task_description,
+		addtl_retry_error_codes,
 	}
 }
 
@@ -86,7 +88,7 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 		flag.Set(_is_token_error)
 		flag.Set(_is_retry_error)
 	} else {
-		if a.api.isRetryError(err) || !IsAPIError(err) {
+		if a.api.isRetryError(err) || !IsAPIError(err) || (len(a.addtl_retry_error_codes) > 0 && IsAPIError(err, a.addtl_retry_error_codes[0:]...)) {
 			flag.Set(_is_retry_error)
 		}
 	}

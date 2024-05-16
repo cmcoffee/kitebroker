@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,7 +11,6 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 	"github.com/cmcoffee/snugforge/swapreader"
 	"github.com/cmcoffee/snugforge/xsync"
-	"bytes"
 	"io"
 	"io/ioutil"
 	"os"
@@ -189,7 +189,7 @@ var (
 	FormatPath      = filepath.FromSlash  // Convert to standard path with *nix style delimiters.
 	GetPath         = filepath.ToSlash    // Conver to OS specific path with correct slash delimiters.
 	Info            = nfo.Aux             // Log as standrd INFO
-	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.      
+	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.
 )
 
 var (

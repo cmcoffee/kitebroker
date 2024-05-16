@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/eflag"
@@ -10,13 +11,12 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	_ "embed"
 )
 
 const APPNAME = "kitebroker"
+
 //go:embed version.txt
 var VERSION string
-
 
 const (
 	SIGNATURE_AUTH = iota

@@ -1,20 +1,20 @@
 package main
 
 import (
-	"net/http"
-	"net/url"
 	"crypto/tls"
-	"strings"
 	"fmt"
 	. "github.com/cmcoffee/kitebroker/core"
-	"github.com/cmcoffee/snugforge/options"
 	"github.com/cmcoffee/snugforge/iotimeout"
-	"time"
-	"io/ioutil"
-	"strconv"
-	"runtime"
-	"os"
+	"github.com/cmcoffee/snugforge/options"
 	"io"
+	"io/ioutil"
+	"net/http"
+	"net/url"
+	"os"
+	"runtime"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const update_server = "dist.snuglab.com"
@@ -103,7 +103,7 @@ func update_self(new_version string) {
 
 	var (
 		final_msg string
-	    dest_file string
+		dest_file string
 	)
 
 	if current_os == "windows" {
@@ -112,7 +112,7 @@ func update_self(new_version string) {
 		dest_file = NormalizePath(fmt.Sprintf("%s/%s", global.root, new_file_name))
 		final_msg = fmt.Sprintf("\nUpdate downloaded as %s.", dest_file)
 	} else {
-		dest_file = NormalizePath(fmt.Sprintf("%s/%s", global.root, global.exec_name)) 
+		dest_file = NormalizePath(fmt.Sprintf("%s/%s", global.root, global.exec_name))
 		final_msg = fmt.Sprintf("\n%s has been updated to the latest version: %s", APPNAME, new_version)
 	}
 
@@ -124,19 +124,18 @@ func update_self(new_version string) {
 	return
 }
 
-
 func http_get(target string) (*http.Response, error) {
 	var (
 		transport http.Transport
 		proxy_url *url.URL
-		err error
+		err       error
 	)
 
 	if proxy := global.cfg.Get("configuration", "proxy_uri"); !IsBlank(proxy) {
 		proxy_url, err = url.Parse(strings.Join([]string{proxy}, ""))
 		if err != nil {
 			return nil, err
-		} 
+		}
 	}
 
 	// Harvest proxy settings from admin.py.
