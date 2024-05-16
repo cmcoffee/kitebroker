@@ -25,8 +25,8 @@ func update_init() {
 		Log("### %s - Update Available!! ###\n\n", APPNAME)
 		Log(" Local Version:\t%s", VERSION)
 		Log("Remote Version:\t%s\n\n", version)
-		if val := options.PromptBool("Perform update to the latest version?", true); val {
-			update_self()
+		if val := options.PromptBool("Download latest version?", true); val {
+			update_self(version)
 		}
 	} else {
 		Log("%s is already at the latest version: %s.", APPNAME, VERSION)
@@ -65,43 +65,62 @@ func check_for_update() (bool, string) {
 }
 
 // Perform self update.
-func update_self() {
+func update_self(new_version string) {
 	defer Exit(0)
 
-	update_server := "dist.snuglab.com"
-	build := fmt.Sprintf("%s-%s", runtime.GOOS, runtime.GOARCH)
+	current_os := runtime.GOOS
 
-	resp, err := http_get(fmt.Sprintf("https://%s/kitebroker/%s/%s", update_server, build, os.Args[0]))
+	update_server := "dist.snuglab.com"
+	build := fmt.Sprintf("%s-%s", current_os, runtime.GOARCH)
+
+	resp, err := http_get(fmt.Sprintf("https://%s/kitebroker/%s/%s", update_server, build, global.exec_name))
 	if err != nil {
 		Fatal(err)
 	}
 	defer resp.Body.Close()
 
-	file_name := fmt.Sprintf("%s.%s", os.Args[0], build)
-	dest_file_name := fmt.Sprintf("%s/%s.incomplete", global.root, file_name)
+	temp_file_name := NormalizePath(fmt.Sprintf("%s/%s.incomplete", global.root, fmt.Sprintf("%s.%s", global.exec_name, build)))
 
-	os.Remove(dest_file_name)
+	os.Remove(temp_file_name)
 
-	f, err := os.OpenFile(dest_file_name, os.O_CREATE|os.O_RDWR, 0775)
+	f, err := os.OpenFile(temp_file_name, os.O_CREATE|os.O_RDWR, 0775)
 	Critical(err)
-
-	Defer(func() { os.Remove(dest_file_name) })
 
 	// If the filesize is different, online version is different.
 	Log("\nDownloading latest %s update from %s...", APPNAME, update_server)
-	src := TransferMonitor(file_name, resp.ContentLength, RightToLeft, NopSeekCloser(iotimeout.NewReadCloser(resp.Body, time.Minute)))
+	src := TransferMonitor("Download Update", resp.ContentLength, RightToLeft, NopSeekCloser(iotimeout.NewReadCloser(resp.Body, time.Minute)))
 
-	io.Copy(f, src)
+	Defer(func() { os.Remove(temp_file_name) })
+
+	_, err = io.Copy(f, src)
+	if err != nil {
+		Critical(err)
+	}
 
 	f.Close()
 	resp.Body.Close()
 	src.Close()
 
-	if err = os.Rename(dest_file_name, fmt.Sprintf("%s/%s", global.root, os.Args[0])); err != nil {
+	var (
+		final_msg string
+	    dest_file string
+	)
+
+	if current_os == "windows" {
+		file_name := strings.Split(global.exec_name, ".")
+		new_file_name := fmt.Sprintf("%s-%s.%s", file_name[0], new_version, file_name[1])
+		dest_file = NormalizePath(fmt.Sprintf("%s/%s", global.root, new_file_name))
+		final_msg = fmt.Sprintf("\nUpdate downloaded as %s.", dest_file)
+	} else {
+		dest_file = NormalizePath(fmt.Sprintf("%s/%s", global.root, global.exec_name)) 
+		final_msg = fmt.Sprintf("\n%s has been updated to the latest version: %s", APPNAME, new_version)
+	}
+
+	if err = os.Rename(temp_file_name, dest_file); err != nil {
 		Fatal(err)
 	}
 
-	Log("\n%s has been updated to the latest version.", APPNAME)
+	Log(final_msg)
 	return
 }
 

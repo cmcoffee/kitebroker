@@ -63,7 +63,7 @@ func (T *UserInfoTask) Main() (err error) {
 		input = strings.ReplaceAll(input, ".", "")
 		if !strings.HasPrefix(input, "+") {
 			input = fmt.Sprintf("+1-%s", input)
-		}
+		} 
 		return input
 	}
 
@@ -75,17 +75,18 @@ func (T *UserInfoTask) Main() (err error) {
 		email := row[0]
 		name := row[1]
 		phone := row[2]
-		phone = clean_phone(phone)
+		if !IsBlank(phone) {
+			phone = clean_phone(phone)
+		}
 
-		if _, ok := users_updated[name]; ok {
+		if _, ok := users_updated[email]; ok {
 			return nil
 		} else {
-			users_updated[name] = struct{}{}
+			users_updated[email] = struct{}{}
 		}
 
 		Log("Updating user info for: %s <%s> - ph: %s", name, email, phone)
-		T.buffer.WriteString("email,name,user_type_id,mobile_number\n")
-		T.buffer.WriteString(fmt.Sprintf("%s,%s,,%s\n", email, name, phone))
+		T.buffer.WriteString(fmt.Sprintf("%s,%s\n", email, name))
 
 		return nil
 	}
@@ -95,6 +96,7 @@ func (T *UserInfoTask) Main() (err error) {
 		return false
 	}
 
+	T.buffer.WriteString("email,name\n")
 	c.Read(f)
 
 	output_csv := ioutil.NopCloser(&T.buffer)

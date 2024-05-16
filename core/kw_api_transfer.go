@@ -349,7 +349,9 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	)
 
 	dest_path := strings.TrimPrefix(dst.Path, "basedir/")
-	dest_path = fmt.Sprintf("%s/", dest_path)
+	if len(dest_path) > 0 && !strings.HasSuffix(dest_path, "/") {
+		dest_path = fmt.Sprintf("%s/", dest_path)
+	}
 
 	switch dst.Type {
 	case "d":
@@ -427,7 +429,6 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 
 	if flags.Has(IsFile) {
 		modified, _ := ReadKWTime(dst.ClientModified)
-
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {
 			if flags.Has(OverwriteFile) {
 				uid, err = s.newFileVersion(dst.ID, filename, size, mod_time)
@@ -442,6 +443,13 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 			if dst.Size == size {
 				uploads.Unset(target)
 				return nil, nil
+			} else if flags.Has(VersionFile) {
+				uid, err = s.newFileVersion(dst.ID, filename, size, mod_time)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				return nil, nil
 			}
 		}
 	} else {
@@ -455,6 +463,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 				return nil, err
 			}
 		} else {
+			files[0].Path = dest_path
 			return s.Upload(filename, size, mod_time, overwrite_newer, auto_version, resume, files[0], src)
 		}
 

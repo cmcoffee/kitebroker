@@ -79,7 +79,14 @@ func (T *FolderUploadTask) Main() (err error) {
 		return err
 	}
 	if IsBlank(T.input.dst) {
-		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
+		src_path := T.input.src[0]
+		if len(src_path) >= 2 {
+			if src_path[1] == ':' {
+				src_split := strings.Split(src_path, ":")
+				src_path = src_split[1]
+			}
+		}
+		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(src_path)
 		if err != nil {
 			return err
 		}
@@ -145,7 +152,7 @@ func (T *FolderUploadTask) Main() (err error) {
 						if retry.CheckForRetry(err) {
 							continue
 						}
-						Err("(%s) Unexpected error while uploading %s/%s: %s", T.KW.Username, up.path, up.finfo.Name(), err.Error())
+						Err("(%s) Unexpected error while uploading %s: %s", T.KW.Username, up.path, err.Error())
 						T.file_count.Del(1)
 					}
 					return

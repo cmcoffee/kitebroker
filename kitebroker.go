@@ -33,6 +33,7 @@ var global struct {
 	kw            *KWAPI
 	freq          time.Duration
 	root          string
+	exec_name     string
 	setup         bool
 	snoop         bool
 	debug         bool
@@ -46,6 +47,8 @@ var global struct {
 func init() {
 	exec, err := os.Executable()
 	Critical(err)
+
+	global.exec_name = filepath.Base(exec)
 
 	global.root, err = filepath.Abs(filepath.Dir(exec))
 	Critical(err)
