@@ -39,7 +39,7 @@ func (T *MembershipTask) Init() (err error) {
 	T.Flags.StringVar(&T.role, "role", "<Role(ie.. Collaborator) or Role ID>", "Role or Role ID of user being added, for list of roles run task without options.")
 	T.Flags.BoolVar(&T.notify, "notify", "Notify added user of folder invite.")
 	T.Flags.BoolVar(&T.notify_files, "sub", "Subscribe added user to file notifications in folder.")
-	T.Flags.CLIArgs("folder")
+	T.Flags.InlineArgs("folder")
 	T.Flags.Order("folder")
 	if err = T.Flags.Parse(); err != nil {
 		return err

@@ -55,7 +55,7 @@ func (T *FolderUploadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.move, "move", "Remove source files upon successful upload.")
 	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", "Do not upload file if file exists on server already.")
 	T.Flags.Order("overwrite_newer", "move")
-	T.Flags.CLIArgs("src", "remote_kw_folder")
+	T.Flags.InlineArgs("src", "remote_kw_folder")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -97,30 +97,6 @@ func (T *FolderUploadTask) Main() (err error) {
 		}
 	}
 
-	/*
-		if IsBlank(T.input.dst) {
-			user_info, err := T.KW.MyUser()
-			if err != nil {
-				return err
-			}
-			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(strings.Join(T.input.src, "/"))
-			if err != nil {
-				return err
-			}
-		} else {
-			base_folder, err = T.KW.Folder("0").Find(T.input.dst)
-			if err != nil {
-				if err == ErrNotFound {
-					base_folder, err = T.KW.Folder("0").NewFolder(T.input.dst)
-					if err != nil {
-						return err
-					}
-				} else {
-					return fmt.Errorf("%s: %v", T.input.dst, err)
-				}
-			}
-		}
-	*/
 	T.file_count = T.Report.Tally("Files")
 	T.folder_count = T.Report.Tally("Folders")
 	T.transferred = T.Report.Tally("Transferred", HumanSize)
@@ -209,128 +185,6 @@ func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, fold
 
 	return
 }
-
-// Replaced with Kitebroker core code.
-/*
-func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
-	defer T.file_count.Add(1)
-	if folder.ID == 0 {
-		Notice("%s: Uploading files to base path is not permitted, ignoring file.", local_path)
-		return nil
-	}
-
-	var UploadRecord struct {
-		Name string
-		ID int
-		ClientModified time.Time
-		Size int64
-	}
-
-	transfer_file := func(local_path string, uid int) (err error) {
-		upload_counter := func(num int) {
-			T.transferred.Add(int64(num))
-		}
-
-		f, err := os.Open(local_path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		x := TransferCounter(f, upload_counter)
-		_, err = T.KW.Upload(finfo.Name(), uid, x)
-		if err == nil {
-			if T.input.move {
-				return os.Remove(local_path)
-			}
-		}
-		return
-	}
-
-	target := fmt.Sprintf("%d:%s", folder.ID, finfo.Name())
-
-	if T.uploads.Get(target, &UploadRecord) {
-		if UploadRecord.Name == finfo.Name() && UploadRecord.Size == finfo.Size() && UploadRecord.ClientModified == finfo.ModTime() {
-			if err := transfer_file(local_path, UploadRecord.ID); err != nil {
-				Debug("Error attempting to resume file: %s", err.Error())
-			} else {
-				T.uploads.Unset(target)
-				return nil
-			}
-		}
-	}
-
-	kw_file_info, err := T.KW.Folder(folder.ID).Find(finfo.Name())
-	if err != nil && err != ErrNotFound {
-		return err
-	}
-	var uid int
-	//Log(kw_file_info)
-	if kw_file_info.ID > 0 {
-		if T.input.dont_overwrite {
-			if T.input.move {
-					return os.Remove(local_path)
-			}
-			return
-		}
-		modified, _ := ReadKWTime(kw_file_info.ClientModified)
-
-		// File on kiteworks is newer than local file.
-		if modified.UTC().Unix() > finfo.ModTime().UTC().Unix() {
-			if T.input.overwrite_newer {
-				uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo.Name(), finfo.Size(), finfo.ModTime())
-				if err != nil {
-					return err
-				}
-			} else {
-				T.uploads.Unset(target)
-				return nil
-			}
-			// Local file is newer than kiteworks file.
-		} else if modified.UTC().Unix() < finfo.ModTime().UTC().Unix() {
-			uid, err = T.KW.File(kw_file_info.ID).NewVersion(finfo.Name(), finfo.Size(), finfo.ModTime())
-			if err != nil {
-				return err
-			}
-			// Local file gas same timestamp as kiteworks file.
-		} else {
-			if kw_file_info.Size == finfo.Size() {
-				T.uploads.Unset(target)
-				if T.input.move {
-					return os.Remove(local_path)
-				} else {
-					return nil
-				}
-			}
-		}
-	} else {
-		uid, err = T.KW.Folder(folder.ID).NewUpload(finfo.Name(), finfo.Size(), finfo.ModTime())
-		if err != nil {
-			return err
-		}
-	}
-	UploadRecord.Name = finfo.Name()
-	UploadRecord.ID = uid
-	UploadRecord.ClientModified = finfo.ModTime()
-	UploadRecord.Size = finfo.Size()
-
-	T.uploads.Set(target, &UploadRecord)
-
-	for i := uint(0); i <= T.KW.Retries; i++ {
-		err = transfer_file(local_path, uid)
-		if err == nil || IsAPIError(err) {
-			if err != nil && IsAPIError(err, "ERR_INTERNAL_SERVER_ERROR") {
-				Debug("%s/%s: %s (%d/%d)", folder.Path, UploadRecord.Name, err.Error(), i+1, T.KW.Retries+1)
-				T.KW.BackoffTimer(i)
-				continue
-			}
-			T.uploads.Unset(target)
-		}
-		break
-	}
-	return
-}
-*/
 
 func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) (err error) {
 	type child struct {

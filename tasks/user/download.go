@@ -55,7 +55,7 @@ func (T *FolderDownloadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.track, "track", "Track downloads. (Prevents files from being redownloaded)")
 	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon successful download.")
 	T.Flags.Order("src", "dst", "track", "owner", "move")
-	T.Flags.CLIArgs("src", "dst")
+	T.Flags.InlineArgs("src", "dst")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}

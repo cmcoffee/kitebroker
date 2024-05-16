@@ -34,7 +34,7 @@ func (T *ListTask) Init() (err error) {
 
 	T.Flags.StringVar(&T.input.folder, "path", "<remote file/folder>", "Folder/Files you want to list.")
 
-	T.Flags.CLIArgs("path")
+	T.Flags.InlineArgs("path")
 
 	err = T.Flags.Parse()
 	if err != nil {

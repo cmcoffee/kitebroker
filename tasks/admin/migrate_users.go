@@ -403,23 +403,43 @@ func (T *MigrateProfileTask) CloneFolder(migration_users *MigrateUser, folder *K
 			continue
 		}
 
-		down, err := migration_users.src_sess.QDownload(&f)
-		if err != nil {
-			Err("%s: %s", f.Name, err.Error())
-			continue
-		}
+		// Main download/upload loop.
+		source_info := fmt.Sprintf("%s - download - %s/%s", migration_users.src_sess.Username, dest_folder, f.Name)
+		dest_info := fmt.Sprintf("%s - upload - %s - %s/%s", migration_users.dst_sess.Username, dest_folder, f.Name)
 
-		modtime, err := ReadKWTime(f.ClientModified)
-		if err != nil {
-			Err("%s: %s", f.Name, err.Error())
-		}
+		retry_download := T.KW.InitRetry(migration_users.src_sess.Username, source_info)
+		retry_upload := T.KW.InitRetry(migration_users.dst_sess.Username, dest_info)
+		for {
+			// Initiate Download
+			down, err := migration_users.src_sess.QDownload(&f)
+			if err != nil {
+				if retry_download.CheckForRetry(err) {
+					continue
+				} else {
+					Err("%s: %s", source_info, err.Error())
+					break
+				}
+			}
 
-		_, err = migration_users.dst_sess.Upload(f.Name, f.Size, modtime, false, false, true, dest_folder, down)
-		if err != nil {
-			Err("[%s] %s: %s", migration_users.dst_sess.Username, f.Name, err.Error())
-		} else {
-			T.files_copied.Add(1)
-			T.transfer_counter.Add64(f.Size)
+			modtime, err := ReadKWTime(f.ClientModified)
+			if err != nil {
+				Err("%s: %s", f.Name, err.Error())
+			}
+
+			// Initiate Upload
+			_, err = migration_users.dst_sess.Upload(f.Name, f.Size, modtime, false, false, true, dest_folder, down)
+			if err != nil {
+				if retry_upload.CheckForRetry(err) {
+					continue
+				} else {
+					Err("%s: %s", dest_info, err.Error())
+					break
+				}
+			} else {
+				T.files_copied.Add(1)
+				T.transfer_counter.Add64(f.Size)
+			}
+			break
 		}
 	}
 

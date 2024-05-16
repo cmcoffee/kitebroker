@@ -40,7 +40,7 @@ func (T *UserProfilerTask) Init() (err error) {
 	T.Flags.BoolVar(&T.unverified, "unverified", "Apply only to users that are unverfied.")
 	T.Flags.StringVar(&T.filter, "domain_filter", "<domain.com>", "Filter out emails from email domain.")
 	T.Flags.Order("new_profile_id", "old_profile_id", "deactivated", "unverified", "domain_filter", "users")
-	T.Flags.CLIArgs("users")
+	T.Flags.InlineArgs("users")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}

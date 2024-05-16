@@ -184,7 +184,7 @@ func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) uploadFile(filename string, upload_id int, source_reader ReadSeekCloser, path ...string) (*KiteObject, error) {
+func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.ReadSeeker, path ...string) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -200,7 +200,12 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 		URI            string `json:"uri"`
 	}
 
-	err := s.Call(APIRequest{
+	_, err := source_reader.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	err = s.Call(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/uploads/%d", upload_id),
 		Params: SetParams(Query{"with": "(id,totalSize,totalChunks,uploadedChunks,finished,uploadedSize)"}),
@@ -226,7 +231,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader Read
 	}
 	ChunkIndex := upload_data.UploadedChunks
 
-	src := TransferMonitor(filename, total_bytes, LeftToRight, source_reader, path...)
+	src := TransferMonitor(filename, total_bytes, LeftToRight, NopSeekCloser(source_reader), path...)
 	defer src.Close()
 
 	if ChunkIndex > 0 {
@@ -338,6 +343,7 @@ func (S KWSession) newFolderUpload(folder_id string, filename string, size int64
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
+// Will assume source will be closed, it is on caller to reinitiate upload request open source upon failure.
 func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version, resume bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
 	var flags BitFlag
 
@@ -347,6 +353,8 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		OverwriteFile
 		VersionFile
 	)
+
+	defer src.Close()
 
 	dest_path := strings.TrimPrefix(dst.Path, "basedir/")
 	if len(dest_path) > 0 && !strings.HasSuffix(dest_path, "/") {
