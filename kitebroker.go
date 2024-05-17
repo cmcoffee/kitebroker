@@ -116,7 +116,7 @@ func main() {
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
 
-	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
+	flags.HelpText = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
 	f_err := flags.Parse(os.Args[1:])

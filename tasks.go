@@ -22,7 +22,7 @@ func init() {
 	command.RegisterAdmin(new(admin.UserProfilerTask))
 	command.RegisterAdmin(new(admin.FileCleanerTask))
 	command.RegisterAdmin(new(admin.UserRemoverTask))
-	command.RegisterAdmin(new(admin.MigrateProfileTask))
+	command.RegisterAdmin(new(admin.KW_TO_KWTask))
 	command.RegisterAdmin(new(admin.MoveMyFolder))
 	command.RegisterAdmin(new(admin.AddUserTask))
 	command.RegisterAdmin(new(admin.MetadataTask))

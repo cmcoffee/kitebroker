@@ -16,10 +16,9 @@ type SFTPGWTask struct {
 }
 
 type SSHServ struct {
-	KW KWSession
+	KW          KWSession
 	server_conf ssh.ServerConfig
 }
-
 
 func (S *SSHServ) PasswordCallback(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 	user, err := S.KW.Admin().FindUser(conn.User())
@@ -48,11 +47,11 @@ func (T SFTPGWTask) New() Task {
 	return new(SFTPGWTask)
 }
 
-func (T SFTPGWTask) Name() (string) {
+func (T SFTPGWTask) Name() string {
 	return "sftp_gw"
 }
 
-func (T *SFTPGWTask) Desc() (string) {
+func (T *SFTPGWTask) Desc() string {
 	return ""
 }
 

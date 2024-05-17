@@ -33,10 +33,18 @@ func (T UserInfoTask) Desc() string {
 }
 
 func (T *UserInfoTask) Init() (err error) {
-	T.Flags.StringVar(&T.input.csv_file, "csv", "user_info.csv", "CSV to map user data, should be in format\n\temail,real name,phone")
+	T.Flags.HelpText = `Task updates user information, it takes a single csv.
+csv should be in the format of: email,name,mobile number
+`
+	T.Flags.StringVar(&T.input.csv_file, "csv", "<user_info.csv>", "CSV to map user data, should be in format\n\temail,real name,phone")
+	T.Flags.InlineArgs("csv")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
+	if IsBlank(T.input.csv_file) {
+		return fmt.Errorf("Please provide a csv file to process.")
+	}
+
 	return
 }
 
@@ -59,9 +67,14 @@ func (T *UserInfoTask) Main() (err error) {
 		input = strings.ReplaceAll(input, "(", "")
 		input = strings.ReplaceAll(input, ")", "")
 		input = strings.ReplaceAll(input, " ", "")
-		input = strings.ReplaceAll(input, "-", "")
 		input = strings.ReplaceAll(input, ".", "")
-		if !strings.HasPrefix(input, "+") {
+		if strings.HasPrefix(input, "+") {
+			split_in := strings.Split(input, "-")
+			if len(split_in) > 1 {
+				input = fmt.Sprintf("%s-%s", split_in[0], strings.Join(split_in[1:], ""))
+			}
+		} else {
+			input = strings.ReplaceAll(input, "-", "")
 			input = fmt.Sprintf("+1-%s", input)
 		}
 		return input
@@ -86,7 +99,7 @@ func (T *UserInfoTask) Main() (err error) {
 		}
 
 		Log("Updating user info for: %s <%s> - ph: %s", name, email, phone)
-		T.buffer.WriteString(fmt.Sprintf("%s,%s\n", email, name))
+		T.buffer.WriteString(fmt.Sprintf("%s,%s,%s\n", email, name, phone))
 
 		return nil
 	}
@@ -96,7 +109,7 @@ func (T *UserInfoTask) Main() (err error) {
 		return false
 	}
 
-	T.buffer.WriteString("email,name\n")
+	T.buffer.WriteString("email,name,mobile\n")
 	c.Read(f)
 
 	output_csv := ioutil.NopCloser(&T.buffer)
