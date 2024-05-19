@@ -37,7 +37,7 @@ type UserRemoverTask struct {
 	read_csv_file    bool
 	last_activity    map[string]time.Time
 	reassign_to_sess KWSession
-	reassign_to_id   int
+	reassign_to_id   string
 	KiteBrokerTask
 }
 

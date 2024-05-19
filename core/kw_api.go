@@ -18,6 +18,8 @@ import (
 	"time"
 )
 
+const DEFAULT_KWAPI_VERSION = 28
+
 // Reads KW rest errors and interprets them.
 func kwapiError(body []byte) (e APIError) {
 	// kiteworks API Error
@@ -68,7 +70,7 @@ func (K *KWAPI) Session(username string) KWSession {
 // Wrapper around Call to provide username.
 func (K KWSession) Call(api_req APIRequest) (err error) {
 	if api_req.Version <= 0 {
-		api_req.Version = 20
+		api_req.Version = DEFAULT_KWAPI_VERSION
 	}
 	if api_req.Header == nil {
 		api_req.Header = make(map[string][]string)

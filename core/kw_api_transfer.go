@@ -184,7 +184,7 @@ func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 }
 
 // Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.ReadSeeker, path ...string) (*KiteObject, error) {
+func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.ReadSeekCloser, path ...string) (*KiteObject, error) {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}
 		defer func() { <-s.trans_limiter }()
@@ -199,6 +199,8 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 		Finished       bool   `json:"finished"`
 		URI            string `json:"uri"`
 	}
+
+	defer source_reader.Close()
 
 	_, err := source_reader.Seek(0, 0)
 	if err != nil {
@@ -231,7 +233,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 	}
 	ChunkIndex := upload_data.UploadedChunks
 
-	src := TransferMonitor(filename, total_bytes, LeftToRight, NopSeekCloser(source_reader), path...)
+	src := transferMonitor(filename, total_bytes, leftToRight, source_reader, path...)
 	defer src.Close()
 
 	if ChunkIndex > 0 {
@@ -252,7 +254,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 			return nil, err
 		}
 
-		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
+		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
 		Trace("[kiteworks]: %s", s.Username)
 		Trace("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
@@ -331,7 +333,6 @@ func (S KWSession) newFolderUpload(folder_id string, filename string, size int64
 	}
 
 	if err := S.Call(APIRequest{
-		//Version: 5,
 		Method: "POST",
 		Path:   SetPath("/rest/folders/%s/actions/initiateUpload", folder_id),
 		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
@@ -353,8 +354,6 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		OverwriteFile
 		VersionFile
 	)
-
-	defer src.Close()
 
 	dest_path := strings.TrimPrefix(dst.Path, "basedir/")
 	if len(dest_path) > 0 && !strings.HasSuffix(dest_path, "/") {
@@ -481,7 +480,7 @@ func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 		return nil, err
 	}
 
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
 	err = s.SetToken(s.Username, req)
 
@@ -502,11 +501,11 @@ func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
 		return nil, err
 	}
 
-	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", 20))
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
 	err = s.SetToken(s.Username, req)
 
-	return TransferMonitor(file.Name, file.Size, RightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
+	return transferMonitor(file.Name, file.Size, rightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
 }
 
 // Kiteworks File Download to Local File

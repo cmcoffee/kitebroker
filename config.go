@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	//"github.com/cmcoffee/snugforge/kvlite"
 	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/nfo"
 	"github.com/cmcoffee/snugforge/options"

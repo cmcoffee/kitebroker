@@ -137,6 +137,8 @@ func (T CSVOnboardTask) LookupPermission(permission string) (int, error) {
 
 func (T *CSVOnboardTask) AddUsersToFolder(path, permission string, users []string, subscribe bool) (err error) {
 
+	path = NormalizePath(path)
+
 	add_users_to_folders := func(path, permission string, users []string) (err error) {
 		role_id, err := T.LookupPermission(permission)
 		if err != nil {
@@ -227,13 +229,13 @@ func (T *CSVOnboardTask) Main() (err error) {
 	}
 	scanner := bufio.NewScanner(f)
 
-	err_file, err := os.OpenFile(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	err_file, err := os.OpenFile(LocalPath(fmt.Sprintf("%s/%s", out_path, errors_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		f.Close()
 		return err
 	}
 
-	done_file, err := os.OpenFile(NormalizePath(fmt.Sprintf("%s/%s", out_path, done_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	done_file, err := os.OpenFile(LocalPath(fmt.Sprintf("%s/%s", out_path, done_filename)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		err_file.Close()
 		f.Close()
@@ -304,7 +306,7 @@ func (T *CSVOnboardTask) Main() (err error) {
 	err_file.Close()
 	done_file.Close()
 	if errors == 0 {
-		if err := os.Remove(NormalizePath(fmt.Sprintf("%s/%s", out_path, errors_filename))); err != nil {
+		if err := os.Remove(LocalPath(fmt.Sprintf("%s/%s", out_path, errors_filename))); err != nil {
 			Err(err)
 		}
 	}

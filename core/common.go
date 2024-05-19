@@ -193,11 +193,12 @@ var (
 )
 
 var (
-	TransferMonitor = nfo.TransferMonitor
-	LeftToRight     = nfo.LeftToRight // Transfer Monitor Direction
-	RightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
-	NoRate          = nfo.NoRate      // Transfer Monitor ProgressBar
-	NopSeekCloser   = nfo.NopSeekCloser
+	transferMonitor = nfo.TransferMonitor
+	leftToRight     = nfo.LeftToRight // Transfer Monitor Direction
+	rightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
+	limitWidth      = nfo.LimitWidth  // Transfer Monitor Direction
+	nopSeeker       = nfo.NopSeeker   // Transform ReadCloser to ReadSeekCloser
+	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
 )
 
 var (
@@ -411,16 +412,27 @@ func CombinePath(name ...string) string {
 	if len(name) < 2 {
 		return name[0]
 	}
-	return NormalizePath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
+	return LocalPath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
 }
 
-func NormalizePath(path string) string {
+// Adapts path to whatever local filesystem uses.
+func LocalPath(path string) string {
 	path = strings.Replace(path, "/", SLASH, -1)
 	subs := strings.Split(path, SLASH)
 	for i, v := range subs {
 		subs[i] = strings.TrimSpace(v)
 	}
 	return strings.Join(subs, SLASH)
+}
+
+// Switches windows based slash to kiteworks compatible.
+func NormalizePath(path string) string {
+	path = strings.Replace(path, "\\", "/", -1)
+	subs := strings.Split(path, "/")
+	for i, v := range subs {
+		subs[i] = strings.TrimSpace(v)
+	}
+	return strings.Join(subs, "/")
 }
 
 // Path rename.
@@ -452,5 +464,5 @@ func Dequote(input string) string {
 }
 
 func Delete(path string) error {
-	return os.Remove(NormalizePath(path))
+	return os.Remove(LocalPath(path))
 }

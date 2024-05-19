@@ -19,6 +19,10 @@ type FolderUploadTask struct {
 		move            bool
 		dont_overwrite  bool
 	}
+	db struct {
+		uploads Table
+		files   Table
+	}
 	crawl_wg     LimitGroup
 	upload_wg    LimitGroup
 	upload_chan  chan *upload

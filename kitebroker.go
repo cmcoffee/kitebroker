@@ -33,7 +33,6 @@ var global struct {
 	kw            *KWAPI
 	freq          time.Duration
 	root          string
-	exec_name     string
 	setup         bool
 	snoop         bool
 	debug         bool
@@ -44,18 +43,22 @@ var global struct {
 	gen_token     bool
 }
 
-func init() {
+// Gathers information about the path and name of the kitebroker executable.
+func get_runtime_info() string {
 	exec, err := os.Executable()
 	Critical(err)
 
-	global.exec_name = filepath.Base(exec)
+	localExec := filepath.Base(exec)
 
 	global.root, err = filepath.Abs(filepath.Dir(exec))
 	Critical(err)
 
 	global.root = GetPath(global.root)
+
+	return localExec
 }
 
+// Loads the configuraiton file.
 func load_config(config_file string) (err error) {
 	if err := load_config_defaults(); err != nil {
 		global.auth_mode = PASSWORD_AUTH
@@ -84,6 +87,7 @@ func enable_debug() {
 	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 }
 
+// Enable Tracec Logging Output
 func enable_trace() {
 	nfo.SetOutput(nfo.TRACE, os.Stdout)
 	nfo.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
@@ -92,6 +96,8 @@ func enable_trace() {
 func main() {
 	nfo.HideTS()
 	defer Exit(0)
+
+	localExec := get_runtime_info()
 
 	cfg_err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
@@ -129,7 +135,7 @@ func main() {
 	}
 
 	if *update {
-		update_init()
+		UpdateKitebroker(APPNAME, VERSION, global.root, localExec, global.cfg.GetBool("configuration", "ssl_verify"), global.cfg.Get("configuration", "proxy_uri"))
 		Exit(0)
 	}
 

@@ -11,7 +11,7 @@ type FolderDownloadTask struct {
 	input struct {
 		src        []string
 		dst        string
-		track      bool
+		redownload bool
 		owned_only bool
 		move       bool
 	}
@@ -52,9 +52,9 @@ func (T *FolderDownloadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.owned_only, "owner", "Download folders and files from owned folders only.")
 	T.Flags.MultiVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
-	T.Flags.BoolVar(&T.input.track, "track", "Track downloads. (Prevents files from being redownloaded)")
+	T.Flags.BoolVar(&T.input.redownload, "redownload", "Redownload previously downloaded files.")
 	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon successful download.")
-	T.Flags.Order("src", "dst", "track", "owner", "move")
+	T.Flags.Order("src", "dst", "redownload", "owner", "move")
 	T.Flags.InlineArgs("src", "dst")
 	if err = T.Flags.Parse(); err != nil {
 		return err
@@ -73,8 +73,19 @@ func (T *FolderDownloadTask) Main() (err error) {
 	T.dwnld_limiter = NewLimitGroup(50)
 
 	T.db.downloads = T.DB.Table("downloads")
-	T.db.files = T.DB.Bucket(fmt.Sprintf("sync:%s:%s", T.KW.Username, T.input.dst)).Table("downloads")
+	T.db.files = T.DB.Table("files")
 	T.db.files.Drop()
+
+	// Clear out old keys.
+	defer func() {
+		if !T.input.redownload {
+			for _, k := range T.db.downloads.Keys() {
+				if !T.db.files.Get(k, nil) {
+					T.db.downloads.Unset(k)
+				}
+			}
+		}
+	}()
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
 	if err != nil {
@@ -144,12 +155,17 @@ func (T *FolderDownloadTask) Main() (err error) {
 		}
 	}()
 
+	top_level := false
+	if len(folders) == 1 {
+		top_level = true
+	}
+
 	for i := range folders {
 		T.folder_count.Add(1)
 		T.crawl_limiter.Add(1)
 
 		go func(path string, folder *KiteObject) {
-			T.ProcessFolder(folder, path)
+			T.ProcessFolder(folder, path, top_level)
 			T.crawl_limiter.Done()
 		}(T.input.dst, &folders[i])
 	}
@@ -163,7 +179,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 	return nil
 }
 
-func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string) {
+func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string, top_level bool) {
 	type child struct {
 		local_path string
 		*KiteObject
@@ -192,7 +208,7 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 		if n+1 < len(folders)-1 {
 			if T.crawl_limiter.Try() {
 				go func(path string, obj *KiteObject) {
-					T.ProcessFolder(obj, path)
+					T.ProcessFolder(obj, path, false)
 					T.crawl_limiter.Done()
 				}(obj.local_path, obj.KiteObject)
 				n++
@@ -225,13 +241,15 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 			}
 
 			T.folder_count.Add(1)
-			err := MkDir(CombinePath(obj.local_path, obj.Name))
-			if err != nil {
-				Err("%s: %v", obj.Path, err)
-				n++
-				continue
+			if !top_level {
+				err := MkDir(CombinePath(obj.local_path, obj.Name))
+				if err != nil {
+					Err("%s: %v", obj.Path, err)
+					n++
+					continue
+				}
+				obj.local_path = CombinePath(obj.local_path, obj.Name)
 			}
-			obj.local_path = CombinePath(obj.local_path, obj.Name)
 
 			objs, err := T.KW.Folder(obj.ID).Contents()
 			if err != nil {
@@ -261,10 +279,8 @@ const (
 )
 
 func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (err error) {
-	var dl_record uint
-
 	T.file_count.Add(1)
-	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
+	download_record_name := fmt.Sprintf("%s:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
 
 	clear_from_db := func(file_id string) {
 		for _, k := range T.db.downloads.Keys() {
@@ -274,9 +290,10 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 		}
 	}
 
-	found := T.db.downloads.Get(download_record_name, &dl_record)
+	found := T.db.downloads.Get(download_record_name, nil)
+	T.db.files.Set(download_record_name, 1)
 
-	if T.input.track && found && dl_record == 1 {
+	if !T.input.redownload && found {
 		if T.input.move {
 			clear_from_db(file.ID)
 		} else {
@@ -296,9 +313,8 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 				clear_from_db(file.ID)
 			}
 		}
-		if T.input.track {
+		if !T.input.redownload {
 			T.db.downloads.Set(download_record_name, 1)
-			T.db.files.Set(CombinePath(file.Path, file.Name), 1)
 		}
 		return nil
 	}
@@ -307,150 +323,3 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 
 	return mark_complete()
 }
-
-/*
-func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (err error) {
-
-	var flag BitFlag
-
-	T.file_count.Add(1)
-
-	download_record_name := fmt.Sprintf("%d:%s:%s:%d", file.ID, file.Name, file.Created, file.Size)
-
-	clear_from_db := func(file_id string) {
-		for _, k := range T.db.downloads.Keys() {
-			if strings.Split(k, ":")[0] == file_id {
-				T.db.downloads.Unset(k)
-			}
-		}
-	}
-
-	found := T.db.downloads.Get(download_record_name, &flag)
-
-	if T.input.track && found && flag.Has(complete) {
-		if T.input.move {
-			clear_from_db(file.ID)
-		} else {
-			return nil
-		}
-	}
-
-	var mtime time.Time
-
-	if !IsBlank(file.ClientModified) {
-		mtime, err = ReadKWTime(file.ClientModified)
-		if err != nil {
-			return err
-		}
-	} else if !IsBlank(file.Modified) {
-		mtime, err = ReadKWTime(file.Modified)
-		if err != nil {
-			return err
-		}
-	}
-
-	file_name := CombinePath(local_path, file.Name)
-	tmp_file_name := fmt.Sprintf("%s.%s.incomplete", file_name, file.ID)
-
-	mark_complete := func() (err error) {
-		clear_from_db(file.ID)
-		if T.input.move {
-			return T.KW.File(file.ID).Delete()
-		}
-		if T.input.track {
-			flag.Set(complete)
-			T.db.downloads.Set(download_record_name, &flag)
-			T.db.files.Set(CombinePath(file.Path, file.Name), &file)
-		}
-		return nil
-	}
-
-	dstat, err := os.Stat(file_name)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	if dstat != nil && dstat.Size() == file.Size && dstat.ModTime().UTC().Unix() == mtime.UTC().Unix() {
-		return mark_complete()
-	}
-
-	f, err := T.KW.FileDownload(file)
-	if err != nil {
-		return err
-	}
-
-	fstat, err := os.Stat(tmp_file_name)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-
-	if !found && fstat != nil {
-		if err := os.Remove(tmp_file_name); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-
-	flag.Set(incomplete)
-	clear_from_db(file.ID)
-	T.db.downloads.Set(download_record_name, &flag)
-
-	dst, err := os.OpenFile(tmp_file_name, os.O_CREATE|os.O_RDWR, 0755)
-	if err != nil {
-		return
-	}
-
-	if fstat != nil && found {
-		offset, err := dst.Seek(fstat.Size(), 0)
-		if err != nil {
-			return err
-		}
-		_, err = f.Seek(offset, 0)
-		if err != nil {
-			return err
-		}
-	}
-
-	if fstat == nil || fstat.Size() != file.Size {
-		update_transfer := func(num int) {
-			T.transferred.Add(num)
-		}
-		f = TransferCounter(f, update_transfer)
-		_, err := io.Copy(dst, f)
-		if err != nil {
-			f.Close()
-			dst.Close()
-
-			if file.AdminQuarantineStatus != "allowed" {
-				Notice("%s/%s: Cannot be downloaded, file is under administrator quarantine.", strings.TrimSuffix(local_path, SLASH), file.Name)
-				os.Remove(tmp_file_name)
-				return nil
-			}
-			if file.AVStatus != "allowed" {
-				Notice("%s/%s: Cannot be downloaded, anti-virus status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.AVStatus)
-				os.Remove(tmp_file_name)
-				return nil
-			}
-			if file.DLPStatus != "allowed" {
-				Notice("%s/%s: Cannot be downloaded, dli status is currently set to: %s", strings.TrimSuffix(local_path, SLASH), file.Name, file.DLPStatus)
-				os.Remove(tmp_file_name)
-				return nil
-			}
-			return err
-		}
-	}
-
-	T.files_downloaded.Add(1)
-	f.Close()
-	dst.Close()
-
-	err = Rename(tmp_file_name, file_name)
-	if err != nil {
-		return err
-	}
-
-	err = os.Chtimes(file_name, time.Now(), mtime)
-	if err == nil {
-		return mark_complete()
-	}
-	return
-}*/

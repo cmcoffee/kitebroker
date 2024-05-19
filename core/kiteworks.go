@@ -42,7 +42,7 @@ type KiteObject struct {
 	Expire                interface{}    `json:"expire,omitempty"`
 	Path                  string         `json:"path,omitempty"`
 	ParentID              string         `json:"parentId,omitempty"`
-	UserID                int            `json:"userId,omitempty"`
+	UserID                string         `json:"userId,omitempty"`
 	Permalink             string         `json:"permalink,omitempty"`
 	Secure                bool           `json:"secure,omitempty"`
 	Fingerprint           string         `json:"fingerprint,omitempty"`
@@ -244,11 +244,10 @@ type KiteActivity struct {
 
 func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
-		Version: 27,
-		Method:  "GET",
-		Path:    SetPath("/rest/folders/%s/activities", s.folder_id),
-		Output:  &result,
-		Params:  SetParams(params),
+		Method: "GET",
+		Path:   SetPath("/rest/folders/%s/activities", s.folder_id),
+		Output: &result,
+		Params: SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -387,28 +386,28 @@ func (s kw_rest_admin) Register(email string) (err error) {
 	})
 }
 
-func (s kw_rest_admin) ActivateUser(userid int) (err error) {
+func (s kw_rest_admin) ActivateUser(userid string) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
-		Path:   SetPath("/rest/admin/users/%d", userid),
+		Path:   SetPath("/rest/admin/users/%s", userid),
 		Params: SetParams(PostJSON{"suspended": false, "verified": true, "deactivated": false}),
 	})
 	return
 }
 
-func (s kw_rest_admin) DeactivateUser(userid int) (err error) {
+func (s kw_rest_admin) DeactivateUser(userid string) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
-		Path:   SetPath("/rest/admin/users/%d", userid),
+		Path:   SetPath("/rest/admin/users/%s", userid),
 		Params: SetParams(PostJSON{"suspended": true, "verified": true, "deactivated": false}),
 	})
 	return
 }
 
-func (s kw_rest_admin) UpdateUser(userid int, params ...interface{}) (err error) {
+func (s kw_rest_admin) UpdateUser(userid string, params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PUT",
-		Path:   SetPath("/rest/admin/users/%d", userid),
+		Path:   SetPath("/rest/admin/users/%s", userid),
 		Params: SetParams(params),
 	})
 }
@@ -465,10 +464,9 @@ func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, s
 	psuccess := fmt.Sprintf("%v", partial_success)
 
 	err = s.Call(APIRequest{
-		Version: 25,
-		Method:  "POST",
-		Path:    "/rest/admin/users/actions/import",
-		Params:  SetParams(MimeBody{"content", "import_data.csv", csv, map[string]string{"updateIfExists": uexists, "sendNotification": snotify, "partialSuccess": psuccess}, -1}),
+		Method: "POST",
+		Path:   "/rest/admin/users/actions/import",
+		Params: SetParams(MimeBody{"content", "import_data.csv", csv, map[string]string{"updateIfExists": uexists, "sendNotification": snotify, "partialSuccess": psuccess}, -1}),
 	})
 	return
 }
@@ -531,11 +529,10 @@ type kw_rest_file struct {
 
 func (s kw_rest_file) Unlock() (err error) {
 	err = s.Call(APIRequest{
-		Version: 27,
-		Method:  "PATCH",
-		Path:    SetPath("/rest/files/%s/actions/unlock", s.file_id),
-		Output:  nil,
-		Params:  nil,
+		Method: "PATCH",
+		Path:   SetPath("/rest/files/%s/actions/unlock", s.file_id),
+		Output: nil,
+		Params: nil,
 	})
 	return
 }
@@ -546,11 +543,10 @@ func (s KWSession) File(file_id string) kw_rest_file {
 
 func (s kw_rest_file) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
-		Version: 27,
-		Method:  "GET",
-		Path:    SetPath("/rest/files/%s/activities", s.file_id),
-		Output:  &result,
-		Params:  SetParams(params),
+		Method: "GET",
+		Path:   SetPath("/rest/files/%s/activities", s.file_id),
+		Output: &result,
+		Params: SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -607,11 +603,10 @@ func (s KWSession) Source(source_id string) kw_source {
 
 func (s kw_source) Folders(params ...interface{}) (folders []KiteObject, err error) {
 	err = s.DataCall(APIRequest{
-		Version: 26,
-		Method:  "GET",
-		Path:    SetPath("/rest/sources/%s/folders", s.source_id),
-		Output:  &folders,
-		Params:  SetParams(params),
+		Method: "GET",
+		Path:   SetPath("/rest/sources/%s/folders", s.source_id),
+		Output: &folders,
+		Params: SetParams(params),
 	}, -1, 1000)
 	return
 }
@@ -721,7 +716,7 @@ func (s kw_rest_folder) MoveToFolder(folder_id string) (err error) {
 
 // Kiteworks User Data
 type KiteUser struct {
-	ID          int    `json:"id"`
+	ID          string `json:"id"`
 	Active      bool   `json:"active"`
 	Deactivated bool   `json:"deactivated"`
 	Suspended   bool   `json:"suspended"`
@@ -1087,29 +1082,6 @@ func (s KWSession) Roles() (output []KiteRoles, err error) {
 	return
 }
 
-/*
-type kw_profile struct {
-	profile_id int
-	*KWSession
-}
-
-func (K KWSession) Profiles(profile_id int) kw_profile {
-	return kw_profile{
-		profile_id,
-		&K,
-	}
-
-}
-
-func (K kw_profile) Get() (profile KWProfile, err error) {
-	err = K.Call(APIRequest{
-		Version: 20,
-		Path:    SetPath("/rest/profiles/%d", K.profile_id),
-		Output:  &profile,
-	})
-	return
-}*/
-
 type folderCrawler struct {
 	processor      func(*KWSession, *KiteObject) error
 	folder_limiter LimitGroup
@@ -1321,10 +1293,9 @@ type KWProfile struct {
 func (K KWSession) Profiles() (output map[int]KWProfile, err error) {
 	var profiles []KWProfile
 	err = K.DataCall(APIRequest{
-		Version: 20,
-		Method:  "GET",
-		Path:    SetPath("/rest/profiles"),
-		Output:  &profiles,
+		Method: "GET",
+		Path:   SetPath("/rest/profiles"),
+		Output: &profiles,
 	}, -1, 1000)
 	if err != nil {
 		return nil, err
