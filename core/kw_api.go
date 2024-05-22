@@ -76,7 +76,7 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 		api_req.Header = make(map[string][]string)
 	}
 
-	api_req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", api_req.Version))
+	api_req.Header.Set("X-Accellion-Version", fmt.Sprintf("%v", api_req.Version))
 	api_req.Username = K.Username
 
 	return K.APIClient.Call(api_req)

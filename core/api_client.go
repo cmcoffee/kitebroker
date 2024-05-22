@@ -20,6 +20,7 @@ import (
 	"time"
 )
 
+// General API Object
 type APIClient struct {
 	Server          string                               // kiteworks host name.
 	ApplicationID   string                               // Application ID set for kiteworks custom app.

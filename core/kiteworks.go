@@ -19,6 +19,7 @@ type FileInfo interface {
 	ModTime() time.Time
 }
 
+// Folder Membership Object
 type KiteMember struct {
 	ID     string         `json:"objectId"`
 	RoleID int            `json:"roleId"`
@@ -62,6 +63,7 @@ type KiteObject struct {
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
 }
 
+// Return whether object is locked or not.
 func (K *KiteObject) Locked() bool {
 	if x, ok := K.IsLocked.(bool); ok {
 		return x
@@ -105,6 +107,7 @@ type KitePermission struct {
 	Disabled   bool `json:"disabled"`
 }
 
+// Returns all available folder roles.
 func (s KWSession) FolderRoles() (result []KitePermission, err error) {
 	return result, s.DataCall(APIRequest{
 		Method: "GET",
@@ -180,6 +183,7 @@ func (s PubSub) UnSub() (err error) {
 	return
 }
 
+// Specify folder to run functions on.
 func (s KWSession) Folder(folder_id string) kw_rest_folder {
 	return kw_rest_folder{
 		folder_id,
@@ -187,6 +191,7 @@ func (s KWSession) Folder(folder_id string) kw_rest_folder {
 	}
 }
 
+// List files within folder.
 func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
@@ -201,6 +206,7 @@ func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err
 	return
 }
 
+// Provide info on folder.
 func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err error) {
 	if params == nil {
 		params = SetParams(Query{"deleted": false})
@@ -217,6 +223,7 @@ func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err erro
 	return
 }
 
+// KiteActivity is the activities object for Kiteworks.
 type KiteActivity struct {
 	Successful int    `json:"successful"`
 	Created    string `json:"created"`
@@ -242,6 +249,7 @@ type KiteActivity struct {
 	} `json:"user"`
 }
 
+// Return Actvities for folder.
 func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -252,6 +260,7 @@ func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity
 	return
 }
 
+// Create new folder.
 func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
@@ -262,6 +271,7 @@ func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output Ki
 	return
 }
 
+// Delete folder.
 func (s kw_rest_folder) Delete(params ...interface{}) (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
@@ -271,6 +281,7 @@ func (s kw_rest_folder) Delete(params ...interface{}) (err error) {
 	return
 }
 
+// List members of folder.
 func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err error) {
 	return result, s.DataCall(APIRequest{
 		Method: "GET",
@@ -280,6 +291,7 @@ func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err
 	}, -1, 1000)
 }
 
+// Add users to folder.
 func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bool, notify_files_added bool, params ...interface{}) (err error) {
 	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": notify_files_added, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
 	err = s.Call(APIRequest{
@@ -290,6 +302,7 @@ func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bo
 	return
 }
 
+// Find/Create specific path under folder.
 func (s kw_rest_folder) ResolvePath(path string) (result KiteObject, err error) {
 	folder_path := SplitPath(path)
 
@@ -366,6 +379,7 @@ type kw_rest_admin struct {
 	*KWSession
 }
 
+// Admin API initiator
 func (s KWSession) Admin() kw_rest_admin {
 	return kw_rest_admin{&s}
 }
@@ -378,11 +392,11 @@ func (s kw_rest_admin) Activities(offset int, limit int, params ...interface{}) 
 	}, offset, limit)
 }
 
-func (s kw_rest_admin) Register(email string) (err error) {
+func (s kw_rest_admin) Register(email string, password string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/users/register",
-		Params: SetParams(PostJSON{"email": email, "password": "NewAccount#123"}),
+		Params: SetParams(PostJSON{"email": email, "password": password}),
 	})
 }
 
@@ -395,6 +409,7 @@ func (s kw_rest_admin) ActivateUser(userid string) (err error) {
 	return
 }
 
+// Deactivate specified user.
 func (s kw_rest_admin) DeactivateUser(userid string) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
@@ -424,6 +439,7 @@ func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify 
 	return user, err
 }
 
+// Find user with specified email address.
 func (s kw_rest_admin) FindUser(user_email string, params ...interface{}) (user *KiteUser, err error) {
 	user_getter, err := s.Admin().Users([]string{user_email}, 0)
 	if err != nil {

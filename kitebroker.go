@@ -66,7 +66,7 @@ func load_config(config_file string) (err error) {
 	}
 	err = global.cfg.File(config_file)
 	if err != nil {
-		global.auth_mode = PASSWORD_AUTH
+		global.auth_mode = SIGNATURE_AUTH
 		return err
 	}
 	switch strings.ToLower(global.cfg.Get("configuration", "auth_flow")) {

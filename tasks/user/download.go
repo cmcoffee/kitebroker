@@ -155,17 +155,12 @@ func (T *FolderDownloadTask) Main() (err error) {
 		}
 	}()
 
-	top_level := false
-	if len(folders) == 1 {
-		top_level = true
-	}
-
 	for i := range folders {
 		T.folder_count.Add(1)
 		T.crawl_limiter.Add(1)
 
 		go func(path string, folder *KiteObject) {
-			T.ProcessFolder(folder, path, top_level)
+			T.ProcessFolder(folder, path)
 			T.crawl_limiter.Done()
 		}(T.input.dst, &folders[i])
 	}
@@ -179,7 +174,7 @@ func (T *FolderDownloadTask) Main() (err error) {
 	return nil
 }
 
-func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string, top_level bool) {
+func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string) {
 	type child struct {
 		local_path string
 		*KiteObject
@@ -208,7 +203,7 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 		if n+1 < len(folders)-1 {
 			if T.crawl_limiter.Try() {
 				go func(path string, obj *KiteObject) {
-					T.ProcessFolder(obj, path, false)
+					T.ProcessFolder(obj, path)
 					T.crawl_limiter.Done()
 				}(obj.local_path, obj.KiteObject)
 				n++
@@ -241,15 +236,13 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 			}
 
 			T.folder_count.Add(1)
-			if !top_level {
-				err := MkDir(CombinePath(obj.local_path, obj.Name))
-				if err != nil {
-					Err("%s: %v", obj.Path, err)
-					n++
-					continue
-				}
-				obj.local_path = CombinePath(obj.local_path, obj.Name)
+			err := MkDir(CombinePath(obj.local_path, obj.Name))
+			if err != nil {
+				Err("%s: %v", obj.Path, err)
+				n++
+				continue
 			}
+			obj.local_path = CombinePath(obj.local_path, obj.Name)
 
 			objs, err := T.KW.Folder(obj.ID).Contents()
 			if err != nil {

@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"github.com/cmcoffee/snugforge/iotimeout"
-	"github.com/cmcoffee/snugforge/options"
+	"github.com/cmcoffee/snugforge/nfo"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -52,7 +52,7 @@ func UpdateKitebroker(appName string, localVer string, localPath string, localEx
 		Log("### %s - Update Available!! ###\n\n", k.appName)
 		Log(" Local Version:\t%s", k.localVer)
 		Log("Remote Version:\t%s\n\n", k.remoteVer)
-		if val := options.PromptBool("Download latest version?", true); val {
+		if val := nfo.ConfirmDefault("Download latest version?", true); val {
 			k.update_self()
 		}
 	} else {
