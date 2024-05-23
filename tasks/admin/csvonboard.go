@@ -58,7 +58,7 @@ func (T CSVOnboardTask) Desc() string {
 
 func (T *CSVOnboardTask) Init() (err error) {
 	T.Flags.StringVar(&T.input.manager, "manager", "<manager@domain.com>", "Manager of folders to add user with.\n\t(Kitebroker user will be used if none specified.)")
-	T.Flags.StringVar(&T.input.csv_file, "in_file", "users.csv", "CSV File to Import from.")
+	T.Flags.StringVar(&T.input.csv_file, "in_file", "<users.csv>", "CSV File to Import from.")
 	T.Flags.StringVar(&T.input.out_path, "out_path", "<.>", "Folder to save completed CSVs to.")
 	T.Flags.BoolVar(&T.input.subscribe, "sub", "Subscribe new members to notifications.")
 	T.Flags.MultiVar(&T.input.internal_domains, "internal_domain", "<domain.com>", "Internal Domains")
@@ -66,8 +66,13 @@ func (T *CSVOnboardTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.downgrade_external, "downgrade_external", "Downgrade external members to downloader.")
 	T.Flags.BoolVar(&T.input.notify, "notify", "Notify users of being added to folder.")
 	T.Flags.Order("in_file", "out_path", "manager")
+	T.Flags.InlineArgs("in_file")
 	if err := T.Flags.Parse(); err != nil {
 		return err
+	}
+
+	if IsBlank(T.input.csv_file) {
+		return fmt.Errorf("must provide a csv file to process.")
 	}
 
 	return

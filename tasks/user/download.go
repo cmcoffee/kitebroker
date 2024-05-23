@@ -11,7 +11,7 @@ type FolderDownloadTask struct {
 	input struct {
 		src        []string
 		dst        string
-		redownload bool
+		track      bool
 		owned_only bool
 		move       bool
 	}
@@ -52,7 +52,7 @@ func (T *FolderDownloadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.owned_only, "owner", "Download folders and files from owned folders only.")
 	T.Flags.MultiVar(&T.input.src, "src", "<remote file(s)/folder(s)>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
-	T.Flags.BoolVar(&T.input.redownload, "redownload", "Redownload previously downloaded files.")
+	T.Flags.BoolVar(&T.input.track, "track", "Track downloaded files to prevent re-downloading.")
 	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon successful download.")
 	T.Flags.Order("src", "dst", "redownload", "owner", "move")
 	T.Flags.InlineArgs("src", "dst")
@@ -60,14 +60,18 @@ func (T *FolderDownloadTask) Init() (err error) {
 		return err
 	}
 
-	if IsBlank(T.input.dst) {
+	if len(T.input.src) == 0 {
+		return fmt.Errorf("must specify at least one source to download.")
+	}
+
+	/*if IsBlank(T.input.dst) {
 		if len(T.input.src) == 1 {
 			T.input.dst = T.input.src[0]
 			T.input.src = nil
 		} else {
-			return fmt.Errorf("Must specify at very least a local destination folder.")
+			return fmt.Errorf("must specify a destination folder.")
 		}
-	}
+	}*/
 
 	return nil
 }
@@ -80,17 +84,6 @@ func (T *FolderDownloadTask) Main() (err error) {
 	T.db.downloads = T.DB.Table("downloads")
 	T.db.files = T.DB.Table("files")
 	T.db.files.Drop()
-
-	// Clear out old keys.
-	defer func() {
-		if !T.input.redownload {
-			for _, k := range T.db.downloads.Keys() {
-				if !T.db.files.Get(k, nil) {
-					T.db.downloads.Unset(k)
-				}
-			}
-		}
-	}()
 
 	T.input.dst, err = filepath.Abs(T.input.dst)
 	if err != nil {
@@ -110,16 +103,43 @@ func (T *FolderDownloadTask) Main() (err error) {
 
 	var folders []KiteObject
 
+
 	for _, f := range T.input.src {
-		folder, err := T.KW.Folder("0").Find(f)
-		if err != nil {
-			Err("%s: %v", f, err)
-			continue
+		// If we're told to do all folders, grab TopFolders and break.
+		if f == "." || f == "*" {
+			folders, err = T.KW.TopFolders()
+			if err != nil {
+				return err
+			}
+			break
 		}
-		folders = append(folders, folder)
+		switch f[len(f)-1] {
+			case '*':
+				fallthrough
+			case '/':
+				folder, err := T.KW.Folder("0").Find(f)
+				if err != nil {
+					Err("%s: %s", f, err.Error())
+					continue
+				}
+				childs, err := T.KW.Folder(folder.ID).Contents()
+				if err != nil {
+					Err("%s: %s", f, err.Error())
+					continue
+				}
+				folders = append(folders, childs[0:]...)
+			default:
+				folder, err := T.KW.Folder("0").Find(f)
+				if err != nil {
+					Err("%s: %s", f, err.Error())
+					continue
+				}
+				folders = append(folders, folder)
+		}
 	}
 
 	if T.input.src == nil {
+		T.input.src = nil
 		folders, err = T.KW.TopFolders()
 		if err != nil {
 			return err
@@ -291,7 +311,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 	found := T.db.downloads.Get(download_record_name, nil)
 	T.db.files.Set(download_record_name, 1)
 
-	if !T.input.redownload && found {
+	if T.input.track && found {
 		if T.input.move {
 			clear_from_db(file.ID)
 		} else {
@@ -311,7 +331,7 @@ func (T *FolderDownloadTask) ProcessFile(file *KiteObject, local_path string) (e
 				clear_from_db(file.ID)
 			}
 		}
-		if !T.input.redownload {
+		if T.input.track {
 			T.db.downloads.Set(download_record_name, 1)
 		}
 		return nil

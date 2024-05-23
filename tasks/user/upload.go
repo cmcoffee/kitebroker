@@ -65,7 +65,7 @@ func (T *FolderUploadTask) Init() (err error) {
 	}
 
 	if len(T.input.src) == 0 {
-		return fmt.Errorf("please provide a local folder/file for upload.")
+		return fmt.Errorf("must provide a local folder/file for upload.")
 	}
 
 	return nil
