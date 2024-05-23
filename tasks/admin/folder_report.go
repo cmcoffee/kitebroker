@@ -76,7 +76,7 @@ func (T *FolderReportTask) ReportFolder(sess *KWSession, user *KiteUser, folder 
 		return
 	}
 	for _, m := range members {
-		Log("/%s,%s,%s", folder.Path, strings.ToLower(m.Role.Name), strings.ToLower(m.User.Email))
+		Log("\"/%s\",%s,%s", folder.Path, strings.ToLower(m.Role.Name), strings.ToLower(m.User.Email))
 	}
 
 }

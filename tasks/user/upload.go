@@ -58,7 +58,7 @@ func (T *FolderUploadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.overwrite_newer, "overwrite_newer", "Overwrite newer files on server.")
 	T.Flags.BoolVar(&T.input.move, "move", "Remove source files upon successful upload.")
 	T.Flags.BoolVar(&T.input.dont_overwrite, "dont_version", "Do not upload file if file exists on server already.")
-	T.Flags.Order("overwrite_newer", "move")
+	T.Flags.Order("remote_kw_folder", "overwrite_newer", "move")
 	T.Flags.InlineArgs("src", "remote_kw_folder")
 	if err = T.Flags.Parse(); err != nil {
 		return err
@@ -81,24 +81,6 @@ func (T *FolderUploadTask) Main() (err error) {
 	user_info, err := T.KW.MyUser()
 	if err != nil {
 		return err
-	}
-	if IsBlank(T.input.dst) {
-		src_path := T.input.src[0]
-		if len(src_path) >= 2 {
-			if src_path[1] == ':' {
-				src_split := strings.Split(src_path, ":")
-				src_path = src_split[1]
-			}
-		}
-		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(src_path)
-		if err != nil {
-			return err
-		}
-	} else {
-		base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(T.input.dst)
-		if err != nil {
-			return err
-		}
 	}
 
 	T.file_count = T.Report.Tally("Files")
@@ -142,11 +124,42 @@ func (T *FolderUploadTask) Main() (err error) {
 	}()
 
 	for i, src := range T.input.src {
+		if IsBlank(T.input.dst) {
+			src_path := src
+			if len(src_path) >= 2 {
+				if src_path[1] == ':' {
+					src_split := strings.Split(src_path, ":")
+					src_path = src_split[1]
+				}
+			}
+			switch src[len(src)-1] {
+			case '/':
+				fallthrough
+			case '*':
+				base_folder, err = T.KW.Folder(user_info.BaseDirID).Info()
+				if err != nil {
+					return err
+				}
+			default:
+				s := strings.Split(NormalizePath(src_path), "/")
+				src_path = s[len(s)-1]
+				base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(src_path)
+				if err != nil {
+					return err
+				}
+			}
+		} else {
+			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(T.input.dst)
+			if err != nil {
+				return err
+			}
+		}
 		src, err = filepath.Abs(src)
 		if err != nil {
 			Err("%s: %v", T.input.src[i], err)
 			continue
 		}
+		src = strings.TrimSuffix(src, "*")
 		T.crawl_wg.Add(1)
 		go func(src string, folder KiteObject) {
 			defer T.crawl_wg.Done()

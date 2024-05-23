@@ -50,7 +50,7 @@ func (T FolderDownloadTask) Desc() string {
 // Init function.
 func (T *FolderDownloadTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.owned_only, "owner", "Download folders and files from owned folders only.")
-	T.Flags.MultiVar(&T.input.src, "src", "<remote file/folder>", "Specify kiteworks folder or file you wish to download.")
+	T.Flags.MultiVar(&T.input.src, "src", "<remote file(s)/folder(s)>", "Specify kiteworks folder or file you wish to download.")
 	T.Flags.StringVar(&T.input.dst, "dst", "<local folder>", "Specify local path to store downloaded folders/files.")
 	T.Flags.BoolVar(&T.input.redownload, "redownload", "Redownload previously downloaded files.")
 	T.Flags.BoolVar(&T.input.move, "move", "Remove sources files from kiteworks upon successful download.")
@@ -60,8 +60,13 @@ func (T *FolderDownloadTask) Init() (err error) {
 		return err
 	}
 
-	if IsBlank(T.input.dst) && len(T.input.src) == 0 {
-		return fmt.Errorf("--dst is a required paramented if --src is not provided.")
+	if IsBlank(T.input.dst) {
+		if len(T.input.src) == 1 {
+			T.input.dst = T.input.src[0]
+			T.input.src = nil
+		} else {
+			return fmt.Errorf("Must specify at very least a local destination folder.")
+		}
 	}
 
 	return nil

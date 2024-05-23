@@ -263,6 +263,9 @@ func (m *menu) Select(input [][]string) (err error) {
 
 			if err := x.task.Init(); err != nil {
 				if show_help || err == eflag.ErrHelp {
+					if err != eflag.ErrHelp {
+						Stderr("%s: %s\n\n", x.name, err.Error())
+					}
 					x.flags.Usage()
 					Exit(0)
 				}
