@@ -420,12 +420,11 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 		if token.Expires <= time.Now().Unix() {
 			Debug("Access token expired, using refresh token instead.")
 			// First attempt to use a refresh token if there is one.
-			token, err = s.refreshToken(username, token)
+			err = s.refreshToken(username, token)
 			if err != nil && s.secrets.signature_key == nil {
 				Debug("Unable to use refresh token: %v", err)
 				Fatal("Access token has expired, must reauthenticate for new access token.")
 			}
-			Debug("Refresh token success.")
 			err = nil
 		}
 	}
@@ -452,16 +451,17 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 }
 
 // Get a new token from a refresh token.
-func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
+func (K *APIClient) refreshToken(username string, auth *Auth) (error) {
 	if auth == nil || auth.RefreshToken == NONE {
-		return nil, fmt.Errorf("No refresh token found for %s.", username)
+		return fmt.Errorf("No refresh token found for %s.", username)
 	}
+	Debug("Using refresh token to obtain new token.")
 
 	path := fmt.Sprintf("https://%s/oauth/token", K.Server)
 
 	req, err := http.NewRequest(http.MethodPost, path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	http_header := make(http.Header)
@@ -504,11 +504,11 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 
 	resp, err := K.SendRequest(NONE, req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if err := DecodeJSON(resp, &new_token); err != nil {
-		return nil, err
+		return err
 	}
 
 	if new_token.Expires != nil {
@@ -520,7 +520,7 @@ func (K *APIClient) refreshToken(username string, auth *Auth) (*Auth, error) {
 	auth.RefreshToken = new_token.RefreshToken
 	auth.Scope = new_token.Scope
 
-	return auth, nil
+	return nil
 }
 
 // Post JSON to API.

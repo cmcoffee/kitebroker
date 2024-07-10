@@ -124,14 +124,16 @@ func (T *FolderUploadTask) Main() (err error) {
 	}()
 
 	for i, src := range T.input.src {
-		if IsBlank(T.input.dst) {
-			src_path := src
-			if len(src_path) >= 2 {
-				if src_path[1] == ':' {
-					src_split := strings.Split(src_path, ":")
-					src_path = src_split[1]
-				}
+		src_path := src
+		if len(src_path) >= 2 {
+			if src_path[1] == ':' {
+				src_split := strings.Split(src_path, ":")
+				src_path = src_split[1]
 			}
+		}
+		s := strings.Split(NormalizePath(src_path), "/")
+		src_path = s[len(s)-1]
+		if IsBlank(T.input.dst) {
 			switch src[len(src)-1] {
 			case '/':
 				fallthrough
@@ -141,15 +143,17 @@ func (T *FolderUploadTask) Main() (err error) {
 					return err
 				}
 			default:
-				s := strings.Split(NormalizePath(src_path), "/")
-				src_path = s[len(s)-1]
 				base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(src_path)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
-			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(T.input.dst)
+			destination := T.input.dst
+			if !strings.HasSuffix(src, SLASH) && src[len(src)-1] != '*' {
+				destination = fmt.Sprintf("%s/%s", destination, src_path)
+			}
+			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(destination)
 			if err != nil {
 				return err
 			}
@@ -160,6 +164,7 @@ func (T *FolderUploadTask) Main() (err error) {
 			continue
 		}
 		src = strings.TrimSuffix(src, "*")
+
 		T.crawl_wg.Add(1)
 		go func(src string, folder KiteObject) {
 			defer T.crawl_wg.Done()

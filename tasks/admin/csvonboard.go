@@ -127,7 +127,8 @@ func (T *CSVOnboardTask) LookupFolder(path string) (string, error) {
 }
 
 func (T CSVOnboardTask) LookupPermission(permission string) (int, error) {
-	lc_permission := strings.ToLower(permission)
+	permission = strings.TrimSpace(permission)
+	lc_permission := strings.TrimSpace(strings.ToLower(permission))
 	if v, ok := folder_perms[lc_permission]; !ok {
 		var perms_list []string
 		for k := range folder_perms {
@@ -142,7 +143,11 @@ func (T CSVOnboardTask) LookupPermission(permission string) (int, error) {
 
 func (T *CSVOnboardTask) AddUsersToFolder(path, permission string, users []string, subscribe bool) (err error) {
 
-	path = NormalizePath(path)
+	for i, v := range users {
+		users[i] = strings.TrimSpace(v)
+	}
+
+	path = strings.TrimSpace(NormalizePath(path))
 
 	add_users_to_folders := func(path, permission string, users []string) (err error) {
 		role_id, err := T.LookupPermission(permission)

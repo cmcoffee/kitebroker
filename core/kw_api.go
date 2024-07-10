@@ -176,7 +176,7 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 			if token.Expires <= time.Now().Unix() {
 				Debug("Access token expired, using refresh token instead.")
 				// First attempt to use a refresh token if there is one.
-				token, err = session.refreshToken(username, token)
+				err = session.refreshToken(username, token)
 				if err != nil {
 					if K.secrets.signature_key == nil {
 						Debug("Unable to use refresh token: %v", err)

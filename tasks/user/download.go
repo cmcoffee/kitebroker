@@ -103,7 +103,6 @@ func (T *FolderDownloadTask) Main() (err error) {
 
 	var folders []KiteObject
 
-
 	for _, f := range T.input.src {
 		// If we're told to do all folders, grab TopFolders and break.
 		if f == "." || f == "*" {
@@ -114,27 +113,27 @@ func (T *FolderDownloadTask) Main() (err error) {
 			break
 		}
 		switch f[len(f)-1] {
-			case '*':
-				fallthrough
-			case '/':
-				folder, err := T.KW.Folder("0").Find(f)
-				if err != nil {
-					Err("%s: %s", f, err.Error())
-					continue
-				}
-				childs, err := T.KW.Folder(folder.ID).Contents()
-				if err != nil {
-					Err("%s: %s", f, err.Error())
-					continue
-				}
-				folders = append(folders, childs[0:]...)
-			default:
-				folder, err := T.KW.Folder("0").Find(f)
-				if err != nil {
-					Err("%s: %s", f, err.Error())
-					continue
-				}
-				folders = append(folders, folder)
+		case '*':
+			fallthrough
+		case '/':
+			folder, err := T.KW.Folder("0").Find(f)
+			if err != nil {
+				Err("%s: %s", f, err.Error())
+				continue
+			}
+			childs, err := T.KW.Folder(folder.ID).Contents()
+			if err != nil {
+				Err("%s: %s", f, err.Error())
+				continue
+			}
+			folders = append(folders, childs[0:]...)
+		default:
+			folder, err := T.KW.Folder("0").Find(f)
+			if err != nil {
+				Err("%s: %s", f, err.Error())
+				continue
+			}
+			folders = append(folders, folder)
 		}
 	}
 

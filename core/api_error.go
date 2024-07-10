@@ -22,11 +22,11 @@ type APIError interface {
 
 func (C APIClient) clear_token(username string) {
 	if C.secrets.signature_key == nil {
-		existing, err := C.TokenStore.Load(username)
+		token, err := C.TokenStore.Load(username)
 		if err != nil {
 			Critical(err)
 		}
-		if token, err := C.refreshToken(username, existing); err == nil {
+		if err := C.refreshToken(username, token); err == nil {
 			if err := C.TokenStore.Save(username, token); err != nil {
 				Critical(err)
 			}
