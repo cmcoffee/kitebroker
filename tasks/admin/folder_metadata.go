@@ -3,7 +3,7 @@ package admin
 import (
 	"encoding/csv"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"os"
 	"strings"
 	"sync"

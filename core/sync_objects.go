@@ -12,7 +12,7 @@ type SyncFile struct {
 	Created         time.Time     `json:"created"`
 	Modified        time.Time     `json:"modified"`
 	SrcFolderID     string        `json:"parent_id,omitempty"`
-	DestFolderID    int           `json:"kw_folder_id,omitempty"`
+	DestFolderID    string        `json:"kw_folder_id,omitempty"`
 	ParentOwner     string        `json:"parent_owner"`
 	SyncedVersionID string        `json:"synced_version_id,omitempty"`
 	SyncedCommentID string        `json:"synced_comment_id,omitempty"`

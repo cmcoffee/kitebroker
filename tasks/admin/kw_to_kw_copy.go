@@ -2,7 +2,7 @@ package admin
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"strings"
 	"time"
 )
@@ -121,7 +121,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 	T.folders_count = T.Report.Tally("Folders Analyzed")
 	T.files_count = T.Report.Tally("Files Analyzed")
 	T.files_copied = T.Report.Tally("Files Copied")
-	T.transfer_counter = T.Report.Tally("Total Transfered", HumanSize)
+	T.transfer_counter = T.Report.Tally("Total Transferred", HumanSize)
 
 	T.SRC.SetLimiter(T.KW.APIClient.GetLimit())
 	T.SRC.SetTransferLimiter(T.KW.APIClient.GetTransferLimit())

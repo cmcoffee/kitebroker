@@ -2,9 +2,9 @@ package user
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"io/fs"
 	"io/ioutil"
+	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,11 +77,11 @@ func (T *FolderUploadTask) Main() (err error) {
 	T.uploads = T.DB.Table("uploads")
 
 	var base_folder KiteObject
-
-	user_info, err := T.KW.MyUser()
-	if err != nil {
-		return err
-	}
+	/*
+		user_info, err := T.KW.MyUser()
+		if err != nil {
+			return err
+		}*/
 
 	T.file_count = T.Report.Tally("Files")
 	T.folder_count = T.Report.Tally("Folders")
@@ -138,22 +138,29 @@ func (T *FolderUploadTask) Main() (err error) {
 			case '/':
 				fallthrough
 			case '*':
-				base_folder, err = T.KW.Folder(user_info.BaseDirID).Info()
+				base_folder, err = T.KW.Folder("0").ResolvePath(strings.TrimSuffix(src_path, "*"))
 				if err != nil {
 					return err
 				}
 			default:
-				base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(src_path)
+				base_folder, err = T.KW.Folder("0").ResolvePath(src_path)
 				if err != nil {
 					return err
 				}
 			}
 		} else {
 			destination := T.input.dst
-			if !strings.HasSuffix(src, SLASH) && src[len(src)-1] != '*' {
-				destination = fmt.Sprintf("%s/%s", destination, src_path)
+			s, err := os.Stat(src)
+			if err != nil {
+				Err("%s: %s", src_path, err.Error())
+				continue
 			}
-			base_folder, err = T.KW.Folder(user_info.BaseDirID).ResolvePath(destination)
+			if !strings.HasSuffix(src, SLASH) && src[len(src)-1] != '*' {
+				if s.IsDir() {
+					destination = fmt.Sprintf("%s/%s", destination, src_path)
+				}
+			}
+			base_folder, err = T.KW.Folder("0").ResolvePath(destination)
 			if err != nil {
 				return err
 			}

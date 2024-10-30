@@ -43,6 +43,11 @@ type KiteBrokerTask struct {
 	Limiter LimitGroup
 }
 
+// Return specified KiteBrokerTask
+func (T *KiteBrokerTask) Get() *KiteBrokerTask {
+	return T
+}
+
 func (T *KiteBrokerTask) SetLimiter(limit int) {
 	T.Limiter = NewLimitGroup(limit)
 }
@@ -72,11 +77,6 @@ func (T *KiteBrokerTask) Add(input int) {
 		T.SetLimiter(50)
 	}
 	T.Limiter.Add(input)
-}
-
-// Return specified KiteBrokerTask
-func (T *KiteBrokerTask) Get() *KiteBrokerTask {
-	return T
 }
 
 // Parse flags associated with task.
@@ -182,7 +182,7 @@ var (
 	Exit            = nfo.Exit            // End Application, Run Global Defer.
 	PleaseWait      = nfo.PleaseWait      // Set Loading Prompt
 	Stderr          = nfo.Stderr          // Send to Stderr
-	ProgressBar     = nfo.ProgressBar     // Set Progress Bar animation
+	ProgressBar     = nfo.NewProgressBar  // Set Progress Bar animation
 	Path            = filepath.Clean      // Provide clean path
 	TransferCounter = nfo.TransferCounter // Tranfer Animation
 	NewLimitGroup   = xsync.NewLimitGroup // Limiter Group
@@ -196,7 +196,6 @@ var (
 	transferMonitor = nfo.TransferMonitor
 	leftToRight     = nfo.LeftToRight // Transfer Monitor Direction
 	rightToLeft     = nfo.RightToLeft // Transfer Monitor Direction
-	limitWidth      = nfo.LimitWidth  // Transfer Monitor Direction
 	nopSeeker       = nfo.NopSeeker   // Transform ReadCloser to ReadSeekCloser
 	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
 )
@@ -389,6 +388,14 @@ func ReadKWTime(input string) (time.Time, error) {
 func WriteKWTime(input time.Time) string {
 	t := input.UTC().Format(time.RFC3339)
 	return strings.Replace(t, "Z", "+0000", 1)
+}
+
+func PadZero(num int) string {
+	if num < 10 {
+		return fmt.Sprintf("0%d", num)
+	} else {
+		return fmt.Sprintf("%d", num)
+	}
 }
 
 // Create standard date YY-MM-DD out of time.Time.

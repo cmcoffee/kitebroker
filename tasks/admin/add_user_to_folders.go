@@ -2,16 +2,19 @@ package admin
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 )
 
 type AddUserTask struct {
 	input struct {
-		all_users   bool
-		user_emails []string
-		profile_id  int
-		folders     []string
-		user_to_add string
+		all_users     bool
+		user_emails   []string
+		profile_id    int
+		folders       []string
+		user_to_add   string
+		group_to_add  int
+		perm_string   string
+		permission_id int
 	}
 	limiter       LimitGroup
 	user_count    Tally
@@ -37,7 +40,9 @@ func (T *AddUserTask) Init() (err error) {
 	T.Flags.MultiVar(&T.input.folders, "folders", "<My Folder>", "Folder(s) to check and clean.")
 	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target Profile ID.")
 	T.Flags.BoolVar(&T.input.all_users, "all_users", "Add user to all folders.")
-	T.Flags.StringVar(&T.input.user_to_add, "downloader", "<user to add to folders>", "User account to add to folders.")
+	T.Flags.StringVar(&T.input.user_to_add, "user", "<user to add to folders>", "User account to add to folders.")
+	T.Flags.IntVar(&T.input.group_to_add, "group_id", -1, "LDAP Group ID to add to folders.")
+	T.Flags.StringVar(&T.input.perm_string, "permission", "downloader", "Permission to add to folders.")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -46,8 +51,8 @@ func (T *AddUserTask) Init() (err error) {
 		err = fmt.Errorf("Select users based on --profile_id or --users.")
 	}
 
-	if IsBlank(T.input.user_to_add) {
-		err = fmt.Errorf("Must provide a --downloader.")
+	if IsBlank(T.input.user_to_add) && T.input.group_to_add == -1 {
+		err = fmt.Errorf("Must provide a --user or --group_id.")
 	}
 
 	return
@@ -60,6 +65,11 @@ func (T *AddUserTask) Main() (err error) {
 
 	params := Query{"active": true, "verified": true, "allowsCollaboration": true}
 	user_getter, err := T.KW.Admin().Users(T.input.user_emails, T.input.profile_id, params)
+	if err != nil {
+		return err
+	}
+
+	T.input.permission_id, err = T.KW.FindPermission(T.input.perm_string)
 	if err != nil {
 		return err
 	}

@@ -20,5 +20,7 @@ classified.go
 add_repo.sh
 update_docs.sh
 update.sh
+custom_tasks.go
+tasks/custom
 .svn
 CVS

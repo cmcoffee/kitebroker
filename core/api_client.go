@@ -451,7 +451,7 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 }
 
 // Get a new token from a refresh token.
-func (K *APIClient) refreshToken(username string, auth *Auth) (error) {
+func (K *APIClient) refreshToken(username string, auth *Auth) error {
 	if auth == nil || auth.RefreshToken == NONE {
 		return fmt.Errorf("No refresh token found for %s.", username)
 	}

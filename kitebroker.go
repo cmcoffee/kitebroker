@@ -3,9 +3,9 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
+	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +41,7 @@ var global struct {
 	pause         bool
 	as_user       string
 	gen_token     bool
+	show_custom   bool
 }
 
 // Gathers information about the path and name of the kitebroker executable.
@@ -78,6 +79,9 @@ func load_config(config_file string) (err error) {
 		global.auth_mode = PASSWORD_AUTH
 		return fmt.Errorf("Unknown auth_flow setting in %s: %s", config_file, global.cfg.Get("configuration", "auth_flow"))
 	}
+
+	global.show_custom = global.cfg.GetBool("configuration", "custom_tasks")
+
 	return nil
 }
 
@@ -122,7 +126,7 @@ func main() {
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
 
-	flags.HelpText = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
+	flags.Header = fmt.Sprintf("Usage: %s [options]... <command> [parameters]...\n", os.Args[0])
 	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
 	f_err := flags.Parse(os.Args[1:])

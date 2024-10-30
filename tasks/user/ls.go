@@ -1,7 +1,7 @@
 package user
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"time"
 )
 

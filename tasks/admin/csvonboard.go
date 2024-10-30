@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"encoding/csv"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,6 +57,8 @@ func (T CSVOnboardTask) Desc() string {
 }
 
 func (T *CSVOnboardTask) Init() (err error) {
+	T.Flags.Header = `Task add/updates permissions, it takes a single csv.
+csv should be in the format of: path,permission,email`
 	T.Flags.StringVar(&T.input.manager, "manager", "<manager@domain.com>", "Manager of folders to add user with.\n\t(Kitebroker user will be used if none specified.)")
 	T.Flags.StringVar(&T.input.csv_file, "in_file", "<users.csv>", "CSV File to Import from.")
 	T.Flags.StringVar(&T.input.out_path, "out_path", "<.>", "Folder to save completed CSVs to.")
@@ -222,12 +224,13 @@ func (T *CSVOnboardTask) Main() (err error) {
 		out_path = T.input.out_path
 	}
 
-	current_time := time.Now().Unix()
+	ct := time.Now()
+	timestamp := fmt.Sprintf("%d_%s_%s-%s_%s_%s", ct.Year(), PadZero(int(ct.Month())), PadZero(ct.Day()), PadZero(ct.Hour()), PadZero(ct.Minute()), PadZero(ct.Second()))
 
 	ext := filepath.Ext(filename)
 
-	errors_filename := fmt.Sprintf("%s-%d.failures.csv", strings.TrimSuffix(filename, ext), current_time)
-	done_filename := fmt.Sprintf("%s-%d.complete.csv", strings.TrimSuffix(filename, ext), current_time)
+	errors_filename := fmt.Sprintf("%s-%s.failures.csv", strings.TrimSuffix(filename, ext), timestamp)
+	done_filename := fmt.Sprintf("%s-%s.complete.csv", strings.TrimSuffix(filename, ext), timestamp)
 
 	f, err := os.Open(T.input.csv_file)
 	if err != nil {

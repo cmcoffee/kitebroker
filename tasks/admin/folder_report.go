@@ -1,7 +1,7 @@
 package admin
 
 import (
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"strings"
 )
 

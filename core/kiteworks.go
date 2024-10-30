@@ -116,6 +116,21 @@ func (s KWSession) FolderRoles() (result []KitePermission, err error) {
 	}, -1, 1000)
 }
 
+// Find ID for specific permission.
+func (s KWSession) FindPermission(perm string) (id int, err error) {
+	perms, err := s.FolderRoles()
+	if err != nil {
+		return 0, err
+	}
+	l_perm := strings.ToLower(perm)
+	for _, v := range perms {
+		if l_perm == v.Name {
+			return v.ID, nil
+		}
+	}
+	return -1, fmt.Errorf("No permission found for %s.", perm)
+}
+
 type kw_rest_folder struct {
 	folder_id string
 	*KWSession

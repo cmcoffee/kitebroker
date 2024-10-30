@@ -3,9 +3,9 @@ package admin
 import (
 	"bytes"
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/csvp"
 	"io/ioutil"
+	. "kitebroker/core"
 	"os"
 	"strings"
 )
@@ -33,7 +33,7 @@ func (T UserInfoTask) Desc() string {
 }
 
 func (T *UserInfoTask) Init() (err error) {
-	T.Flags.HelpText = `Task updates user information, it takes a single csv.
+	T.Flags.Header = `Task updates user information, it takes a single csv.
 csv should be in the format of: email,name,mobile number
 `
 	T.Flags.StringVar(&T.input.csv_file, "csv", "<user_info.csv>", "CSV to map user data, should be in format\n\temail,real name,phone")

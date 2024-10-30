@@ -48,20 +48,22 @@ func UpdateKitebroker(appName string, localVer string, localPath string, localEx
 	update_avail := false
 
 	update_avail, k.remoteVer = k.check_for_update()
+	Log("Local Version:\t%s", k.localVer)
+	Log("Remote Version:\t%s\n\n", k.remoteVer)
 	if update_avail {
-		Log("### %s - Update Available!! ###\n\n", k.appName)
-		Log(" Local Version:\t%s", k.localVer)
-		Log("Remote Version:\t%s\n\n", k.remoteVer)
-		if val := nfo.ConfirmDefault("Download latest version?", true); val {
+		if val := nfo.ConfirmDefault("Update Available! Download?", true); val {
 			k.update_self()
+			return
 		}
 	} else {
-		Log("%s is already at the latest version: %s.", k.appName, k.remoteVer)
+		Log("No update available.")
 	}
 }
 
 // Check if server has a newer version available.
 func (k kitebrokerUpdater) check_for_update() (bool, string) {
+	//Log("### %s online-update ###\n\n", k.appName)
+	Log("Checking with https://%s...\n\n", k.updateServer)
 	resp, err := k.http_get(fmt.Sprintf("https://%s/kitebroker/version.txt", k.updateServer))
 	if err != nil {
 		Fatal(err)
@@ -72,23 +74,48 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 		Fatal(err)
 	}
 
-	cleanup_version := func(input string) int64 {
-		cinput := strings.Replace(input, ".", "", -1)
-		cinput = strings.Replace(cinput, "-", "", -1)
-		num, err := strconv.ParseInt(cinput, 10, 64)
-		if err != nil {
-			Fatal(fmt.Errorf("Unable to read remote server version: %s", input))
+	pad := func(num int) string {
+		if num < 10 {
+			return fmt.Sprintf("0%d", num)
 		}
-		return num
+		return fmt.Sprintf("%d", num)
 	}
 
-	r_ver := cleanup_version(string(remote_ver))
-	l_ver := cleanup_version(k.localVer)
+	cleanup_version := func(input string) (int64, error) {
+		vers := strings.Split(input, ".")
+
+		var ns []string
+		for _, n := range vers {
+			for _, v := range strings.Split(n, "-") {
+				val, err := strconv.Atoi(v)
+				if err != nil {
+					return 0, err
+				}
+				ns = append(ns, fmt.Sprintf("%s", pad(val)))
+			}
+		}
+		num, _ := strconv.ParseInt(strings.Join(ns, ""), 10, 64)
+		return num, nil
+	}
+
+	var (
+		r_ver int64
+		l_ver int64
+	)
+
+	r_ver, err = cleanup_version(string(remote_ver))
+	if err != nil {
+		Fatal("Could not determine remote version: %s", remote_ver)
+	}
+	l_ver, err = cleanup_version(k.localVer)
+	if err != nil {
+		Fatal("Could not determine local version: %s", remote_ver)
+	}
 
 	if r_ver > l_ver {
 		return true, string(remote_ver)
 	}
-	return false, k.localVer
+	return false, string(remote_ver)
 }
 
 // Perform self update.
@@ -116,7 +143,7 @@ func (k kitebrokerUpdater) update_self() {
 
 	// If the filesize is different, online version is different.
 	Log("\nDownloading latest %s update from %s...", k.appName, k.updateServer)
-	src := transferMonitor("Download Update", resp.ContentLength, rightToLeft|limitWidth, nopSeeker(iotimeout.NewReadCloser(resp.Body, time.Minute)))
+	src := transferMonitor("Download Update", resp.ContentLength, rightToLeft|nfo.ProgressBarSummary, nopSeeker(iotimeout.NewReadCloser(resp.Body, time.Minute)))
 
 	_, err = io.Copy(f, src)
 	if err != nil {

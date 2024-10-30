@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
 	"github.com/cmcoffee/snugforge/eflag"
+	. "kitebroker/core"
 	"os"
 	"runtime"
 	"strings"
@@ -21,7 +21,7 @@ type menu struct {
 	entries      map[string]*menu_elem
 	tasks        []string
 	admin_tasks  []string
-	hidden_tasks []string
+	custom_tasks []string
 }
 
 // Write out menu item.
@@ -32,7 +32,7 @@ func (m *menu) cmd_text(cmd string, desc string) {
 const (
 	_normal_task = 1 << iota
 	_admin_task
-	_hidden_task
+	_custom_task
 )
 
 // Menu item.
@@ -56,11 +56,11 @@ func (m *menu) Register(task Task) {
 }
 
 func (m *menu) RegisterName(name string, task Task) {
-	m.register(name, _hidden_task, task)
+	m.register(name, _custom_task, task)
 }
 
-func (m *menu) RegisterHidden(task Task) {
-	m.register(task.Name(), _hidden_task, task)
+func (m *menu) RegisterCustom(task Task) {
+	m.register(task.Name(), _custom_task, task)
 }
 
 // Sets the flags for the task.
@@ -139,8 +139,8 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	switch t_flag {
 	case _admin_task:
 		m.admin_tasks = append(m.admin_tasks, name)
-	case _hidden_task:
-		m.hidden_tasks = append(m.hidden_tasks, name)
+	case _custom_task:
+		m.custom_tasks = append(m.custom_tasks, name)
 	default:
 		m.tasks = append(m.tasks, name)
 	}
@@ -155,6 +155,20 @@ func (m *menu) Show() {
 
 	if m.text == nil {
 		m.text = tabwriter.NewWriter(os.Stderr, 25, 1, 3, '.', 0)
+	}
+
+	if global.show_custom {
+		for _, k := range m.custom_tasks {
+			if IsBlank(m.entries[k].desc) {
+				continue
+			}
+			m.cmd_text(k, m.entries[k].desc)
+		}
+		if m.custom_tasks != nil && len(m.custom_tasks) > 0 {
+			os.Stderr.Write([]byte("Custom Tasks:\n"))
+			m.text.Write([]byte(fmt.Sprintf("\n")))
+			m.text.Flush()
+		}
 	}
 
 	for _, k := range m.tasks {
@@ -355,7 +369,7 @@ func (m *menu) Select(input [][]string) (err error) {
 			m.mutex.RLock()
 			if x, ok := m.entries[args[0]]; ok {
 				if x.parsed {
-					ProgressBar.Done()
+					//ProgressBar.Done()
 					DefaultPleaseWait()
 					PleaseWait.Show()
 					name := strings.Split(x.name, ":")[0]

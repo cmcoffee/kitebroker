@@ -2,7 +2,7 @@ package admin
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"strings"
 	"time"
 )

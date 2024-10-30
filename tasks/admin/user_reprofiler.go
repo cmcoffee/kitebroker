@@ -2,7 +2,7 @@ package admin
 
 import (
 	"fmt"
-	. "github.com/cmcoffee/kitebroker/core"
+	. "kitebroker/core"
 	"strings"
 	"sync"
 )
@@ -78,8 +78,8 @@ func (T *UserProfilerTask) Main() (err error) {
 	}
 
 	T.user_count.Add(user_count)
-	ProgressBar.New("Users Processed", user_count)
-	defer ProgressBar.Done()
+	pb := ProgressBar("Users Processed", user_count)
+	defer pb.Done()
 
 	var wg sync.WaitGroup
 	limiter := make(chan struct{}, 100)
@@ -103,7 +103,7 @@ func (T *UserProfilerTask) Main() (err error) {
 			go func(user KiteUser) {
 				defer func() { <-limiter }()
 				defer wg.Done()
-				defer ProgressBar.Add(1)
+				defer pb.Add(1)
 				if T.deactivated && user.Deactivated == false {
 					return
 				}
