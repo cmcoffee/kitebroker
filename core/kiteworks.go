@@ -61,6 +61,7 @@ type KiteObject struct {
 	IsShared              bool           `json:"isShared,omitempty"`
 	IsLocked              interface{}    `json:"locked,omitempty"`
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
+	Pushed              bool             `json:"pushed,omitempty"`
 }
 
 // Return whether object is locked or not.
@@ -124,7 +125,7 @@ func (s KWSession) FindPermission(perm string) (id int, err error) {
 	}
 	l_perm := strings.ToLower(perm)
 	for _, v := range perms {
-		if l_perm == v.Name {
+		if l_perm == strings.ToLower(v.Name) {
 			return v.ID, nil
 		}
 	}
@@ -304,6 +305,16 @@ func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err
 		Output: &result,
 		Params: SetParams(params, Query{"with": "(user,role)"}),
 	}, -1, 1000)
+}
+
+func (s kw_rest_folder) ChangeMember(user_id string, permission int, downgrade_nested bool, params ...interface{}) (err error) {
+	params = SetParams(PostJSON{"roleId": permission}, params)
+	err = s.Call(APIRequest{
+		Method: "PUT",
+		Path: SetPath("/rest/folders/%s/members/%s", s.folder_id, user_id),
+		Params: SetParams(params, Query{"downgradeNested": downgrade_nested}),
+	})
+	return
 }
 
 // Add users to folder.
@@ -568,6 +579,16 @@ func (s kw_rest_file) Unlock() (err error) {
 	return
 }
 
+func (s kw_rest_file) Push() (err error) {
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/files/%s/actions/push", s.file_id),
+		Output: nil,
+		Params: nil,
+	})
+	return
+}
+
 func (s KWSession) File(file_id string) kw_rest_file {
 	return kw_rest_file{file_id, &s}
 }
@@ -749,6 +770,7 @@ func (s kw_rest_folder) MoveToFolder(folder_id string) (err error) {
 type KiteUser struct {
 	ID          string `json:"id"`
 	Active      bool   `json:"active"`
+	Created     string `json:"created"`
 	Deactivated bool   `json:"deactivated"`
 	Suspended   bool   `json:"suspended"`
 	Deleted     bool   `json:"deleted"`
@@ -1264,6 +1286,22 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 					}
 				}
 			}
+			/*
+			folders, err := user.Folder(folders[n].ID).Folders()
+			if err == nil {
+				for _, f := range folders {
+					next = append(next, &f)
+				}
+			}
+			files, err := user.Folder(folders[n].ID).Files()
+			if err == nil {
+				for _, f := range files {
+					F.file_chan <- &f
+				}
+			}
+			*/
+
+
 			childs, err := user.Folder(folders[n].ID).Contents()
 			if err == nil {
 				for i := 0; i < len(childs); i++ {

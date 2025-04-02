@@ -79,7 +79,9 @@ func (T *UserRemoverTask) Init() (err error) {
 	T.limit = T.input.limit
 
 	if IsBlank(T.input.csv_file) && T.input.inactive_days > 0 {
-		return fmt.Errorf("--csv_file is required if --inactive_days is specified.")
+		if !T.input.unverified {
+			return fmt.Errorf("--csv_file is required if --inactive_days is specified.")
+		}
 	}
 
 	if T.input.inactive_days > 0 {
@@ -276,6 +278,7 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	//}
 
 	if !input.Deactivated {
+
 		if input.Verified && !T.input.ignore_inactivity {
 			return false
 		}
@@ -289,16 +292,19 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 			return false
 		}
 	}
+
 	if T.input.suspended {
 		if !input.Suspended {
 			return false
 		}
 	}
+
 	if T.input.external_only {
 		if input.Internal {
 			return false
 		}
 	}
+
 
 	if T.input.profile_id != 0 {
 		if input.UserTypeID != T.input.profile_id {
@@ -306,7 +312,16 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 		}
 	}
 
-	if !T.inactivity_time.IsZero() {
+	created, err := ReadKWTime(input.Created)
+	if err != nil {
+		Err("%s: %v", input.Email, err)
+	}
+
+    if T.input.unverified && T.inactivity_time.Unix() < created.Unix() {
+    	return false
+    }
+
+	if !T.inactivity_time.IsZero() && !T.input.ignore_inactivity {
 		if last_activity, ok := T.last_activity[strings.ToLower(input.Email)]; ok {
 			if T.inactivity_time.Unix() < last_activity.Unix() {
 				return false
@@ -335,7 +350,7 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	params = SetParams(params, Query{"remoteWipe": T.input.remote_wipe})
 	params = SetParams(params, Query{"withdrawFileLinks": T.input.withdraw_links, "withdrawRequestFiles": T.input.withdraw_links})
 
-	err := T.KW.Admin().DeleteUser(input, params)
+	err = T.KW.Admin().DeleteUser(input, params)
 	if err != nil {
 		Err(err)
 		return false
