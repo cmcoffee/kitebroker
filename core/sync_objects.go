@@ -53,17 +53,21 @@ type SyncTask struct {
 	Message     string    `json:"message"`
 }
 
+// SyncVersion represents a specific version of a synced file.
+// It contains metadata about the version, such as its ID,
+// version number, uploader, and timestamps.
 type SyncVersion struct {
 	SrcID    string    `json:"src_id"`
 	DestID   string    `json:"dest_id"`
-	Ver      int       `json:"version_num`
+	Ver      int       `json:"version_num"`
 	Uploader string    `json:"Uploader"`
 	Name     string    `json:"name"`
 	Created  time.Time `json:"utc_created"`
-	Modified time.Time `json"utc_modified"`
+	Modified time.Time `json:"utc_modified"`
 	Size     int64     `json:"size"`
 }
 
+// SyncComment represents a comment associated with a synced file.
 type SyncComment struct {
 	ID       string    `json:"id"`
 	Created  time.Time `json:"created_at"`

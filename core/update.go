@@ -6,7 +6,6 @@ import (
 	"github.com/cmcoffee/snugforge/iotimeout"
 	"github.com/cmcoffee/snugforge/nfo"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,7 +15,9 @@ import (
 	"time"
 )
 
-// kitebrokerUpdater Object
+// kitebrokerUpdater manages the update process for Kitebroker.
+// It encapsulates the necessary information and methods to
+// check for, download, and apply updates.
 type kitebrokerUpdater struct {
 	updateServer string
 	appName      string
@@ -31,7 +32,8 @@ type kitebrokerUpdater struct {
 //global.cfg.Get("configuration", "proxy_uri")
 //!global.cfg.GetBool("configuration", "ssl_verify")
 
-// Updates kitebroker app.
+// UpdateKitebroker Updates the kitebroker.ioapp.(*http.io. ReaderFrom io.Reader{io.NewSection(io.NewSectionReader(io.NewBuffer(buffer.(*Bytes").Bytes()io.NewReader(buffer.(*buffer).Bytes())io.NewBuffer(buffer.(*buffer).Bytes())})})
+// with the latest version if available.
 func UpdateKitebroker(appName string, localVer string, localPath string, localExec string, sslVerify bool, proxyURL string) {
 
 	k := &kitebrokerUpdater{
@@ -60,7 +62,9 @@ func UpdateKitebroker(appName string, localVer string, localPath string, localEx
 	}
 }
 
-// Check if server has a newer version available.
+// check_for_update checks for a newer versions of the application.
+// It returns true if an update is available, along with the remote version.
+// Otherwise, it returns false and the remote version.
 func (k kitebrokerUpdater) check_for_update() (bool, string) {
 	//Log("### %s online-update ###\n\n", k.appName)
 	Log("Checking with https://%s...\n\n", k.updateServer)
@@ -69,7 +73,7 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 		Fatal(err)
 	}
 	defer resp.Body.Close()
-	remote_ver, err := ioutil.ReadAll(resp.Body)
+	remote_ver, err := io.ReadAll(resp.Body)
 	if err != nil {
 		Fatal(err)
 	}
@@ -112,13 +116,15 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 		Fatal("Could not determine local version: %s", remote_ver)
 	}
 
+	Debug("Remote: %d vs Local: %d", r_ver, l_ver)
+
 	if r_ver > l_ver {
 		return true, string(remote_ver)
 	}
 	return false, string(remote_ver)
 }
 
-// Perform self update.
+// update_self attempts to download and replace the current executable.
 func (k kitebrokerUpdater) update_self() {
 	defer Exit(0)
 
@@ -159,15 +165,16 @@ func (k kitebrokerUpdater) update_self() {
 		dest_file string
 	)
 
+	dest_file = LocalPath(fmt.Sprintf("%s/%s", k.localPath, k.localExec))
+
 	if current_os == "windows" {
-		file_name := strings.Split(k.localExec, ".")
-		new_file_name := fmt.Sprintf("%s-%s.%s", file_name[0], k.remoteVer, file_name[1])
-		dest_file = LocalPath(fmt.Sprintf("%s/%s", k.localPath, new_file_name))
-		final_msg = fmt.Sprintf("\nUpdate downloaded as %s.", dest_file)
-	} else {
-		dest_file = LocalPath(fmt.Sprintf("%s/%s", k.localPath, k.localExec))
-		final_msg = fmt.Sprintf("\n%s has been updated to the latest version: %s", k.appName, k.remoteVer)
+		file_split := strings.Split(k.localExec, ".")
+		if err = os.Rename(dest_file, fmt.Sprintf("%s/%s.old", k.localPath, file_split[0])); err != nil {
+			Fatal(err)
+		}
 	}
+
+	final_msg = fmt.Sprintf("\n%s has been updated to the latest version: %s", k.appName, k.remoteVer)
 
 	if err = os.Rename(temp_file_name, dest_file); err != nil {
 		Fatal(err)
@@ -177,7 +184,8 @@ func (k kitebrokerUpdater) update_self() {
 	return
 }
 
-// Web get function.
+// http_get fetches the content from the given URL using HTTP GET.
+// It handles proxy settings and SSL verification.
 func (k kitebrokerUpdater) http_get(target string) (*http.Response, error) {
 	var (
 		transport http.Transport

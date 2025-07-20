@@ -5,7 +5,7 @@ import (
 	. "github.com/cmcoffee/kitebroker/core"
 )
 
-// Object for task.
+// SendFileTask Object for task.
 type SendFileTask struct {
 	in struct {
 		to          []string
@@ -32,7 +32,7 @@ func (T SendFileTask) Desc() string {
 	return "Send files/folders in kiteworks."
 }
 
-// Task init function, should parse flag, do pre-checks.
+// Init Task init function, should parse flag, do pre-checks.
 func (T *SendFileTask) Init() (err error) {
 	T.Flags.MultiVar(&T.in.to, "to", "<email addresses>", "Recipient(s) to send file to.")
 	T.Flags.MultiVar(&T.in.cc, "cc", "<email addresses>", "Recipient(s) to carbon copy send file to.")

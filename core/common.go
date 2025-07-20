@@ -12,7 +12,6 @@ import (
 	"github.com/cmcoffee/snugforge/swapreader"
 	"github.com/cmcoffee/snugforge/xsync"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,20 +19,24 @@ import (
 	"time"
 )
 
+// err_table stores error messages for reporting.
 var err_table *Table
 
+// SetErrTable sets the error table.
+// It drops any existing data in the provided table.
 func SetErrTable(input Table) {
 	err_table = &input
 	err_table.Drop()
 }
 
-// Menu item flags
+// FlagSet encapsulates command-line flags and provides parsing functionality.
 type FlagSet struct {
 	FlagArgs []string
 	*eflag.EFlagSet
 }
 
-// Required for each task object.
+// KiteBrokerTask encapsulates the components required to execute a Kite broker task.
+// It manages flags, database connections, reporting, Kite Web Session, and rate limiting.
 type KiteBrokerTask struct {
 	Flags   FlagSet
 	DB      Database
@@ -43,15 +46,20 @@ type KiteBrokerTask struct {
 	Limiter LimitGroup
 }
 
-// Return specified KiteBrokerTask
+// Get returns the KiteBrokerTask instance itself.
+// It enables method chaining or direct access to the task.
 func (T *KiteBrokerTask) Get() *KiteBrokerTask {
 	return T
 }
 
+// SetLimiter sets the limiter for the KiteBrokerTask with the given limit.
+// It creates a new LimitGroup with the specified limit and assigns it to
+// the task's Limiter field.
 func (T *KiteBrokerTask) SetLimiter(limit int) {
 	T.Limiter = NewLimitGroup(limit)
 }
 
+// Wait blocks until a permit is available from the limiter.
 func (T *KiteBrokerTask) Wait() {
 	if T.Limiter == nil {
 		return
@@ -59,6 +67,8 @@ func (T *KiteBrokerTask) Wait() {
 	T.Limiter.Wait()
 }
 
+// Try attempts to acquire a permit from the rate limiter.
+// Returns true if a permit was acquired, false otherwise.
 func (T *KiteBrokerTask) Try() bool {
 	if T.Limiter == nil {
 		return false
@@ -66,12 +76,15 @@ func (T *KiteBrokerTask) Try() bool {
 	return T.Limiter.Try()
 }
 
+// Done signals the completion of a task, decrementing the limiter if present.
 func (T *KiteBrokerTask) Done() {
 	if T.Limiter != nil {
 		T.Limiter.Done()
 	}
 }
 
+// Add increments the limiter by the given input value.
+// If the limiter is nil, it initializes it with a default limit of 50.
 func (T *KiteBrokerTask) Add(input int) {
 	if T.Limiter == nil {
 		T.SetLimiter(50)
@@ -79,7 +92,7 @@ func (T *KiteBrokerTask) Add(input int) {
 	T.Limiter.Add(input)
 }
 
-// Parse flags associated with task.
+// Parse parses the command-line arguments.
 func (f *FlagSet) Parse() (err error) {
 	if err = f.EFlagSet.Parse(f.FlagArgs[0:]); err != nil {
 		return err
@@ -87,6 +100,10 @@ func (f *FlagSet) Parse() (err error) {
 	return nil
 }
 
+// MyRoot returns the absolute path to the root directory of the executable.
+// file. It uses os.Executable() to get the path to the executable, then
+// filepath.Abs and filepath.Dir to determine the root directory, and finally
+// filepath.ToSlash to convert it to a standardized path.
 func MyRoot() string {
 	exec, err := os.Executable()
 	Critical(err)
@@ -97,11 +114,13 @@ func MyRoot() string {
 	return GetPath(root)
 }
 
+// Text returns the underlying command-line arguments.
 func (f *FlagSet) Text() (output []string) {
 	return f.FlagArgs
 }
 
-// Task Interface
+// Task defines the interface for Kite broker tasks.
+// It provides methods for creating, initializing, and running tasks.
 type Task interface {
 	New() Task
 	Get() *KiteBrokerTask
@@ -111,17 +130,22 @@ type Task interface {
 	Main() error
 }
 
+// TaskArgs represents arguments passed to a task.
+// It is a map of string keys to interface{} values,
+// allowing for flexible task configuration.
 type TaskArgs map[string]interface{}
 
-// Easy GetBody wrapper for requests.
+// GetBodyBytes returns a function that returns an io.ReadCloser
+// for the given byte slice.
 func GetBodyBytes(input []byte) func() (io.ReadCloser, error) {
 	return func() (io.ReadCloser, error) {
-		return ioutil.NopCloser(bytes.NewReader(input)), nil
+		return io.NopCloser(bytes.NewReader(input)), nil
 	}
 }
 
-// Allows a KitebrokerTask to launch another KiteBrokerTask.
-func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args ...map[string]interface{}) (err error) {
+// RunTask executes the given task with provided database, report, and arguments.
+// It initializes the task, sets dependencies, and runs the main logic.
+func (K KWSession) RunTask(input Task, db Database, report *TaskReport, args ...map[string]interface{}) (err error) {
 	var arg_string []string
 	for _, arg := range args {
 		for k, v := range arg {
@@ -155,7 +179,7 @@ func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args ...
 	if err = input.Init(); err != nil {
 		return err
 	}
-	task.KW = T
+	task.KW = K
 	task.Report = report
 	if err = input.Main(); err != nil {
 		return err
@@ -163,12 +187,13 @@ func (T KWSession) RunTask(input Task, db Database, report *TaskReport, args ...
 	return nil
 }
 
+// NONE is an empty string representing no path separator.
+// SLASH is the operating system's path separator.
 const (
 	NONE  = ""
 	SLASH = string(os.PathSeparator)
 )
 
-// Import from go-nfo.
 var (
 	Log             = nfo.Log             // Standard Log Output
 	Fatal           = nfo.Fatal           // Fatal Log Output & Exit.
@@ -200,11 +225,18 @@ var (
 	noRate          = nfo.NoRate      // Transfer Monitor ProgressBar
 )
 
+// NewFlagSet is a function that returns a new flag set.
+// ReturnErrorOnly is a function that returns only the error.
 var (
 	NewFlagSet      = eflag.NewFlagSet
 	ReturnErrorOnly = eflag.ReturnErrorOnly
 )
 
+// BitFlag is an alias for xsync.BitFlag.
+// LimitGroup is an alias for xsync.LimitGroup.
+// ConfigStore is an alias for cfg.Store.
+// ReadSeekCloser is an alias for nfo.ReadSeekCloser.
+// SwapReader is an alias for swapreader.Reader.
 type (
 	BitFlag        = xsync.BitFlag
 	LimitGroup     = xsync.LimitGroup
@@ -213,14 +245,15 @@ type (
 	SwapReader     = swapreader.Reader
 )
 
+// error_counter tracks the number of errors encountered.
 var error_counter uint32
 
-// Returns amount of times Err has been triggered.
+// ErrCount Returns amount of times Err has been triggered.
 func ErrCount() uint32 {
 	return atomic.LoadUint32(&error_counter)
 }
 
-// Log Standard Error, adds counter to ErrCount()
+// Err Log Standard Error, adds counter to ErrCount()
 func Err(input ...interface{}) {
 	atomic.AddUint32(&error_counter, 1)
 	msg := nfo.Stringer(input...)
@@ -230,7 +263,7 @@ func Err(input ...interface{}) {
 	}
 }
 
-// Converts string to date.
+// StringDate Converts string to date.
 func StringDate(input string) (output time.Time, err error) {
 	if input == NONE {
 		return
@@ -247,14 +280,14 @@ func StringDate(input string) (output time.Time, err error) {
 	return
 }
 
-// Fatal Error Check
+// Critical Fatal Error Check
 func Critical(err error) {
 	if err != nil {
 		Fatal(err)
 	}
 }
 
-// Splits path up
+// SplitPath Splits path up
 func SplitPath(path string) (folder_path []string) {
 	if strings.Contains(path, "/") {
 		path = strings.TrimSuffix(path, "/")
@@ -274,7 +307,7 @@ func SplitPath(path string) (folder_path []string) {
 	return
 }
 
-// Returns please wait prompt back to default setting.
+// DefaultPleaseWait Returns please wait prompt back to default setting.
 func DefaultPleaseWait() {
 	PleaseWait.Set(func() string { return "Please wait ..." }, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 }
@@ -324,7 +357,7 @@ func MD5Sum(filename string) (sum string, err error) {
 	return string(s), nil
 }
 
-// Generates a random byte slice of length specified.
+// RandBytes Generates a random byte slice of length specified.
 func RandBytes(sz int) []byte {
 	if sz <= 0 {
 		sz = 16
@@ -347,7 +380,7 @@ type Error string
 
 func (e Error) Error() string { return string(e) }
 
-// Creates folders.
+// MkDir Creates folders.
 func MkDir(name ...string) (err error) {
 	for _, path := range name {
 		err = os.MkdirAll(path, 0766)
@@ -378,13 +411,13 @@ func MkDir(name ...string) (err error) {
 	return nil
 }
 
-// Parse Timestamps from kiteworks
+// ReadKWTime Parse Timestamps from kiteworks
 func ReadKWTime(input string) (time.Time, error) {
 	input = strings.Replace(input, "+0000", "Z", 1)
 	return time.Parse(time.RFC3339, input)
 }
 
-// Write timestamps for kiteworks.
+// WriteKWTime Write timestamps for kiteworks.
 func WriteKWTime(input time.Time) string {
 	t := input.UTC().Format(time.RFC3339)
 	return strings.Replace(t, "Z", "+0000", 1)
@@ -398,7 +431,7 @@ func PadZero(num int) string {
 	}
 }
 
-// Create standard date YY-MM-DD out of time.Time.
+// DateString Create standard date YY-MM-DD out of time.Time.
 func DateString(input time.Time) string {
 	pad := func(num int) string {
 		if num < 10 {
@@ -411,7 +444,7 @@ func DateString(input time.Time) string {
 	return fmt.Sprintf("%s-%s-%s", pad(input.Year()), pad(int(input.Month())), pad(input.Day()))
 }
 
-// Combines several paths.
+// CombinePath Combines several paths.
 func CombinePath(name ...string) string {
 	if name == nil {
 		return NONE
@@ -422,7 +455,7 @@ func CombinePath(name ...string) string {
 	return LocalPath(fmt.Sprintf("%s%s%s", name[0], SLASH, strings.Join(name[1:], SLASH)))
 }
 
-// Adapts path to whatever local filesystem uses.
+// LocalPath Adapts path to whatever local filesystem uses.
 func LocalPath(path string) string {
 	path = strings.Replace(path, "/", SLASH, -1)
 	subs := strings.Split(path, SLASH)
@@ -432,7 +465,7 @@ func LocalPath(path string) string {
 	return strings.Join(subs, SLASH)
 }
 
-// Switches windows based slash to kiteworks compatible.
+// NormalizePath Switches windows based slash to kiteworks compatible.
 func NormalizePath(path string) string {
 	path = strings.Replace(path, "\\", "/", -1)
 	subs := strings.Split(path, "/")
@@ -442,12 +475,12 @@ func NormalizePath(path string) string {
 	return strings.Join(subs, "/")
 }
 
-// Path rename.
+// Rename Path rename.
 func Rename(oldpath, newpath string) error {
 	return os.Rename(oldpath, newpath)
 }
 
-// Confirms all strings handed to it are empty.
+// IsBlank Confirms all strings handed to it are empty.
 func IsBlank(input ...string) bool {
 	for _, v := range input {
 		if len(v) == 0 {
@@ -457,7 +490,7 @@ func IsBlank(input ...string) bool {
 	return false
 }
 
-// Remove leading and trailing quotation marks on string.
+// Dequote Remove leading and trailing quotation marks on string.
 func Dequote(input string) string {
 	var output string
 	output = input

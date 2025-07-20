@@ -13,17 +13,23 @@ import (
 	"time"
 )
 
+// APPNAME is the application name "kitebroker
 const APPNAME = "kitebroker"
 
+// VERSION holds the application's version string.
+//
 //go:embed version.txt
 var VERSION string
 
+// Authentication method constants.
+// SIGNATURE_AUTH represents signature-based authentication.
+// PASSWORD_AUTH represents password-based authentication.
 const (
 	SIGNATURE_AUTH = iota
 	PASSWORD_AUTH
 )
 
-// Global Variables
+// global holds application-wide configuration and state.
 var global struct {
 	cfg           ConfigStore
 	db            Database
@@ -42,9 +48,10 @@ var global struct {
 	as_user       string
 	gen_token     bool
 	show_custom   bool
+	single_thread bool
 }
 
-// Gathers information about the path and name of the kitebroker executable.
+// get_runtime_info returns the name of the executable.
 func get_runtime_info() string {
 	exec, err := os.Executable()
 	Critical(err)
@@ -59,7 +66,8 @@ func get_runtime_info() string {
 	return localExec
 }
 
-// Loads the configuraiton file.
+// load_config loads the configuration file and sets the authentication mode.
+// It also sets the custom tasks flag.
 func load_config(config_file string) (err error) {
 	if err := load_config_defaults(); err != nil {
 		global.auth_mode = PASSWORD_AUTH
@@ -85,13 +93,13 @@ func load_config(config_file string) (err error) {
 	return nil
 }
 
-// Enable Debug Logging Output
+// enable_debug enables debug output to stdout.
 func enable_debug() {
 	nfo.SetOutput(nfo.DEBUG, os.Stdout)
 	nfo.SetFile(nfo.DEBUG, nfo.GetFile(nfo.ERROR))
 }
 
-// Enable Tracec Logging Output
+// enable_trace enables trace output to stdout.
 func enable_trace() {
 	nfo.SetOutput(nfo.TRACE, os.Stdout)
 	nfo.SetFile(nfo.TRACE, nfo.GetFile(nfo.ERROR))
@@ -123,6 +131,7 @@ func main() {
 	flags.Order("task", "new_task", "repeat", "setup", "quiet", "pause")
 	flags.Footer = " "
 
+	flags.BoolVar(&global.single_thread, "serial", NONE)
 	flags.BoolVar(&global.debug, "debug", NONE)
 	flags.BoolVar(&global.snoop, "snoop", NONE)
 
@@ -130,6 +139,14 @@ func main() {
 	flags.BoolVar(&global.new_task_file, "new_task", "Creates a task file template for loading with --task.")
 
 	f_err := flags.Parse(os.Args[1:])
+
+	if global.debug {
+		enable_debug()
+	}
+
+	if global.snoop {
+		enable_trace()
+	}
 
 	if *version {
 		Stdout("### %s v%s ###", APPNAME, VERSION)
@@ -148,14 +165,6 @@ func main() {
 			pause()
 		}
 	})
-
-	if global.debug {
-		enable_debug()
-	}
-
-	if global.snoop {
-		enable_trace()
-	}
 
 	if global.gen_token {
 		nfo.Animations = false
@@ -186,7 +195,7 @@ func main() {
 	}
 
 	// We need to do a quick look to see what commands we display for --help
-	//err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
+	// err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
 		if f_err != eflag.ErrHelp {

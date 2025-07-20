@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"github.com/cmcoffee/snugforge/iotimeout"
 	"github.com/cmcoffee/snugforge/nfo"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -18,9 +18,11 @@ import (
 	"time"
 )
 
+// DEFAULT_KWAPI_VERSION defines the default KiteWorks API version.
 const DEFAULT_KWAPI_VERSION = 28
 
-// Reads KW rest errors and interprets them.
+// kwapiError parses a Kiteworks API error response body and
+// registers the errors in an APIError object.
 func kwapiError(body []byte) (e APIError) {
 	// kiteworks API Error
 	type KiteErr struct {
@@ -50,24 +52,28 @@ func kwapiError(body []byte) (e APIError) {
 	return
 }
 
-// KWAPI Wrapper for kiteworks.
+// KWAPI represents the Kiteworks API client.
+// It encapsulates the API client and provides methods for interacting with the Kiteworks API.
 type KWAPI struct {
 	*APIClient
 }
 
-// kiteworks Session.
+// KWSession represents a user session with access to the KWAPI.
+// It encapsulates the username, a scoped database instance, and a KWAPI instance.
 type KWSession struct {
 	Username string
 	db       Database
 	*KWAPI
 }
 
-// Wraps a session for specfiied user.
+// Session creates a new session for the given username.
 func (K *KWAPI) Session(username string) KWSession {
 	return KWSession{username, K.db.Sub(username), K}
 }
 
-// Wrapper around Call to provide username.
+// Call / Call invokes the API client with the given request.
+// It sets default values for version and header if not provided.
+// It also sets the username for the request.
 func (K KWSession) Call(api_req APIRequest) (err error) {
 	if api_req.Version <= 0 {
 		api_req.Version = DEFAULT_KWAPI_VERSION
@@ -82,9 +88,8 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 	return K.APIClient.Call(api_req)
 }
 
-// Call handler which allows for easier getting of multiple-object arrays.
-// An offset of -1 will provide all results, any positive offset will only return the requested results.
-func (s KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
+// DataCall makes a series of API calls to retrieve data with offset and limit.
+func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 
 	output := req.Output
 	params := req.Params
@@ -119,7 +124,7 @@ func (s KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 	for {
 		req.Params = SetParams(params, Query{"limit": limit, "offset": offset})
 		req.Output = &o
-		if err = s.Call(req); err != nil {
+		if err = K.Call(req); err != nil {
 			return err
 		}
 		// Decode the results we get, convert to []map[string]interface{}, and stack results.
@@ -159,12 +164,13 @@ func (s KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 	return
 }
 
-// Authenticate with server.
+// Authenticate attempts to authenticate a user and return a session.
+// It handles both initial authentication and token refreshing.
 func (K *KWAPI) Authenticate(username string) (*KWSession, error) {
 	return K.authenticate(username, true, false)
 }
 
-// Login to server
+// Login attempts to log in a user and return a session.
 func (K *KWAPI) Login(username string) (*KWSession, error) {
 	if username != NONE {
 		session := K.Session(username)
@@ -197,7 +203,8 @@ func (K *KWAPI) Login(username string) (*KWSession, error) {
 	return K.authenticate(username, true, true)
 }
 
-// Set User Credentials for kw_api.
+// Authenticate attempts to authenticate a user and return a session.
+// It handles both initial authentication and token refreshing.
 func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*KWSession, error) {
 	if K.TokenStore == nil {
 		return nil, fmt.Errorf("APIClient: NewToken not initialized.")
@@ -255,15 +262,14 @@ func (K *KWAPI) authenticate(username string, permit_change, auth_loop bool) (*K
 		}
 		return &session, nil
 	}
-
-	return nil, fmt.Errorf("Unable to obtain a token for specified user.")
 }
 
 func (K *KWAPI) KWNewToken(username string) (auth *Auth, err error) {
 	return K.kwNewToken(username, NONE)
 }
 
-// Generate a new Bearer token from kiteworks.
+// kwNewToken obtains a new authentication token for a given user.
+// It handles both password-based and signature-based authentication.
 func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 	path := fmt.Sprintf("https://%s/oauth/token", K.Server)
 
@@ -346,7 +352,7 @@ func (K *KWAPI) kwNewToken(username, password string) (auth *Auth, err error) {
 		}
 	}
 
-	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
+	req.Body = io.NopCloser(bytes.NewReader([]byte(postform.Encode())))
 	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
 	defer req.Body.Close()
 

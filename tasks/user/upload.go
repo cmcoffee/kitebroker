@@ -3,7 +3,6 @@ package user
 import (
 	"fmt"
 	"io/fs"
-	"io/ioutil"
 	. "kitebroker/core"
 	"os"
 	"path/filepath"
@@ -276,7 +275,7 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 			continue
 		}
 
-		nested, err := ioutil.ReadDir(target.path)
+		nested, err := os.ReadDir(target.path)
 		if err != nil {
 			Err("%s: %v", target.path, err)
 			n++
@@ -284,6 +283,11 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 		}
 
 		for _, v := range nested {
+			file_info, err := v.Info()
+			if err != nil {
+				Err("%s[%s]: %v", target.Path, target.ID, err)
+				continue
+			}
 			if v.IsDir() {
 				T.folder_count.Add(1)
 				kw_folder, err := T.KW.Folder(target.ID).Find(v.Name())
@@ -304,9 +308,9 @@ func (T *FolderUploadTask) ProcessFolder(local_path string, folder *KiteObject) 
 					}
 					T.cache.CacheFolder(T.KW, &kw_folder)
 				}
-				next = append(next, child{CombinePath(target.path, v.Name()), v, &kw_folder})
+				next = append(next, child{CombinePath(target.path, v.Name()), file_info, &kw_folder})
 			} else {
-				next = append(next, child{CombinePath(target.path, v.Name()), v, target.KiteObject})
+				next = append(next, child{CombinePath(target.path, v.Name()), file_info, target.KiteObject})
 			}
 		}
 		n++

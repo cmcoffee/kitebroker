@@ -44,15 +44,15 @@ type CSVOnboardTask struct {
 	KiteBrokerTask
 }
 
-func (T CSVOnboardTask) New() Task {
+func (T *CSVOnboardTask) New() Task {
 	return new(CSVOnboardTask)
 }
 
-func (T CSVOnboardTask) Name() string {
+func (T *CSVOnboardTask) Name() string {
 	return "csv_onboard"
 }
 
-func (T CSVOnboardTask) Desc() string {
+func (T *CSVOnboardTask) Desc() string {
 	return "Add users to Folder."
 }
 
@@ -128,7 +128,7 @@ func (T *CSVOnboardTask) LookupFolder(path string) (string, error) {
 	}
 }
 
-func (T CSVOnboardTask) LookupPermission(permission string) (int, error) {
+func (T *CSVOnboardTask) LookupPermission(permission string) (int, error) {
 	permission = strings.TrimSpace(permission)
 	lc_permission := strings.TrimSpace(strings.ToLower(permission))
 	if v, ok := folder_perms[lc_permission]; !ok {

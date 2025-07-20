@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Object for task.
+// MembershipTask Object for task.
 type MembershipTask struct {
 	target       string
 	add_users    []string
@@ -19,19 +19,19 @@ type MembershipTask struct {
 	KiteBrokerTask
 }
 
-func (T MembershipTask) New() Task {
+func (T *MembershipTask) New() Task {
 	return new(MembershipTask)
 }
 
-func (T MembershipTask) Name() string {
+func (T *MembershipTask) Name() string {
 	return "membership"
 }
 
-func (T MembershipTask) Desc() string {
+func (T *MembershipTask) Desc() string {
 	return "Modify membership task for folders."
 }
 
-// Task init function, should parse flag, do pre-checks.
+// Init Task init function, should parse flag, do pre-checks.
 func (T *MembershipTask) Init() (err error) {
 	T.Flags.StringVar(&T.target, "folder", "<target folder>", "Target kiteworks folder")
 	T.Flags.MultiVar(&T.add_users, "add", "<user emails>", "Users to be added to kiteworks folder.")

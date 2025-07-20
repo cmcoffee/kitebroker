@@ -16,6 +16,9 @@ xcuserdata
 tasks/classified/*
 classified.go
 
+#jetbrains
+.idea
+
 # svn & cvs
 add_repo.sh
 update_docs.sh
@@ -24,3 +27,4 @@ custom_tasks.go
 tasks/custom
 .svn
 CVS
+

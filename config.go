@@ -18,17 +18,24 @@ import (
 // Wrapper for config items stored in database
 type dbCFG struct{}
 
+// Holds database configuration settings.
 var dbConfig dbCFG
 
+// user retrieves the configured username.
 func (d dbCFG) user() (account string) {
 	global.db.Get("kitebroker", "account", &account)
 	return
 }
 
+// Sets the user account in the database.
+//
+// account: The user account to set.
 func (d dbCFG) set_user(account string) {
 	global.db.Set("kitebroker", "account", &account)
 }
 
+// max_api_calls returns the maximum allowed API calls.
+// Returns 3 if the value is not found in the database.
 func (d dbCFG) max_api_calls() (max int) {
 	found := global.db.Get("kitebroker", "max_api_calls", &max)
 	if !found {
@@ -37,10 +44,14 @@ func (d dbCFG) max_api_calls() (max int) {
 	return
 }
 
+// Sets the maximum number of API calls allowed.
+// max: The maximum number of API calls to set.
 func (d dbCFG) set_max_api_calls(max int) {
 	global.db.Set("kitebroker", "max_api_calls", &max)
 }
 
+// max_file_transfer retrieves the maximum file transfer size in bytes.
+// If not found in the database, it returns a default value of 3.
 func (d dbCFG) max_file_transfer() (max int) {
 	found := global.db.Get("kitebroker", "max_file_transfer", &max)
 	if !found {
@@ -49,14 +60,20 @@ func (d dbCFG) max_file_transfer() (max int) {
 	return
 }
 
+// Sets the maximum file transfer size in bytes.
+// max: The maximum file transfer size to set.
 func (d dbCFG) set_max_file_transfer(max int) {
 	global.db.Set("kitebroker", "max_file_transfer", &max)
 }
 
+// Sets the connection timeout in seconds.
+// max: The maximum connection timeout in seconds.
 func (d dbCFG) set_connect_timeout_secs(max int) {
 	global.db.Set("kitebroker", "connect_timeout_secs", &max)
 }
 
+// connect_timeout_secs returns the connection timeout in seconds.
+// If not found in the database, it returns a default value of 12.
 func (d dbCFG) connect_timeout_secs() (max int) {
 	found := global.db.Get("kitebroker", "connect_timeout_secs", &max)
 	if !found {
@@ -65,10 +82,14 @@ func (d dbCFG) connect_timeout_secs() (max int) {
 	return
 }
 
+// Sets the request timeout in seconds.
+// max: The maximum request timeout in seconds.
 func (d dbCFG) set_request_timeout_secs(max int) {
 	global.db.Set("kitebroker", "request_timeout_secs", &max)
 }
 
+// request_timeout_secs returns the request timeout in seconds.
+// Returns 60 if the value is not found in the database.
 func (d dbCFG) request_timeout_secs() (max int) {
 	found := global.db.Get("kitebroker", "request_timeout_secs", &max)
 	if !found {
@@ -77,10 +98,14 @@ func (d dbCFG) request_timeout_secs() (max int) {
 	return
 }
 
+// Sets the chunk size in megabytes for file transfers.
+// max: The maximum chunk size in megabytes to set.
 func (d dbCFG) set_chunk_size_mb(max int) {
 	global.db.Set("kitebroker", "chunk_size_mb", &max)
 }
 
+// chunk_size_mb returns the configured chunk size in MB.
+// Returns 65 if not found in the database.
 func (d dbCFG) chunk_size_mb() (max int) {
 	found := global.db.Get("kitebroker", "chunk_size_mb", &max)
 	if !found {
@@ -89,7 +114,8 @@ func (d dbCFG) chunk_size_mb() (max int) {
 	return
 }
 
-// Loads kiteworks API client id and secret from config file.
+// init_kw_api initializes the Kite Connect API.
+// It authenticates with the server using configured credentials.
 func init_kw_api() {
 	if global.kw != nil {
 		return
@@ -127,7 +153,8 @@ func init_kw_api() {
 	init_logging()
 }
 
-// Sets app_id and app_secret.
+// set_api_configs sets API configurations using client ID and secret.
+// It encrypts the client ID and secret and stores them in global config.
 func set_api_configs(client_id, client_secret string) {
 	api_cfg_0 := string(RandBytes(34))
 	api_cfg_1 := string(encrypt([]byte(client_id), []byte(api_cfg_0)))
@@ -137,7 +164,10 @@ func set_api_configs(client_id, client_secret string) {
 	Critical(global.cfg.Set("do_not_modify", "api_cfg_1", api_cfg_1))
 }
 
-// Loads app_id and app_secret
+// load_api_configs loads the application ID and secret from configuration.
+// It decrypts the values using AES encryption with keys derived from config.
+// Returns the application ID and secret as strings; returns empty strings
+// if configuration is invalid or decryption fails.
 func load_api_configs() (app_id, app_secret string) {
 	api_cfg_0 := global.cfg.Get("do_not_modify", "api_cfg_0")
 	api_cfg_1 := global.cfg.Get("do_not_modify", "api_cfg_1")
@@ -153,7 +183,7 @@ func load_api_configs() (app_id, app_secret string) {
 	return string(decrypt([]byte(api_cfg_1), r_key)), string(decrypt(cs_e, s_key))
 }
 
-// Default Configuration File.
+// default_config_file is the default configuration file content.
 const default_config_file = `
 [configuration]
 user_login = 
@@ -173,12 +203,16 @@ api_cfg_0 =
 api_cfg_1 = 
 `
 
-// Load defaults
+// load_config_defaults loads the default configuration values.
+// It uses the global configuration store to load from a default file.
+// Returns an error if loading fails.
 func load_config_defaults() (err error) {
 	return global.cfg.Defaults(default_config_file)
 }
 
-// Opens database where config file is located.
+// init_database initializes the application database.
+// It creates the data directory, opens the database file,
+// and sets up error and cache tables.
 func init_database() {
 	var err error
 
@@ -192,6 +226,10 @@ func init_database() {
 	//Defer(global.db.Close)
 }
 
+// get_ get_mac_addr returns the MAC address of the first network interface.
+// It returns nil if no MAC address is found.```go
+// get_mac_addr retrieves the MAC address of the network interface.
+// It returns the MAC address as a byte slice, or nil if not found.
 func get_mac_addr() []byte {
 	ifaces, err := net.Interfaces()
 	Critical(err)
@@ -205,7 +243,8 @@ func get_mac_addr() []byte {
 	return nil
 }
 
-// Opens go-kvlite database using mac address for lock.
+// SecureDatabase opens a database file, handling potential decryption
+// or reset if hardware changes are detected.
 func SecureDatabase(file string) (Database, error) {
 	// Provides us the mac address of the first interface.
 	db, err := OpenDB(file, _unlock_db()[0:]...)
@@ -226,7 +265,9 @@ func SecureDatabase(file string) (Database, error) {
 	return db, nil
 }
 
-// Initialize Logging.
+// init_logging initializes the logging system with configured settings.
+// It sets up log file, output destinations, and levels based on
+// global configuration flags like debug, snoop, and sysmode.
 func init_logging() {
 	file, err := nfo.LogFile(FormatPath(fmt.Sprintf("%s/logs/%s.log", global.root, APPNAME)), 10, 10)
 	Critical(err)
@@ -246,7 +287,9 @@ func init_logging() {
 	}
 }
 
-// Perform sha256.Sum256 against input byte string.
+// hashBytes computes the SHA256 hash of the input values.
+// It accepts a variable number of interface{} arguments and
+// returns a []byte representing the SHA256 hash.
 func hashBytes(input ...interface{}) []byte {
 	var combine []string
 	for _, v := range input {
@@ -261,7 +304,9 @@ func hashBytes(input ...interface{}) []byte {
 	return output
 }
 
-// Encrypts data using the hash of key provided.
+// encrypt encrypts the input data using AES encryption with CFB mode.
+// It takes the input data and a key as byte slices and returns the
+// base64 encoded encrypted data.
 func encrypt(input []byte, key []byte) []byte {
 
 	var block cipher.Block
@@ -277,7 +322,9 @@ func encrypt(input []byte, key []byte) []byte {
 	return []byte(base64.RawStdEncoding.EncodeToString(buff))
 }
 
-// Decrypts data.
+// decrypt decrypts a base64 encoded ciphertext using AES-CFB.
+// It takes the input ciphertext and key as byte slices and
+// returns the decrypted byte slice.
 func decrypt(input []byte, key []byte) (decoded []byte) {
 
 	var block cipher.Block
@@ -291,6 +338,8 @@ func decrypt(input []byte, key []byte) (decoded []byte) {
 	return
 }
 
+// _db_lock_status checks if database locking is enabled.
+// It returns false if the 'db_locker' config is set, true otherwise.
 func _db_lock_status() bool {
 	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
 		return false
@@ -298,6 +347,8 @@ func _db_lock_status() bool {
 	return true
 }
 
+// _set_db_locker sets a database locker to prevent multiple instances.
+// It retrieves or generates a unique code and stores it in the config.
 func _set_db_locker() {
 	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
 		global.cfg.Unset("do_not_modify", "db_locker")
@@ -311,6 +362,9 @@ func _set_db_locker() {
 	return
 }
 
+// _unlock_db decrypts or generates a database padlock.
+// It retrieves the padlock from configuration or generates
+// a new one based on the MAC address if not configured.
 func _unlock_db() (padlock []byte) {
 	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
 		code := []byte(dbs[0:40])
@@ -322,12 +376,13 @@ func _unlock_db() (padlock []byte) {
 	return
 }
 
-// Proxy Configuration
+// proxyValue holds a description and a value, typically for proxy settings.
 type proxyValue struct {
 	desc  string
 	value string
 }
 
+// Set prompts the user for input and updates the value if changed.
 func (c *proxyValue) Set() bool {
 	v := c.value
 	c.value = nfo.GetInput(fmt.Sprintf(`
@@ -337,10 +392,12 @@ func (c *proxyValue) Set() bool {
 	return c.value != v
 }
 
+// Get returns the underlying value associated with the proxy setting.
 func (c *proxyValue) Get() interface{} {
 	return c.value
 }
 
+// String returns a string representation of the proxy value.
 func (c *proxyValue) String() string {
 	if IsBlank(c.value) {
 		return fmt.Sprintf("%s:\t(Direct Connection/No Proxy)", c.desc)
@@ -349,11 +406,14 @@ func (c *proxyValue) String() string {
 	}
 }
 
+// pause prints a message and waits for user input.
 func pause() {
 	nfo.PressEnter("\n(press enter to continue)")
 }
 
-// Configuration Menu for API Settings
+// config_api configures and tests the KiteWork API connection.
+// It allows users to set server details, credentials, and other options.
+// It can also test the configuration to ensure successful communication.
 func config_api(configure_api, test_required bool) {
 
 	var bad_test bool
@@ -454,7 +514,7 @@ func config_api(configure_api, test_required bool) {
 		if IsBlank(*server, redirect_uri, client_app_id, client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
 			return false
 		}
-		kw := &KWAPI{new(APIClient)}
+		kw := &KWAPI{APIClient: new(APIClient)}
 		kw.Server = strings.TrimPrefix(strings.ToLower(*server), "https://")
 		if global.auth_mode == SIGNATURE_AUTH {
 			kw.Signature(signature)
@@ -476,7 +536,7 @@ func config_api(configure_api, test_required bool) {
 		kw.MaxChunkSize = (int64(*chunk_size_mb) * 1024) * 1024
 		kw.Retries = 3
 
-		if global.snoop {
+		if global.single_thread || global.snoop {
 			kw.SetLimiter(1)
 			kw.SetTransferLimiter(1)
 		} else {

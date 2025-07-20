@@ -4,15 +4,18 @@ import (
 	"os"
 )
 
+// FileCache provides a cache for file information.
 type FileCache struct {
 	DB Database
 }
 
+// file_cache_record stores file size and modification time.
 type file_cache_record struct {
 	Size     int64
 	Modified int64
 }
 
+// CacheFolder caches file information for a given folder.
 func (F *FileCache) CacheFolder(sess KWSession, folder *KiteObject) (err error) {
 	if F.DB == nil {
 		F.DB = OpenCache()
@@ -56,6 +59,8 @@ func (F *FileCache) CacheFolder(sess KWSession, folder *KiteObject) (err error) 
 	return
 }
 
+// Exists checks if a folder exists in the cache.
+// It returns true if the folder is present, false otherwise.
 func (F *FileCache) Exists(folder *KiteObject) bool {
 	if F.DB == nil {
 		F.DB = OpenCache()
@@ -69,6 +74,9 @@ func (F *FileCache) Exists(folder *KiteObject) bool {
 	return false
 }
 
+// Check verifies if a file's information is already cached.
+// It returns true if the file exists in the cache and its
+// size and modification time match, false otherwise.
 func (F *FileCache) Check(finfo os.FileInfo, folder *KiteObject) bool {
 	if F.DB == nil {
 		F.DB = OpenCache()
@@ -86,6 +94,7 @@ func (F *FileCache) Check(finfo os.FileInfo, folder *KiteObject) bool {
 	return false
 }
 
+// Drop removes the cache entry for the given folder.
 func (F *FileCache) Drop(folder *KiteObject) {
 	if F.DB == nil {
 		F.DB = OpenCache()

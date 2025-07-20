@@ -13,15 +13,15 @@ type MoveMyFolder struct {
 	KiteBrokerTask
 }
 
-func (T MoveMyFolder) New() Task {
+func (T *MoveMyFolder) New() Task {
 	return new(MoveMyFolder)
 }
 
-func (T MoveMyFolder) Name() string {
+func (T *MoveMyFolder) Name() string {
 	return "move_my_folder"
 }
 
-func (T MoveMyFolder) Desc() string {
+func (T *MoveMyFolder) Desc() string {
 	return "Relocate folders under My Folder."
 }
 

@@ -189,7 +189,7 @@ func (T *FileCleanerTask) getExpiryTime(days int) time.Time {
 
 var ErrNoExpire = fmt.Errorf("No File Expiry.")
 
-// Finds out the expiration settings for the user in question.
+// GetFileExpiration Finds out the expiration settings for the user in question.
 func (T *FileCleanerTask) GetFileExpiration(user *KiteUser) (file_expiration time.Time, err error) {
 	if T.input.max_file_age >= 0 {
 		return T.getExpiryTime(T.input.max_file_age), nil

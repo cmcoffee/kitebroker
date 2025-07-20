@@ -11,12 +11,19 @@ import (
 )
 
 const (
+
+	// wd_started indicates that the web downloader has started.
 	wd_started = 1 << iota
+
+	// wd_closed indicates the web downloader has been closed.
 	wd_closed
+
+	// wd_no_api_errors indicates that API errors should be ignored.
 	wd_no_api_errors
 )
 
-// Webdownloader for external sources
+// web_downloader downloads content from HTTP requests.
+// It implements the ReadSeekCloser interface.
 type web_downloader struct {
 	flag            BitFlag
 	err             error
@@ -29,6 +36,8 @@ type web_downloader struct {
 	request_timeout time.Duration
 }
 
+// Read reads data from the web downloader.
+// It handles multiple requests and updates the offset accordingly.
 func (W *web_downloader) Read(p []byte) (n int, err error) {
 	if !W.flag.Has(wd_started) {
 		W.req = W.reqs[0]
@@ -73,6 +82,8 @@ func (W *web_downloader) Read(p []byte) (n int, err error) {
 	return
 }
 
+// Close closes the web downloader and releases resources.
+// It also limits the number of concurrent requests.
 func (W *web_downloader) Close() error {
 	if !W.flag.Has(wd_closed) {
 		W.flag.Set(wd_closed)
@@ -87,7 +98,8 @@ func (W *web_downloader) Close() error {
 	return nil
 }
 
-// Seek an offset within the download, added Range header to request.
+// Seek sets the offset of the downloader.
+// It also updates the Range header of the request.
 func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 	if offset == -500 && whence == -500 {
 		W.flag.Set(wd_no_api_errors)
@@ -118,18 +130,17 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
-// Perform External Download from a remote request.
-func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
-	if S.trans_limiter != nil {
-		S.trans_limiter <- struct{}{}
+func (s *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
+	if s.trans_limiter != nil {
+		s.trans_limiter <- struct{}{}
 	}
 
 	var last_byte []int64
 
 	for _, v := range reqs {
 		v.Header.Set("Content-Type", "application/octet-stream")
-		if S.AgentString != NONE {
-			v.Header.Set("User-Agent", S.AgentString)
+		if s.AgentString != NONE {
+			v.Header.Set("User-Agent", s.AgentString)
 		}
 		var current_sz int64
 		if l := v.Header.Get("Size"); l != NONE {
@@ -142,9 +153,9 @@ func (S *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 	}
 
 	return &web_downloader{
-		api:             S,
+		api:             s,
 		reqs:            reqs[0:],
 		last_byte:       last_byte,
-		request_timeout: S.RequestTimeout,
+		request_timeout: s.RequestTimeout,
 	}
 }

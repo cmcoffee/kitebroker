@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Object for task.
+// ListTask Object for task.
 type ListTask struct {
 	input struct {
 		folder         string
@@ -14,7 +14,7 @@ type ListTask struct {
 	KiteBrokerTask
 }
 
-// Task objects need to be able create a new copy of themself.
+// New Task objects need to be able create a new copy of itself.
 func (T ListTask) New() Task {
 	return new(ListTask)
 }
@@ -27,7 +27,7 @@ func (T ListTask) Desc() string {
 	return "List folders and/or files in kiteworks."
 }
 
-// Task init function, should parse flag, do pre-checks.
+// Init Task init function, should parse flag, do pre-checks.
 func (T *ListTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.human_readable, "human_readable", "Present sizes in human-readable format.")
 	T.Flags.Shorten("human_readable", 'h')

@@ -3,11 +3,11 @@ package admin
 import (
 	"bytes"
 	"fmt"
-	"github.com/cmcoffee/snugforge/csvp"
-	"io/ioutil"
+	//"github.com/cmcoffee/snugforge/csvp"
+	//"io/ioutil"
 	. "kitebroker/core"
 	"os"
-	"strings"
+	//"strings"
 )
 
 type UserInfoTask struct {
@@ -58,61 +58,61 @@ func (T *UserInfoTask) Main() (err error) {
 		}
 		return err
 	}
+	/*
+		c := csvp.NewReader()
 
-	c := csvp.NewReader()
+		users_updated := make(map[string]interface{})
 
-	users_updated := make(map[string]interface{})
-
-	clean_phone := func(input string) (output string) {
-		input = strings.ReplaceAll(input, "(", "")
-		input = strings.ReplaceAll(input, ")", "")
-		input = strings.ReplaceAll(input, " ", "")
-		input = strings.ReplaceAll(input, ".", "")
-		if strings.HasPrefix(input, "+") {
-			split_in := strings.Split(input, "-")
-			if len(split_in) > 1 {
-				input = fmt.Sprintf("%s-%s", split_in[0], strings.Join(split_in[1:], ""))
+		clean_phone := func(input string) (output string) {
+			input = strings.ReplaceAll(input, "(", "")
+			input = strings.ReplaceAll(input, ")", "")
+			input = strings.ReplaceAll(input, " ", "")
+			input = strings.ReplaceAll(input, ".", "")
+			if strings.HasPrefix(input, "+") {
+				split_in := strings.Split(input, "-")
+				if len(split_in) > 1 {
+					input = fmt.Sprintf("%s-%s", split_in[0], strings.Join(split_in[1:], ""))
+				}
+			} else {
+				input = strings.ReplaceAll(input, "-", "")
+				input = fmt.Sprintf("+1-%s", input)
 			}
-		} else {
-			input = strings.ReplaceAll(input, "-", "")
-			input = fmt.Sprintf("+1-%s", input)
-		}
-		return input
-	}
-
-	c.Processor = func(row []string) (err error) {
-		if len(row) < 3 {
-			return fmt.Errorf("Invalid CSV, format must be: email,real name, phone")
+			return input
 		}
 
-		email := row[0]
-		name := row[1]
-		phone := row[2]
-		if !IsBlank(phone) {
-			phone = clean_phone(phone)
-		}
+		c.Processor = func(row []string) (err error) {
+			if len(row) < 3 {
+				return fmt.Errorf("Invalid CSV, format must be: email,real name, phone")
+			}
 
-		if _, ok := users_updated[email]; ok {
+			email := row[0]
+			name := row[1]
+			phone := row[2]
+			if !IsBlank(phone) {
+				phone = clean_phone(phone)
+			}
+
+			if _, ok := users_updated[email]; ok {
+				return nil
+			} else {
+				users_updated[email] = struct{}{}
+			}
+
+			Log("Updating user info for: %s <%s> - ph: %s", name, email, phone)
+			T.buffer.WriteString(fmt.Sprintf("%s,%s,%s\n", email, name, phone))
+
 			return nil
-		} else {
-			users_updated[email] = struct{}{}
 		}
 
-		Log("Updating user info for: %s <%s> - ph: %s", name, email, phone)
-		T.buffer.WriteString(fmt.Sprintf("%s,%s,%s\n", email, name, phone))
+		c.ErrorHandler = func(line int, input string, err error) (abort bool) {
+			Err("%s: %s,", T.input.csv_file, err.Error())
+			return false
+		}
 
-		return nil
-	}
+		T.buffer.WriteString("email,name,mobile\n")
+		c.Read(f)
 
-	c.ErrorHandler = func(line int, input string, err error) (abort bool) {
-		Err("%s: %s,", T.input.csv_file, err.Error())
-		return false
-	}
-
-	T.buffer.WriteString("email,name,mobile\n")
-	c.Read(f)
-
-	output_csv := ioutil.NopCloser(&T.buffer)
-
-	return T.KW.Admin().ImportUserMetadata(output_csv, true, false, true)
+		output_csv := ioutil.NopCloser(&T.buffer)
+	*/
+	return T.KW.Admin().ImportUserMetadata(f, true, false, true)
 }

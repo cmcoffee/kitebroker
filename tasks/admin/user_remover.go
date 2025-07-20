@@ -305,7 +305,6 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 		}
 	}
 
-
 	if T.input.profile_id != 0 {
 		if input.UserTypeID != T.input.profile_id {
 			return false
@@ -317,9 +316,9 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 		Err("%s: %v", input.Email, err)
 	}
 
-    if T.input.unverified && T.inactivity_time.Unix() < created.Unix() {
-    	return false
-    }
+	if T.input.unverified && T.inactivity_time.Unix() < created.Unix() {
+		return false
+	}
 
 	if !T.inactivity_time.IsZero() && !T.input.ignore_inactivity {
 		if last_activity, ok := T.last_activity[strings.ToLower(input.Email)]; ok {

@@ -404,8 +404,8 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 		}
 
 		// Main download/upload loop.
-		source_info := fmt.Sprintf("%s - download - %s/%s", migration_users.src_sess.Username, dest_folder, f.Name)
-		dest_info := fmt.Sprintf("%s - upload - %s - %s/%s", migration_users.dst_sess.Username, dest_folder, f.Name)
+		source_info := fmt.Sprintf("%s - download - %s/%s", migration_users.src_sess.Username, dest_folder.Name, f.Name)
+		dest_info := fmt.Sprintf("%s - upload - %s/%s", migration_users.dst_sess.Username, dest_folder.Name, f.Name)
 
 		retry_download := T.KW.InitRetry(migration_users.src_sess.Username, source_info)
 		retry_upload := T.KW.InitRetry(migration_users.dst_sess.Username, dest_info)

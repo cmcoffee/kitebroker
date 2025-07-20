@@ -29,4 +29,5 @@ func init() {
 	command.RegisterAdmin(new(admin.MetadataTask))
 	command.RegisterAdmin(new(admin.FolderReportTask))
 	command.RegisterAdmin(new(admin.UserInfoTask))
+	command.RegisterAdmin(new(admin.UserRenamerTask))
 }

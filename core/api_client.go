@@ -10,7 +10,6 @@ import (
 	"github.com/cmcoffee/snugforge/iotimeout"
 	"github.com/cmcoffee/snugforge/mimebody"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -20,7 +19,9 @@ import (
 	"time"
 )
 
-// General API Object
+// APIClient represents a client for interacting with the Kiteworks API.
+// It encapsulates configuration and handles authentication, request sending,
+// and error handling for API calls.
 type APIClient struct {
 	Server          string                               // kiteworks host name.
 	ApplicationID   string                               // Application ID set for kiteworks custom app.
@@ -30,7 +31,7 @@ type APIClient struct {
 	ProxyURI        string                               // Proxy for outgoing https requests.
 	RequestTimeout  time.Duration                        // Timeout for request to be answered from kiteworks server.
 	ConnectTimeout  time.Duration                        // Timeout for TLS connection to kiteworks server.
-	MaxChunkSize    int64                                // Max Upload Chunksize in bytes, min = 1M, max = 68M
+	MaxChunkSize    int64                                // Max Upload chunk size in bytes, min = 1M, max = 68M
 	Retries         uint                                 // Max retries on a failed call
 	TokenStore      TokenStore                           // TokenStore for reading and writing auth tokens securely.
 	db              Database                             // Database for APIClient.
@@ -44,11 +45,17 @@ type APIClient struct {
 	token_lock      sync.Mutex                           // Mutex for dealing with token expiry.
 }
 
+// _is_retry_error is a bitmask for retryable errors.
+// _is_token_error is a bitmask for token-related errors.
 const (
 	_is_retry_error = 1 << iota
 	_is_token_error
 )
 
+// APIRetryEngine manages retries for API calls.
+// It encapsulates an API client, retry attempt count,
+// unique ID, user information, task context, and
+// additional error codes to consider for retries.
 type APIRetryEngine struct {
 	api                     APIClient
 	attempt                 uint
@@ -58,9 +65,12 @@ type APIRetryEngine struct {
 	addtl_retry_error_codes []string
 }
 
-func (s APIClient) InitRetry(username string, task_description string, addtl_retry_error_codes ...string) *APIRetryEngine {
+// InitRetry / InitRetry initializes and returns a new APIRetryEngine.
+// / It takes a username, task description, and optional additional
+// / error codes for retry logic.
+func (s *APIClient) InitRetry(username string, task_description string, addtl_retry_error_codes ...string) *APIRetryEngine {
 	return &APIRetryEngine{
-		s,
+		*s,
 		0,
 		string(RandBytes(8)),
 		username,
@@ -69,7 +79,8 @@ func (s APIClient) InitRetry(username string, task_description string, addtl_ret
 	}
 }
 
-// Check if error is retryable.
+// CheckForRetry determines if a retry should be attempted based on the error.
+// It considers retry policies, error types, and retry limits.
 func (a *APIRetryEngine) CheckForRetry(err error) bool {
 	var flag BitFlag
 
@@ -113,7 +124,8 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 	return false
 }
 
-// Fulfill does a safe wrapper around the request so that it can retry in the event of failure.
+// Fulfill performs an API request and decodes the response.
+// It handles retries and timeouts, and closes the response body.
 func (s *APIClient) Fulfill(username string, req *http.Request, output interface{}) (err error) {
 	var dont_retry bool
 
@@ -163,96 +175,110 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 		close_resp(resp)
 		return err
 	}
-
-	return err
-
 }
 
-// Configures a database for the API Client
-func (K *APIClient) SetDatabase(db Database) {
-	K.db = db
-	K.TokenStore = KVLiteStore(db.Sub("tokens"))
+// SetDatabase sets the database for the API client.
+// It also initializes the TokenStore using a sub-collection.
+func (s *APIClient) SetDatabase(db Database) {
+	s.db = db
+	s.TokenStore = KVLiteStore(db.Sub("tokens"))
 }
 
-// Configures maximum number of simultaneous api calls.
-func (K *APIClient) SetLimiter(max_calls int) {
+// SetLimiter configures the rate limiter for API calls.
+// It initializes or resets the limiter channel with the given
+// maximum number of allowed calls. If max_calls is invalid,
+// it defaults to 1.
+func (s *APIClient) SetLimiter(max_calls int) {
 	if max_calls <= 0 {
 		max_calls = 1
 	}
-	if K.limiter == nil {
-		K.limiter = make(chan struct{}, max_calls)
+	if s.limiter == nil {
+		s.limiter = make(chan struct{}, max_calls)
 	}
 }
 
-// Returns the configured API Limit.
-func (K *APIClient) GetLimit() int {
-	if K.limiter != nil {
-		return cap(K.limiter)
+// GetLimit returns the current rate limit capacity.
+// Returns 1 if the limiter is not initialized.
+func (s *APIClient) GetLimit() int {
+	if s.limiter != nil {
+		return cap(s.limiter)
 	}
 	return 1
 }
 
-// Configures maximum number of simultaneous file transfers.
-func (K *APIClient) SetTransferLimiter(max_transfers int) {
+// SetTransferLimiter configures the transfer limiter channel.
+// It initializes or adjusts the channel capacity to control
+// concurrent transfer operations.  A value less than or equal
+// to zero defaults the capacity to 1.
+func (s *APIClient) SetTransferLimiter(max_transfers int) {
 	if max_transfers <= 0 {
 		max_transfers = 1
 	}
-	if K.trans_limiter == nil {
-		K.trans_limiter = make(chan struct{}, max_transfers)
+	if s.trans_limiter == nil {
+		s.trans_limiter = make(chan struct{}, max_transfers)
 	}
 }
 
-// Returns the configured TransferLimit.
-func (K *APIClient) GetTransferLimit() int {
-	if K.trans_limiter != nil {
-		return cap(K.trans_limiter)
+// GetTransferLimit returns the transfer limit.
+func (s *APIClient) GetTransferLimit() int {
+	if s.trans_limiter != nil {
+		return cap(s.trans_limiter)
 	}
 	return 1
 }
 
-// TokenStore interface for saving and retrieving auth tokens.
-// Errors should only be underlying issues reading/writing to the store itself.
+// TokenStore interface for storing and retrieving authentication tokens.
+// It provides methods to save, load, and delete tokens associated with a username.
 type TokenStore interface {
 	Save(username string, auth *Auth) error
 	Load(username string) (*Auth, error)
 	Delete(username string) error
 }
 
+// kvLiteStore provides a simplified interface for key-value storage.
 type kvLiteStore struct {
 	Table
 }
 
-// Wraps KVLite Databse as a auth token store.
+// KVLiteStore returns a new kvLiteStore.
+// It takes a Database as input and returns a pointer
+// to a kvLiteStore instance initialized with the tokens table.
 func KVLiteStore(input Database) *kvLiteStore {
 	return &kvLiteStore{input.Table("tokens")}
 }
 
-// Save token to TokenStore
+// Save persists the authentication details for a given username.
+// It encrypts and stores the Auth struct using the underlying table.
 func (T *kvLiteStore) Save(username string, auth *Auth) error {
 	T.Table.CryptSet(username, &auth)
 	return nil
 }
 
-// Retrieve token from TokenStore
+// Load retrieves an Auth object by username.
+// It returns the Auth object and nil error if found,
+// otherwise returns nil and nil error.
 func (T *kvLiteStore) Load(username string) (*Auth, error) {
 	var auth *Auth
 	T.Table.Get(username, &auth)
 	return auth, nil
 }
 
-// Remove token from TokenStore
+// Delete removes the entry associated with the given username.
 func (T *kvLiteStore) Delete(username string) error {
 	T.Table.Unset(username)
 	return nil
 }
 
+// api_secrets holds encrypted configuration options such as signature token,
+// client secret key, and key for encrypting/decrypting data.
 type api_secrets struct {
 	key               []byte
 	signature_key     []byte
 	client_secret_key []byte
 }
 
-// Encryption function for storing signature and client secrets.
+// Encrypts the given string using AES with CFB encryption.
+// It initializes the key if it's nil.
 func (k *api_secrets) encrypt(input string) []byte {
 
 	if k.key == nil {
@@ -271,7 +297,8 @@ func (k *api_secrets) encrypt(input string) []byte {
 	return buff
 }
 
-// Retrieves encrypted signature and client secrets.
+// Decrypts the given ciphertext using the stored key.
+// Returns an empty string if the key is not set.
 func (k *api_secrets) decrypt(input []byte) string {
 	if k.key == nil {
 		return NONE
@@ -285,27 +312,31 @@ func (k *api_secrets) decrypt(input []byte) string {
 	return string(output)
 }
 
-func (K APIClient) GetSignature() string {
+// GetSignature retrieves the API signature.
+// It decrypts the signature key if it exists.
+func (s *APIClient) GetSignature() string {
 	var sig string
 
-	if K.secrets.signature_key != nil {
-		sig = K.secrets.decrypt(K.secrets.signature_key)
+	if s.secrets.signature_key != nil {
+		sig = s.secrets.decrypt(s.secrets.signature_key)
 	}
 
 	return sig
 }
 
-func (K APIClient) GetClientSecret() string {
+// GetClientSecret retrieves the client secret.
+// It decrypts the stored client secret if available.
+func (s *APIClient) GetClientSecret() string {
 	var secret string
 
-	if K.secrets.client_secret_key != nil {
-		secret = K.secrets.decrypt(K.secrets.client_secret_key)
+	if s.secrets.client_secret_key != nil {
+		secret = s.secrets.decrypt(s.secrets.client_secret_key)
 	}
 
 	return secret
 }
 
-// APISession model
+// APIRequest represents a request to be made to the API.
 type APIRequest struct {
 	Username string
 	Version  int
@@ -316,10 +347,12 @@ type APIRequest struct {
 	Output   interface{}
 }
 
-// SetPath shortcut.
+// SetPath is a function that formats strings into paths.
 var SetPath = fmt.Sprintf
 
-// Creates Param for API post
+// SetParams accepts variable parameters and organizes them into a slice
+// of interfaces for further processing. It handles Query, PostJSON,
+// PostForm, and MimeBody types, accumulating them into an output slice.
 func SetParams(vars ...interface{}) (output []interface{}) {
 	if len(vars) == 0 {
 		return nil
@@ -401,7 +434,8 @@ func SetParams(vars ...interface{}) (output []interface{}) {
 	return
 }
 
-// Add Bearer token to APIClient requests.
+// SetToken sets the authentication token for the given username on the request.
+// It retrieves, validates, and updates the token, potentially using a refresh token.
 func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 	if s.TokenStore == nil {
 		return fmt.Errorf("APIClient: TokenStore not initialized.")
@@ -450,14 +484,17 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 	return nil
 }
 
-// Get a new token from a refresh token.
-func (K *APIClient) refreshToken(username string, auth *Auth) error {
+// refreshToken obtains a new access token using the refresh token.
+// It updates the access token, refresh token, and expiration time
+// in the provided auth object. Returns an error if the refresh
+// token is invalid or the request fails.
+func (s *APIClient) refreshToken(username string, auth *Auth) error {
 	if auth == nil || auth.RefreshToken == NONE {
 		return fmt.Errorf("No refresh token found for %s.", username)
 	}
 	Debug("Using refresh token to obtain new token.")
 
-	path := fmt.Sprintf("https://%s/oauth/token", K.Server)
+	path := fmt.Sprintf("https://%s/oauth/token", s.Server)
 
 	req, err := http.NewRequest(http.MethodPost, path, nil)
 	if err != nil {
@@ -466,22 +503,22 @@ func (K *APIClient) refreshToken(username string, auth *Auth) error {
 
 	http_header := make(http.Header)
 	http_header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if K.AgentString != NONE {
-		http_header.Set("User-Agent", K.AgentString)
+	if s.AgentString != NONE {
+		http_header.Set("User-Agent", s.AgentString)
 	}
 
 	req.Header = http_header
 
-	client_id := K.ApplicationID
+	client_id := s.ApplicationID
 
 	postform := &url.Values{
 		"client_id":     {client_id},
-		"client_secret": {K.secrets.decrypt(K.secrets.client_secret_key)},
+		"client_secret": {s.secrets.decrypt(s.secrets.client_secret_key)},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {auth.RefreshToken},
 	}
 
-	Trace("[%s]: %s", K.Server, username)
+	Trace("[%s]: %s", s.Server, username)
 	Trace("--> ACTION: \"POST\" PATH: \"%s\"", path)
 	for k, v := range *postform {
 		if k == "grant_type" || k == "RedirectURI" || k == "scope" {
@@ -498,11 +535,11 @@ func (K *APIClient) refreshToken(username string, auth *Auth) error {
 		Expires      interface{} `json:"expires_in"`
 	}
 
-	req.Body = ioutil.NopCloser(bytes.NewReader([]byte(postform.Encode())))
-	req.Body = iotimeout.NewReadCloser(req.Body, K.RequestTimeout)
+	req.Body = io.NopCloser(bytes.NewReader([]byte(postform.Encode())))
+	req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
 	defer req.Body.Close()
 
-	resp, err := K.SendRequest(NONE, req)
+	resp, err := s.SendRequest(NONE, req)
 	if err != nil {
 		return err
 	}
@@ -523,15 +560,18 @@ func (K *APIClient) refreshToken(username string, auth *Auth) error {
 	return nil
 }
 
-// Post JSON to API.
+// PostJSON is a map[string]interface{} type used for constructing JSON payloads.
 type PostJSON map[string]interface{}
 
-// Form POST to API.
+// PostForm is a map of string to interface{}, representing form data.
 type PostForm map[string]interface{}
 
-// Add Query params to KWAPI request.
+// Query is a map of string keys to interface{} values,
+// representing a set of query parameters.
 type Query map[string]interface{}
 
+// MimeBody represents a file part for multipart form data.
+// It holds metadata and the file source for upload.
 type MimeBody struct {
 	FieldName string
 	FileName  string
@@ -540,17 +580,18 @@ type MimeBody struct {
 	Limit     int64
 }
 
-// Sets signature key.
-func (K *APIClient) Signature(signature_key string) {
-	K.secrets.signature_key = K.secrets.encrypt(signature_key)
+// Signature sets the signature key used for authenticating requests.
+// It encrypts the provided key before storing it.
+func (s *APIClient) Signature(signature_key string) {
+	s.secrets.signature_key = s.secrets.encrypt(signature_key)
 }
 
-// Sets client secret key.
-func (K *APIClient) ClientSecret(client_secret_key string) {
-	K.secrets.client_secret_key = K.secrets.encrypt(client_secret_key)
+// ClientSecret sets the client secret key, encrypting it for storage.
+func (s *APIClient) ClientSecret(client_secret_key string) {
+	s.secrets.client_secret_key = s.secrets.encrypt(client_secret_key)
 }
 
-// Auth token.
+// Auth represents the authentication token.
 type Auth struct {
 	AccessToken  string `json:"access_token"`
 	Scope        string `json:"scope"`
@@ -558,8 +599,8 @@ type Auth struct {
 	Expires      int64  `json:"expires_in"`
 }
 
-// Prints arrays for string and int arrays, when submitted to Queries or Form post.
-func (K APIClient) spanner(input interface{}) string {
+// spanner converts various input types to a comma-separated string.
+func (s *APIClient) spanner(input interface{}) string {
 	switch v := input.(type) {
 	case []string:
 		return strings.Join(v, ",")
@@ -574,15 +615,19 @@ func (K APIClient) spanner(input interface{}) string {
 	}
 }
 
+// readCloser combines an io.Reader with a function to close resources.
 type readCloser struct {
 	closer func() error
 	io.Reader
 }
 
+// Close closes the underlying reader.
 func (r readCloser) Close() (err error) {
 	return r.closer()
 }
 
+// newReadCloser returns a new io.ReadCloser from an io.Reader and
+// a close function.
 func newReadCloser(src io.Reader, close_func func() error) io.ReadCloser {
 	return readCloser{
 		close_func,
@@ -590,7 +635,10 @@ func newReadCloser(src io.Reader, close_func func() error) io.ReadCloser {
 	}
 }
 
-// Allows snooping the body of response.
+// snoopReader reads at least min bytes from src, returning a reader
+// for the initial bytes and a new ReadCloser that reads from the
+// original source after the initial bytes.  If an error occurs
+// during the initial read, it returns the error.
 func snoopReader(src io.ReadCloser, min int) (snoop_reader io.Reader, output io.ReadCloser, err error) {
 
 	var n int
@@ -616,8 +664,9 @@ func snoopReader(src io.ReadCloser, min int) (snoop_reader io.Reader, output io.
 	return
 }
 
-// Checks http.Response for error messages and returns any if found.
-func (K APIClient) respErrorCheck(resp *http.Response) (err error) {
+// respErrorCheck checks the response for errors and returns an error if found.
+// It reads the first 64k of the response body to scan for errors.
+func (s *APIClient) respErrorCheck(resp *http.Response) (err error) {
 
 	var (
 		snoop_buffer bytes.Buffer
@@ -629,23 +678,23 @@ func (K APIClient) respErrorCheck(resp *http.Response) (err error) {
 	}
 
 	// Reads the first 64k of the resp body for any errors.
-	snoop_reader, resp.Body, err = snoopReader(iotimeout.NewReadCloser(resp.Body, K.RequestTimeout), 65536)
+	snoop_reader, resp.Body, err = snoopReader(iotimeout.NewReadCloser(resp.Body, s.RequestTimeout), 65536)
 	if err != nil {
 		return err
 	}
 
 	snoop_reader = io.TeeReader(snoop_reader, &snoop_buffer)
 
-	msg, err := ioutil.ReadAll(snoop_reader)
+	msg, err := io.ReadAll(snoop_reader)
 	if err != nil {
 		return err
 	}
 
-	if K.ErrorScanner == nil {
-		K.ErrorScanner = kwapiError
+	if s.ErrorScanner == nil {
+		s.ErrorScanner = kwapiError
 	}
 
-	e := K.ErrorScanner(msg)
+	e := s.ErrorScanner(msg)
 	if !e.noError() {
 		snoop_response(resp.Status, &snoop_buffer)
 		return e
@@ -661,7 +710,8 @@ func (K APIClient) respErrorCheck(resp *http.Response) (err error) {
 	return e
 }
 
-// Decodes JSON response body to provided interface.
+// DecodeJSON decodes a JSON response from an HTTP response into the given output.
+// It also snoops the response body for logging purposes.
 func DecodeJSON(resp *http.Response, output interface{}) (err error) {
 	var (
 		snoop_buffer bytes.Buffer
@@ -673,7 +723,7 @@ func DecodeJSON(resp *http.Response, output interface{}) (err error) {
 	body = io.TeeReader(resp.Body, &snoop_buffer)
 	defer snoop_response(resp.Status, &snoop_buffer)
 
-	msg, err := ioutil.ReadAll(body)
+	msg, err := io.ReadAll(body)
 
 	if output == nil {
 		return nil
@@ -697,7 +747,11 @@ func DecodeJSON(resp *http.Response, output interface{}) (err error) {
 	return
 }
 
-// Provides output of specified response.
+// snoop_response logs the response status and body, redacting tokens.
+// It decodes the response body as JSON, replaces sensitive values
+// like "refresh_token" and "access_token" with "[HIDDEN]", and
+// then logs the modified JSON. If the body is not valid JSON,
+// it logs the raw body string.
 func snoop_response(respStatus string, body *bytes.Buffer) {
 	Trace("<-- RESPONSE STATUS: %s", respStatus)
 
@@ -723,6 +777,10 @@ func snoop_response(respStatus string, body *bytes.Buffer) {
 	return
 }
 
+// SendRequest sends an HTTP request with configured settings.
+// It handles SSL verification, proxy configuration, timeouts,
+// and token setting based on the provided username. It also
+// wraps the request body with a timeout reader.
 func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.Response, err error) {
 	var transport http.Transport
 
@@ -737,9 +795,9 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	transport.Dial = (&net.Dialer{
+	transport.DialContext = (&net.Dialer{
 		Timeout: s.ConnectTimeout,
-	}).Dial
+	}).DialContext
 
 	transport.TLSHandshakeTimeout = s.ConnectTimeout
 	transport.ResponseHeaderTimeout = s.RequestTimeout
@@ -770,8 +828,9 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 	return
 }
 
-// New API Client Request.
-func (s APIClient) NewRequest(method, path string) (req *http.Request, err error) {
+// NewRequest creates and configures an HTTP request.
+// It sets the server address, scheme, user agent, and referrer.
+func (s *APIClient) NewRequest(method, path string) (req *http.Request, err error) {
 
 	req, err = http.NewRequest(method, fmt.Sprintf("https://%s%s", s.Server, path), nil)
 	if err != nil {
@@ -790,7 +849,7 @@ func (s APIClient) NewRequest(method, path string) (req *http.Request, err error
 	return req, nil
 }
 
-// kiteworks API Call Wrapper
+// Call performs the API request and returns any error encountered.
 func (s *APIClient) Call(api_req APIRequest) (err error) {
 	if s.limiter != nil {
 		s.limiter <- struct{}{}
@@ -876,15 +935,20 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 	return s.Fulfill(api_req.Username, req, api_req.Output)
 }
 
-// Backs off subsequent attempts generating a pause between requests.
-func (s APIClient) BackoffTimer(retry uint) {
+// BackoffTimer pauses execution with an increasing delay on retry.
+// The delay is calculated as (retry + 1)^2 seconds.
+// No delay occurs if the maximum number of retries has been reached.
+func (s *APIClient) BackoffTimer(retry uint) {
 	if retry < s.Retries {
 		time.Sleep((time.Second * time.Duration(retry+1)) * time.Duration(retry+1))
 	}
 }
 
-// Call handler which allows for easier getting of multiple-object arrays.
-// An offset of -1 will provide all results, any positive offset will only return the requested results.
+// PageCall paginates through API responses, handling offset and limits.
+// It fetches data in chunks based on the provided offset and limit,
+// accumulating the results until either the end of the dataset is
+// reached or an error occurs. It returns the accumulated data in
+// the original output structure.
 func (s *APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
 
 	output := req.Output
@@ -948,7 +1012,7 @@ func (s *APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
 
 	enc_buff.Reset()
 
-	// Take stack of results we recevied and decode it back to the original object.
+	// Take stack of results we received and decode it back to the original object.
 	if err := enc.Encode(tmp); err != nil {
 		return err
 	} else {

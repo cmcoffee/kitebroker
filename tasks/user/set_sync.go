@@ -7,14 +7,14 @@ import (
 
 type PushFileTask struct {
 	input struct {
-		folders      []string
+		folders []string
 	}
-	user_count      Tally
-	limiter         LimitGroup
-	file_limiter    LimitGroup
-	files_count     Tally
-	folders_count   Tally
-	total_files     Tally
+	user_count    Tally
+	limiter       LimitGroup
+	file_limiter  LimitGroup
+	files_count   Tally
+	folders_count Tally
+	total_files   Tally
 	//pcache Table
 	profiles map[int]KWProfile
 	users    Table
@@ -70,34 +70,34 @@ func (T *PushFileTask) Main() (err error) {
 			Path:   "/rest/folders/top",
 			Params: SetParams(Query{"deleted": false, "with": "(currentUserRole)"}),
 			Output: &folders,
-			}, -1, 1000); err != nil {
-				return err				
-			}
-		} else {
-			for _, v := range T.input.folders {
-				f, err := sess.Folder("0").Find(v)
-				if err != nil {
-					Err("[%s]: %v", v, err)
-					continue
-				}
-				folders = append(folders, &f)
-			}
+		}, -1, 1000); err != nil {
+			return err
 		}
-
-		for _, v := range folders {
-			// Only process folders this user owns.
-			if v.CurrentUserRole.ID < 3 {
+	} else {
+		for _, v := range T.input.folders {
+			f, err := sess.Folder("0").Find(v)
+			if err != nil {
+				Err("[%s]: %v", v, err)
 				continue
 			}
-			T.limiter.Add(1)
-			go func(sess KWSession, folder *KiteObject) {
-				defer T.limiter.Done()
-				T.ProcessFolder(&sess, folder)
-			}(sess, v)
+			folders = append(folders, &f)
 		}
+	}
 
-		T.limiter.Wait()
-		T.file_limiter.Wait()
+	for _, v := range folders {
+		// Only process folders this user owns.
+		if v.CurrentUserRole.ID < 3 {
+			continue
+		}
+		T.limiter.Add(1)
+		go func(sess KWSession, folder *KiteObject) {
+			defer T.limiter.Done()
+			T.ProcessFolder(&sess, folder)
+		}(sess, v)
+	}
+
+	T.limiter.Wait()
+	T.file_limiter.Wait()
 
 	T.limiter.Wait()
 	return nil
@@ -108,22 +108,21 @@ func (T *PushFileTask) PushFile(sess *KWSession, file *KiteObject) {
 	T.total_files.Add(1)
 	if !file.Pushed {
 		Log("Pushing file %s ...", file.Path)
-			err := T.KW.File(file.ID).Push()
-			if err != nil {
-				Err("%s: %v", file.Path, err)
-			} else {
-				T.files_count.Add(1)
-			}
+		err := T.KW.File(file.ID).Push()
+		if err != nil {
+			Err("%s: %v", file.Path, err)
+		} else {
+			T.files_count.Add(1)
+		}
 	}
 }
-
 
 func (T *PushFileTask) CheckFile(sess *KWSession, file *KiteObject) {
 	if T.limiter.Try() {
 		go func(sess *KWSession, file *KiteObject) {
 			T.PushFile(sess, file)
 			T.limiter.Done()
-		} (sess, file)
+		}(sess, file)
 	} else {
 		T.PushFile(sess, file)
 	}

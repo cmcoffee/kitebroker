@@ -14,7 +14,7 @@ import (
 
 var command menu
 
-// Menu for tasks.
+// menu represents a menu structure for managing and executing tasks.
 type menu struct {
 	mutex        sync.RWMutex
 	text         *tabwriter.Writer
@@ -24,18 +24,23 @@ type menu struct {
 	custom_tasks []string
 }
 
-// Write out menu item.
+// cmd_text writes a command and its description to the menu text.
 func (m *menu) cmd_text(cmd string, desc string) {
 	m.text.Write([]byte(fmt.Sprintf("  %s \t \"%s\"\n", cmd, desc)))
 }
 
 const (
+	// _normal_task represents the standard task flag.
 	_normal_task = 1 << iota
+	// _admin_task represents the flag for admin tasks.
 	_admin_task
+	// _custom_task represents the flag for custom tasks.
 	_custom_task
 )
 
-// Menu item.
+// menu_elem represents a single menu entry.
+// It holds the name, description, parsed status, task flag,
+// associated task, and flag set for the entry.
 type menu_elem struct {
 	name   string
 	desc   string
@@ -45,31 +50,36 @@ type menu_elem struct {
 	flags  *FlagSet
 }
 
-// Registers an admin task.
+// RegisterAdmin registers an admin task with the menu.
 func (m *menu) RegisterAdmin(task Task) {
 	m.register(task.Name(), _admin_task, task)
 }
 
-// Registers an admin task.
+// Register registers a new task with the menu.
 func (m *menu) Register(task Task) {
 	m.register(task.Name(), _normal_task, task)
 }
 
+// RegisterName registers a custom task with the menu using the given name.
 func (m *menu) RegisterName(name string, task Task) {
 	m.register(name, _custom_task, task)
 }
 
+// RegisterCustom Registers a custom task with the menu.
 func (m *menu) RegisterCustom(task Task) {
 	m.register(task.Name(), _custom_task, task)
 }
 
-// Sets the flags for the task.
+// set_task_flags sets the flags for a given task.
+// It updates the task's flags with the provided FlagSet.
 func set_task_flags(task Task, Flags FlagSet) {
 	T := task.Get()
 	T.Flags = Flags
 }
 
-// Initializes the task's database
+// set_task_db sets the database and cache for a given task.
+// It assigns the provided database and global cache to the task,
+// and clears any existing tables from the cache.
 func set_task_db(task Task, DB Database) {
 	T := task.Get()
 	T.DB = DB
@@ -79,19 +89,25 @@ func set_task_db(task Task, DB Database) {
 	}
 }
 
-// Sets a report for the task.
+// set_task_report sets the task report for a given task.
+// It associates a task report with the task for logging/reporting purposes.
 func set_task_report(task Task, input *TaskReport) {
 	T := task.Get()
 	T.Report = input
 }
 
-// Sets the kw api session for the task
+// Sets the KWSession for the given task.
+//
+// This function associates the provided KWSession with the given Task,
+// allowing the task to access user-specific information and permissions.
 func set_task_session(task Task, user KWSession) {
 	T := task.Get()
 	T.KW = user
 }
 
-// Provides summary of the task after completion.
+// task_report_summary summarizes the task report with error count.
+// It retrieves the task report, and if it exists, calls the
+// Summary method on the report with the given error count.
 func task_report_summary(task Task, errors uint32) {
 	T := task.Get()
 	if T.Report == nil {
@@ -126,6 +142,7 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	my_entry := m.entries[name]
 
 	//my_entry.flags.Header = fmt.Sprintf("[%s]: \"%s\"\n", strings.Split(fmt.Sprintf("%s", name), ":")[0], desc)
+	my_entry.flags.BoolVar(&global.single_thread, "serial", NONE)
 	my_entry.flags.BoolVar(&global.debug, "debug", NONE)
 	my_entry.flags.BoolVar(&global.snoop, "snoop", NONE)
 	my_entry.flags.BoolVar(&global.sysmode, "quiet", NONE)
@@ -146,7 +163,11 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	}
 }
 
-// Read menu items.
+// Show displays the menu options to the standard error stream.
+// It iterates through registered tasks and their descriptions,
+// presenting them in a formatted manner.  It also handles
+// display of custom and admin tasks based on configuration
+// and authentication mode.
 func (m *menu) Show() {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
@@ -211,6 +232,9 @@ func (m *menu) Show() {
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any task, type %s <command> --help.\n", os.Args[0])))
 }
 
+// get_taskstore returns the appropriate task store based on admin status.
+// If the user is an admin, it returns the global database bucket.
+// Otherwise, it returns a sub-bucket specific to the user's username.
 func get_taskstore(name string, is_admin bool) Database {
 	if is_admin {
 		return global.db.Bucket(name)
@@ -220,6 +244,8 @@ func get_taskstore(name string, is_admin bool) Database {
 	}
 }
 
+// write_task_file writes the task definition to stdout.
+// It includes the task name, description, and flags.
 func write_task_file(name, desc string, flags *FlagSet) {
 	Stdout("### %s: %s ###\n\n", name, desc)
 	Stdout("[%s]", name)
@@ -248,6 +274,8 @@ func write_task_file(name, desc string, flags *FlagSet) {
 	flags.VisitAll(get_flag)
 }
 
+// Select processes the provided input to execute tasks.
+// It initializes tasks, handles errors, and executes them in a loop.
 func (m *menu) Select(input [][]string) (err error) {
 	for input == nil || len(input) == 0 {
 		return eflag.ErrHelp
@@ -433,5 +461,4 @@ func (m *menu) Select(input [][]string) (err error) {
 		Info("Restarting task cycle ... (%s has elapsed since last run.)", time.Now().Round(time.Second).Sub(tasks_loop_start).Round(time.Second))
 		Info(NONE)
 	}
-	return nil
 }

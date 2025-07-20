@@ -13,13 +13,15 @@ import (
 
 var ErrNotFound = errors.New("Requested item not found.")
 
+// FileInfo represents information about a file.
+// It provides access to the file's name, size, and modification time.
 type FileInfo interface {
 	Name() string
 	Size() int64
 	ModTime() time.Time
 }
 
-// Folder Membership Object
+// KiteMember Folder Membership Object
 type KiteMember struct {
 	ID     string         `json:"objectId"`
 	RoleID int            `json:"roleId"`
@@ -27,7 +29,7 @@ type KiteMember struct {
 	Role   KitePermission `json:"role"`
 }
 
-// KiteFile/Folder/Attachment
+// KiteObject KiteFile/Folder/Attachment
 type KiteObject struct {
 	Type                  string         `json:"type,omitempty"`
 	Status                string         `json:"status,omitempty"`
@@ -61,10 +63,10 @@ type KiteObject struct {
 	IsShared              bool           `json:"isShared,omitempty"`
 	IsLocked              interface{}    `json:"locked,omitempty"`
 	CurrentUserRole       KitePermission `json:"currentUserRole,omitempty"`
-	Pushed              bool             `json:"pushed,omitempty"`
+	Pushed                bool           `json:"pushed,omitempty"`
 }
 
-// Return whether object is locked or not.
+// Locked Returns true if the object is locked, false otherwise.
 func (K *KiteObject) Locked() bool {
 	if x, ok := K.IsLocked.(bool); ok {
 		return x
@@ -80,7 +82,7 @@ func (K *KiteObject) Locked() bool {
 	return false
 }
 
-// Returns the Expiration in time.Time.
+// Expiry Returns the expiry time of the KiteObject, if available.
 func (K *KiteObject) Expiry() time.Time {
 	var exp_time time.Time
 
@@ -91,7 +93,7 @@ func (K *KiteObject) Expiry() time.Time {
 	return exp_time
 }
 
-// Kiteworks Links Data
+// KiteLinks Kiteworks Links Data
 type KiteLinks struct {
 	Relationship string `json:"rel"`
 	Entity       string `json:"entity"`
@@ -99,7 +101,7 @@ type KiteLinks struct {
 	URL          string `json:"href"`
 }
 
-// Permission information
+// KitePermission Permission information
 type KitePermission struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
@@ -108,18 +110,18 @@ type KitePermission struct {
 	Disabled   bool `json:"disabled"`
 }
 
-// Returns all available folder roles.
-func (s KWSession) FolderRoles() (result []KitePermission, err error) {
-	return result, s.DataCall(APIRequest{
+// FolderRoles Returns all available folder roles.
+func (K KWSession) FolderRoles() (result []KitePermission, err error) {
+	return result, K.DataCall(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/roles"),
 		Output: &result,
 	}, -1, 1000)
 }
 
-// Find ID for specific permission.
-func (s KWSession) FindPermission(perm string) (id int, err error) {
-	perms, err := s.FolderRoles()
+// FindPermission Find ID for specific permission.
+func (K KWSession) FindPermission(perm string) (id int, err error) {
+	perms, err := K.FolderRoles()
 	if err != nil {
 		return 0, err
 	}
@@ -199,15 +201,14 @@ func (s PubSub) UnSub() (err error) {
 	return
 }
 
-// Specify folder to run functions on.
-func (s KWSession) Folder(folder_id string) kw_rest_folder {
+// Folder returns a folder object for the given folder ID.
+func (K KWSession) Folder(folder_id string) kw_rest_folder {
 	return kw_rest_folder{
 		folder_id,
-		&s,
+		&K,
 	}
 }
 
-// List files within folder.
 func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
@@ -222,7 +223,7 @@ func (s kw_rest_folder) Files(params ...interface{}) (children []KiteObject, err
 	return
 }
 
-// Provide info on folder.
+// Info returns folder information.
 func (s kw_rest_folder) Info(params ...interface{}) (output KiteObject, err error) {
 	if params == nil {
 		params = SetParams(Query{"deleted": false})
@@ -256,7 +257,7 @@ type KiteActivity struct {
 				ID   string `json:"guid"`
 			} `json:"file_uploader"`
 		} `json:"file"`
-		Successful bool `json:"succcessful`
+		Successful bool `json:"succcessful"`
 	} `json:"data"`
 	User struct {
 		UserID      string `json:"userId"`
@@ -265,7 +266,7 @@ type KiteActivity struct {
 	} `json:"user"`
 }
 
-// Return Actvities for folder.
+// Activities Return Actvities for folder.
 func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -276,7 +277,7 @@ func (s kw_rest_folder) Activities(params ...interface{}) (result []KiteActivity
 	return
 }
 
-// Create new folder.
+// NewFolder Create new folder.
 func (s kw_rest_folder) NewFolder(name string, params ...interface{}) (output KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
@@ -297,7 +298,7 @@ func (s kw_rest_folder) Delete(params ...interface{}) (err error) {
 	return
 }
 
-// List members of folder.
+// Members List members of folder.
 func (s kw_rest_folder) Members(params ...interface{}) (result []KiteMember, err error) {
 	return result, s.DataCall(APIRequest{
 		Method: "GET",
@@ -311,13 +312,13 @@ func (s kw_rest_folder) ChangeMember(user_id string, permission int, downgrade_n
 	params = SetParams(PostJSON{"roleId": permission}, params)
 	err = s.Call(APIRequest{
 		Method: "PUT",
-		Path: SetPath("/rest/folders/%s/members/%s", s.folder_id, user_id),
+		Path:   SetPath("/rest/folders/%s/members/%s", s.folder_id, user_id),
 		Params: SetParams(params, Query{"downgradeNested": downgrade_nested}),
 	})
 	return
 }
 
-// Add users to folder.
+// AddUsersToFolder Add users to folder.
 func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bool, notify_files_added bool, params ...interface{}) (err error) {
 	params = SetParams(PostJSON{"notify": notify, "notifyFileAdded": notify_files_added, "emails": emails, "roleId": role_id}, Query{"updateIfExists": true, "partialSuccess": true}, params)
 	err = s.Call(APIRequest{
@@ -328,7 +329,7 @@ func (s kw_rest_folder) AddUsersToFolder(emails []string, role_id int, notify bo
 	return
 }
 
-// Find/Create specific path under folder.
+// ResolvePath Find/Create specific path under folder.
 func (s kw_rest_folder) ResolvePath(path string) (result KiteObject, err error) {
 	folder_path := SplitPath(path)
 
@@ -406,8 +407,8 @@ type kw_rest_admin struct {
 }
 
 // Admin API initiator
-func (s KWSession) Admin() kw_rest_admin {
-	return kw_rest_admin{&s}
+func (K KWSession) Admin() kw_rest_admin {
+	return kw_rest_admin{&K}
 }
 
 func (s kw_rest_admin) Activities(offset int, limit int, params ...interface{}) (err error) {
@@ -418,6 +419,7 @@ func (s kw_rest_admin) Activities(offset int, limit int, params ...interface{}) 
 	}, offset, limit)
 }
 
+// Register creates a new user on the system.
 func (s kw_rest_admin) Register(email string, password string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",
@@ -426,6 +428,8 @@ func (s kw_rest_admin) Register(email string, password string) (err error) {
 	})
 }
 
+// ActivateUser activates the specified user.
+// It sets the user's suspended, verified, and deactivated flags.
 func (s kw_rest_admin) ActivateUser(userid string) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
@@ -435,7 +439,7 @@ func (s kw_rest_admin) ActivateUser(userid string) (err error) {
 	return
 }
 
-// Deactivate specified user.
+// DeactivateUser Deactivates the specified user.
 func (s kw_rest_admin) DeactivateUser(userid string) (err error) {
 	err = s.Call(APIRequest{
 		Method: "PUT",
@@ -445,6 +449,8 @@ func (s kw_rest_admin) DeactivateUser(userid string) (err error) {
 	return
 }
 
+// UpdateUser updates an existing user with the given ID and parameters.
+// It returns an error if the update fails.
 func (s kw_rest_admin) UpdateUser(userid string, params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PUT",
@@ -453,7 +459,8 @@ func (s kw_rest_admin) UpdateUser(userid string, params ...interface{}) (err err
 	})
 }
 
-// Creates a new user on the system.
+// NewUser creates a new user with the specified parameters.
+// It returns the created KiteUser and any error encountered.
 func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify bool) (user *KiteUser, err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
@@ -465,12 +472,17 @@ func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify 
 	return user, err
 }
 
-// Find user with specified email address.
+// ERR_NO_USER_FOUND indicates that a user with the specified criteria was not found.
+var ERR_NO_USER_FOUND = fmt.Errorf("User not found, or did not meet specified criteria.")
+
+// FindUser finds a user by their email address.
+// It returns the KiteUser object if found, otherwise nil and an error.
 func (s kw_rest_admin) FindUser(user_email string, params ...interface{}) (user *KiteUser, err error) {
 	user_getter, err := s.Admin().Users([]string{user_email}, 0)
 	if err != nil {
 		return nil, err
 	}
+	user_getter.show_errors = false
 	users, err := user_getter.Next()
 	if err != nil {
 		return nil, err
@@ -478,9 +490,11 @@ func (s kw_rest_admin) FindUser(user_email string, params ...interface{}) (user 
 	if len(users) > 0 {
 		return &users[0], nil
 	}
-	return nil, fmt.Errorf("Unable to find user %s.", user_email)
+	return nil, ERR_NO_USER_FOUND
 }
 
+// GetAllUsers retrieves a list of all user emails.
+// It returns a slice of email strings and any error encountered.
 func (s kw_rest_admin) GetAllUsers(params ...interface{}) (emails []string, err error) {
 	var users []struct {
 		Email string `json:"email"`
@@ -500,6 +514,9 @@ func (s kw_rest_admin) GetAllUsers(params ...interface{}) (emails []string, err 
 	return
 }
 
+// ImportUserMetadata imports user metadata from a CSV file.
+// It allows updating existing users, sending notifications, and
+// handling partial success.
 func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, send_notification, partial_success bool) (err error) {
 	uexists := fmt.Sprintf("%v", update_if_exists)
 	snotify := fmt.Sprintf("%v", send_notification)
@@ -513,6 +530,19 @@ func (s kw_rest_admin) ImportUserMetadata(csv io.ReadCloser, update_if_exists, s
 	return
 }
 
+// MigrateEmails Migrates email addresses for a list of users.
+// It updates user email addresses and optionally deletes existing ones.
+func (s kw_rest_admin) MigrateEmails(users []map[string]string, delete_if_exists bool) (err error) {
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   "/rest/admin/users/migrateEmails",
+		Params: SetParams(PostJSON{"users": users, "deleteIfExists": delete_if_exists}),
+	})
+	return
+}
+
+// FindProfileUsers returns a list of emails for users associated with a profile.
+// It retrieves user emails based on the given profile ID and optional parameters.
 func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (emails []string, err error) {
 	var users []struct {
 		Email string `json:"email"`
@@ -532,6 +562,7 @@ func (s kw_rest_admin) FindProfileUsers(profile_id int, params ...interface{}) (
 	return
 }
 
+// DeleteUser Deletes a user from the system.
 func (s kw_rest_admin) DeleteUser(user KiteUser, params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "DELETE",
@@ -540,6 +571,8 @@ func (s kw_rest_admin) DeleteUser(user KiteUser, params ...interface{}) (err err
 	})
 }
 
+// FindProfile finds a profile by its name (case-insensitive).
+// It returns the KWProfile if found, otherwise an error.
 func (s kw_rest_admin) FindProfile(name string) (profile KWProfile, err error) {
 	profiles, err := s.Profiles()
 	if err != nil {
@@ -554,6 +587,8 @@ func (s kw_rest_admin) FindProfile(name string) (profile KWProfile, err error) {
 	return
 }
 
+// Profiles retrieves a list of KWProfiles.
+// It returns a slice of KWProfile objects and any error encountered.
 func (s kw_rest_admin) Profiles(params ...interface{}) (profiles []KWProfile, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -564,11 +599,14 @@ func (s kw_rest_admin) Profiles(params ...interface{}) (profiles []KWProfile, er
 	return
 }
 
+// kw_rest_file represents a REST file within the keyword system.
+// It associates a file ID with a KWSession.
 type kw_rest_file struct {
 	file_id string
 	*KWSession
 }
 
+// Unlock releases the lock on the file.
 func (s kw_rest_file) Unlock() (err error) {
 	err = s.Call(APIRequest{
 		Method: "PATCH",
@@ -579,6 +617,7 @@ func (s kw_rest_file) Unlock() (err error) {
 	return
 }
 
+// Push initiates a push operation on the file.
 func (s kw_rest_file) Push() (err error) {
 	err = s.Call(APIRequest{
 		Method: "POST",
@@ -589,10 +628,13 @@ func (s kw_rest_file) Push() (err error) {
 	return
 }
 
-func (s KWSession) File(file_id string) kw_rest_file {
-	return kw_rest_file{file_id, &s}
+// File returns a kw_rest_file object associated with the given file ID.
+func (K KWSession) File(file_id string) kw_rest_file {
+	return kw_rest_file{file_id, &K}
 }
 
+// Activities retrieves the activity list for the file.
+// It takes optional parameters to filter the results.
 func (s kw_rest_file) Activities(params ...interface{}) (result []KiteActivity, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -603,6 +645,7 @@ func (s kw_rest_file) Activities(params ...interface{}) (result []KiteActivity, 
 	return
 }
 
+// Info retrieves information about the file.
 func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error) {
 	err = s.Call(APIRequest{
 		Method: "GET",
@@ -613,6 +656,7 @@ func (s kw_rest_file) Info(params ...interface{}) (result KiteObject, err error)
 	return
 }
 
+// Delete deletes the file.
 func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
@@ -622,6 +666,7 @@ func (s kw_rest_file) Delete(params ...interface{}) (err error) {
 	return
 }
 
+// PermDelete permanently deletes the file.
 func (s kw_rest_file) PermDelete() (err error) {
 	err = s.Call(APIRequest{
 		Method: "DELETE",
@@ -634,7 +679,7 @@ type KiteSource struct {
 	URL          string `json:"sourceURL"`
 	Description  string `json:"description"`
 	ID           string `json:"id"`
-	SourceTypeID int    `json"sourceTypeId"`
+	SourceTypeID int    `json:"sourceTypeId"`
 	PinnedTime   string `json:"pinnedTime"`
 	Name         string `json:"name"`
 	SourceByUser bool   `json:"sourceByUser"`
@@ -646,13 +691,15 @@ type kw_source struct {
 	*KWSession
 }
 
-func (s KWSession) Source(source_id string) kw_source {
+// Source returns a kw_source associated with the given source_id.
+func (K KWSession) Source(source_id string) kw_source {
 	return kw_source{
 		source_id,
-		&s,
+		&K,
 	}
 }
 
+// Folders returns a list of KiteObjects representing folders.
 func (s kw_source) Folders(params ...interface{}) (folders []KiteObject, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -663,8 +710,11 @@ func (s kw_source) Folders(params ...interface{}) (folders []KiteObject, err err
 	return
 }
 
-func (s KWSession) Sources(params ...interface{}) (sources []KiteSource, err error) {
-	err = s.DataCall(APIRequest{
+// Sources retrieves a list of kite sources.
+// It takes optional parameters to filter the sources.
+// Returns a slice of KiteSource objects and an error.
+func (K KWSession) Sources(params ...interface{}) (sources []KiteSource, err error) {
+	err = K.DataCall(APIRequest{
 		Method: "GET",
 		Path:   "/rest/sources",
 		Output: &sources,
@@ -673,13 +723,14 @@ func (s KWSession) Sources(params ...interface{}) (sources []KiteSource, err err
 	return
 }
 
-// Get list of all top folders
-func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err error) {
+// TopFolders returns the top-level folders for the current user.
+// It accepts optional query parameters to filter the results.
+func (K KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
 
-	err = s.DataCall(APIRequest{
+	err = K.DataCall(APIRequest{
 		Method: "GET",
 		Path:   "/rest/folders/top",
 		Output: &folders,
@@ -688,15 +739,16 @@ func (s KWSession) TopFolders(params ...interface{}) (folders []KiteObject, err 
 	return
 }
 
-// Get list of all top owned folders
-func (s KWSession) OwnedFolders(params ...interface{}) (folders []KiteObject, err error) {
+// OwnedFolders returns the top level folders owned by the current user.
+// It accepts optional query parameters to filter the results.
+func (K KWSession) OwnedFolders(params ...interface{}) (folders []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
 	}
 
 	var top_folders []KiteObject
 
-	err = s.DataCall(APIRequest{
+	err = K.DataCall(APIRequest{
 		Method: "GET",
 		Path:   "/rest/folders/top",
 		Output: &top_folders,
@@ -713,7 +765,8 @@ func (s KWSession) OwnedFolders(params ...interface{}) (folders []KiteObject, er
 	return
 }
 
-// Returns all items with listed folder_id.
+// Contents returns the children of the folder.
+// Accepts optional parameters for filtering and with fields.
 func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
@@ -729,7 +782,8 @@ func (s kw_rest_folder) Contents(params ...interface{}) (children []KiteObject, 
 	return
 }
 
-// Returns all items with listed folder_id.
+// Folders Returns a list of subfolders within the current folder.
+// Accepts optional parameters for filtering and with fields.
 func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, err error) {
 	if len(params) == 0 {
 		params = SetParams(Query{"deleted": false})
@@ -744,6 +798,7 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 	return
 }
 
+// Recover recovers a deleted folder.
 func (s kw_rest_folder) Recover(params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PATCH",
@@ -751,6 +806,7 @@ func (s kw_rest_folder) Recover(params ...interface{}) (err error) {
 	})
 }
 
+// Recover attempts to recover the file.
 func (s kw_rest_file) Recover(params ...interface{}) (err error) {
 	return s.Call(APIRequest{
 		Method: "PATCH",
@@ -758,6 +814,7 @@ func (s kw_rest_file) Recover(params ...interface{}) (err error) {
 	})
 }
 
+// MoveToFolder moves the folder to the specified folder ID.
 func (s kw_rest_folder) MoveToFolder(folder_id string) (err error) {
 	return s.Call(APIRequest{
 		Method: "POST",
@@ -766,7 +823,7 @@ func (s kw_rest_folder) MoveToFolder(folder_id string) (err error) {
 	})
 }
 
-// Kiteworks User Data
+// KiteUser represents a user within the Kite system.
 type KiteUser struct {
 	ID          string `json:"id"`
 	Active      bool   `json:"active"`
@@ -786,7 +843,7 @@ type KiteUser struct {
 	*KWSession
 }
 
-// Returns if account can be used or not for API calls.
+// IsActive returns true if the user is active, and not deactivated, suspended, or deleted.
 func (K KiteUser) IsActive() bool {
 	if K.Active && !K.Deactivated && !K.Suspended && !K.Deleted {
 		return true
@@ -794,9 +851,10 @@ func (K KiteUser) IsActive() bool {
 	return false
 }
 
-// Retrieve my user info.
-func (s KWSession) MyUser() (user KiteUser, err error) {
-	err = s.Call(APIRequest{
+// MyUser retrieves the currently authenticated user.
+// It returns the KiteUser object and an error if any.
+func (K KWSession) MyUser() (user KiteUser, err error) {
+	err = K.Call(APIRequest{
 		Method: "GET",
 		Path:   "/rest/users/me",
 		Output: &user,
@@ -804,6 +862,8 @@ func (s KWSession) MyUser() (user KiteUser, err error) {
 	return
 }
 
+// KiteQuota represents the quota information for a Kite user.
+// It includes send and folder usage and allowance details.
 type KiteQuota struct {
 	SendUsed      int `json:"send_quota_used"`
 	FolderUsed    int `json:"folder_quota_users"`
@@ -811,8 +871,10 @@ type KiteQuota struct {
 	SendAllowed   int `json:"send_quota_allowed"`
 }
 
-func (s KWSession) MyQuota() (quota KiteQuota, err error) {
-	err = s.Call(APIRequest{
+// MyQuota retrieves the current user's quota.
+// It returns the KiteQuota and an error, if any.
+func (K KWSession) MyQuota() (quota KiteQuota, err error) {
+	err = K.Call(APIRequest{
 		Method: "GET",
 		Path:   "/rest/users/me/quota",
 		Output: &quota,
@@ -820,15 +882,18 @@ func (s KWSession) MyQuota() (quota KiteQuota, err error) {
 	return
 }
 
-func (s KWSession) UpdateMobile(phone string) (err error) {
-	return s.Call(APIRequest{
+// UpdateMobile updates the user's mobile phone number.
+// It takes the new phone number as input and returns an error if the
+// update fails.
+func (K KWSession) UpdateMobile(phone string) (err error) {
+	return K.Call(APIRequest{
 		Method: "PUT",
 		Path:   "/rest/users/me/mobileNumber",
 		Params: SetParams(PostJSON{"mobileNumber": phone}),
 	})
 }
 
-// Get total count of users.
+// UserCount returns the number of users matching the provided email addresses or parameters.
 func (s kw_rest_admin) UserCount(emails []string, params ...interface{}) (users int, err error) {
 	var user []struct{}
 	if emails != nil && emails[0] != NONE {
@@ -853,7 +918,8 @@ func (s kw_rest_admin) UserCount(emails []string, params ...interface{}) (users 
 	return len(user), err
 }
 
-// Get Users
+// GetUsers represents a process for retrieving user data.
+// It handles pagination, filtering, and error tracking.
 type GetUsers struct {
 	offset       int
 	filter       Query
@@ -869,17 +935,19 @@ type GetUsers struct {
 	completed    bool
 }
 
-// Returns total failed users.
+// Failed returns the number of users that failed to be retrieved.
 func (T *GetUsers) Failed() int {
 	return T.failed_users
 }
 
-// Returns total users estimate.
+// Total returns the total number of users.
 func (T *GetUsers) Total() int {
 	return T.user_total
 }
 
-// Admin EAPI endpoint to pull all users matching parameters.
+// Users returns a list of users based on provided emails and filters.
+// It retrieves user data, applies filters based on profile ID,
+// and returns a GetUsers struct containing the results.
 func (s kw_rest_admin) Users(emails []string, profile_id int, params ...interface{}) (*GetUsers, error) {
 	var T GetUsers
 	T.filter = make(Query)
@@ -987,7 +1055,8 @@ func (s kw_rest_admin) Users(emails []string, profile_id int, params ...interfac
 	return &T, nil
 }
 
-// Return a set of users to process.
+// Next retrieves the next batch of users.
+// Returns an empty slice and nil error when no more users are available.
 func (T *GetUsers) Next() (users []KiteUser, err error) {
 	if T.completed {
 		return
@@ -1027,7 +1096,9 @@ func (T *GetUsers) Next() (users []KiteUser, err error) {
 	return
 }
 
-// Individual Email Lookup
+// findEmails retrieves users based on a list of email addresses.
+// It iterates through the email list, queries the API for each email,
+// filters the results, and appends the filtered users to the result.
 func (T *GetUsers) findEmails() (users []KiteUser, err error) {
 	for _, u := range T.emails {
 		var raw_users []KiteUser
@@ -1059,7 +1130,9 @@ func (T *GetUsers) findEmails() (users []KiteUser, err error) {
 	return
 }
 
-// Filter out users matching filter specified in GetUsers call.
+// Filters a list of KiteUser based on the provided filter criteria.
+// It iterates through the filter map and applies boolean filters to the user list.
+// Returns the filtered list of users and a potential error.
 func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 	// Match bool variables
 	matchBool := func(input KiteUser, key string, value bool) bool {
@@ -1113,6 +1186,8 @@ func (T *GetUsers) filterUsers(input []KiteUser) (users []KiteUser, err error) {
 	return input, nil
 }
 
+// KiteRoles represents a role within the Kite system.
+// It encapsulates information such as ID, name, rank, type, and links.
 type KiteRoles struct {
 	ID    int    `json:"id"`
 	Name  string `json:"name"`
@@ -1121,12 +1196,14 @@ type KiteRoles struct {
 	Links string `json:"links"`
 }
 
-func (s KWSession) Roles() (output []KiteRoles, err error) {
+// Roles retrieves a list of Kite roles.
+// Returns a slice of KiteRoles and an error, if any.
+func (K KWSession) Roles() (output []KiteRoles, err error) {
 	var Roles struct {
 		Out []KiteRoles `json:"data"`
 	}
 
-	err = s.Call(APIRequest{
+	err = K.Call(APIRequest{
 		Method: "GET",
 		Path:   "/rest/roles",
 		Output: &Roles,
@@ -1135,6 +1212,11 @@ func (s KWSession) Roles() (output []KiteRoles, err error) {
 	return
 }
 
+// folderCrawler recursively crawls a folder and processes files.
+// It uses a processor function to handle each KiteObject.
+// A folder_limiter controls concurrent folder access.
+// file_chan sends KiteObjects to be processed.
+// all_stop signals the crawler to halt.
 type folderCrawler struct {
 	processor      func(*KWSession, *KiteObject) error
 	folder_limiter LimitGroup
@@ -1142,16 +1224,20 @@ type folderCrawler struct {
 	all_stop       int32
 }
 
+// abortError represents an error that signals an operation should abort.
+// It wraps another error to provide context.
 type abortError struct {
 	err error
 }
 
+// AbortError returns an abortError for the given error.
 func AbortError(err error) abortError {
 	return abortError{
 		err: err,
 	}
 }
 
+// Error returns the error message if an underlying error exists.
 func (e abortError) Error() string {
 	if e.err != nil {
 		return e.err.Error()
@@ -1159,6 +1245,11 @@ func (e abortError) Error() string {
 	return ""
 }
 
+// abortCheck returns the error and a boolean indicating if the
+// processing should be aborted.
+// It checks if the given error is an abortError and returns the
+// underlying error and a true value if it is. Otherwise, it returns
+// the original error and false.
 func abortCheck(err error) (error, bool) {
 	if err == nil {
 		return nil, false
@@ -1170,7 +1261,12 @@ func abortCheck(err error) (error, bool) {
 	}
 }
 
-func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error, folders ...KiteObject) {
+// FolderCrawler recursively crawls through the given folders, processing
+// each KiteObject with the provided processor function. It limits
+// concurrency for both folder and file processing to prevent resource
+// exhaustion. The crawling stops if the processor returns an error
+// or signals an abort condition.
+func (K *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error, folders ...KiteObject) {
 	crawler := new(folderCrawler)
 	crawler.folder_limiter = NewLimitGroup(50)
 	file_limiter := NewLimitGroup(50)
@@ -1198,7 +1294,7 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error,
 					if abort {
 						atomic.AddInt32(&crawler.all_stop, 1)
 					}
-				}(s, m)
+				}(K, m)
 			} else {
 				err, abort := abortCheck(processor(user, m))
 				if err != nil {
@@ -1210,14 +1306,14 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error,
 			}
 
 		}
-	}(s)
+	}(K)
 
 	for _, f := range folders {
 		crawler.folder_limiter.Add(1)
 		go func(user *KWSession, folder KiteObject) {
 			defer crawler.folder_limiter.Done()
-			crawler.process(s, &folder)
-		}(s, f)
+			crawler.process(K, &folder)
+		}(K, f)
 	}
 	crawler.folder_limiter.Wait()
 	crawler.file_chan <- nil
@@ -1225,6 +1321,7 @@ func (s *KWSession) FolderCrawler(processor func(*KWSession, *KiteObject) error,
 	return
 }
 
+// Recursively crawls a folder and processes its contents.
 func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 	// Folder is already complete, return to caller.
 	var folders []*KiteObject
@@ -1287,20 +1384,19 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 				}
 			}
 			/*
-			folders, err := user.Folder(folders[n].ID).Folders()
-			if err == nil {
-				for _, f := range folders {
-					next = append(next, &f)
+				folders, err := user.Folder(folders[n].ID).Folders()
+				if err == nil {
+					for _, f := range folders {
+						next = append(next, &f)
+					}
 				}
-			}
-			files, err := user.Folder(folders[n].ID).Files()
-			if err == nil {
-				for _, f := range files {
-					F.file_chan <- &f
+				files, err := user.Folder(folders[n].ID).Files()
+				if err == nil {
+					for _, f := range files {
+						F.file_chan <- &f
+					}
 				}
-			}
 			*/
-
 
 			childs, err := user.Folder(folders[n].ID).Contents()
 			if err == nil {
@@ -1324,10 +1420,14 @@ func (F *folderCrawler) process(user *KWSession, folder *KiteObject) {
 	return
 }
 
+// kw_profile represents a collection of KWProfiles, indexed by ID.
 type kw_profile struct {
 	profile_map map[int]KWProfile
 }
 
+// Find searches for a profile by its name (case-insensitive).
+// It returns the profile pointer and nil error if found,
+// otherwise returns nil profile and an error.
 func (K kw_profile) Find(name string) (profile *KWProfile, err error) {
 	for _, v := range K.profile_map {
 		if strings.ToLower(name) == strings.ToLower(v.Name) {
@@ -1338,6 +1438,8 @@ func (K kw_profile) Find(name string) (profile *KWProfile, err error) {
 	return nil, fmt.Errorf("No profile with name '%s' found.", name)
 }
 
+// Get retrieves a profile by its ID.
+// Returns the profile if found, otherwise returns an error.
 func (K kw_profile) Get(id int) (profile *KWProfile, err error) {
 	if v, ok := K.profile_map[id]; ok {
 		return &v, nil
@@ -1346,19 +1448,22 @@ func (K kw_profile) Get(id int) (profile *KWProfile, err error) {
 	}
 }
 
+// KWProfile represents a profile with associated features.
 type KWProfile struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
 	Features struct {
 		AllowSFTP    bool  `json:"allowSftp"`
 		MaxStorage   int64 `json:"maxStorage"`
-		SendExternal bool  `json:"sendExternal`
+		SendExternal bool  `json:"sendExternal"`
 		FolderCreate int   `json:"folderCreate"`
 		FileTime     int   `json:"fileLifetime"`
 		FolderTime   int   `json:"folderExpirationLimit"`
 	} `json:"features"`
 }
 
+// Profiles retrieves a map of KWProfiles indexed by their ID.
+// It fetches profiles via a data call and returns them as a map.
 func (K KWSession) Profiles() (output map[int]KWProfile, err error) {
 	var profiles []KWProfile
 	err = K.DataCall(APIRequest{
@@ -1376,16 +1481,21 @@ func (K KWSession) Profiles() (output map[int]KWProfile, err error) {
 	return
 }
 
+// dli_admin encapsulates admin-specific functionality.
+// It extends the KWSession type with administrative features.
 type dli_admin struct {
 	*KWSession
 }
 
+// DLIAdmin returns a DLIAdmin instance associated with the KWSession.
 func (K KWSession) DLIAdmin() dli_admin {
 	return dli_admin{
 		&K,
 	}
 }
 
+// ActivityCount returns the number of activities for a given user
+// within a specified number of days.
 func (K dli_admin) ActivityCount(input KiteUser, number_of_days_ago int) (activities int, err error) {
 	var activity []struct {
 		Created string `json:"created"`
@@ -1404,6 +1514,8 @@ func (K dli_admin) ActivityCount(input KiteUser, number_of_days_ago int) (activi
 	return len(activity), err
 }
 
+// CheckForActivity determines if a user has had any activity within a specified number of days.
+// It checks for activity reports and returns true if found, false otherwise.
 func (K dli_admin) CheckForActivity(user KiteUser, number_of_days int) (found bool, err error) {
 	end_date := time.Now().UTC()
 	start_date := time.Now().UTC().Add((time.Hour * 24) * time.Duration(1) * -1)
@@ -1462,6 +1574,4 @@ func (K dli_admin) CheckForActivity(user KiteUser, number_of_days int) (found bo
 	} else {
 		return true, nil
 	}
-
-	return
 }

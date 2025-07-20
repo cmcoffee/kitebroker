@@ -180,7 +180,7 @@ func (T *FolderFileExpiryTask) Main() (err error) {
 	return nil
 }
 
-// Finds out the expiration settings for the user in question.
+// GetProfileExpiration Finds out the expiration settings for the user in question.
 func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expiry int, file_expiry int, err error) {
 	profile, ok := T.profiles[user.UserTypeID]
 	if !ok {
@@ -197,7 +197,7 @@ func (T *FolderFileExpiryTask) GetProfileExpiration(user *KiteUser) (folder_expi
 	return profile.Features.FolderTime, profile.Features.FileTime, nil
 }
 
-// Updates folder to profile expiry
+// ModifyFolder Updates folder to profile expiry
 func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
 	if T.input.files_only {
 		return T.ChangeFiles(sess, user, folder)
@@ -255,7 +255,7 @@ func (T *FolderFileExpiryTask) ModifyFolder(sess *KWSession, user *KiteUser, fol
 	return
 }
 
-// Sets all files within My Folder to an expiration date.
+// ChangeFiles Sets all files within My Folder to an expiration date.
 func (T *FolderFileExpiryTask) ChangeFiles(sess *KWSession, user *KiteUser, folder *KiteObject) (err error) {
 	if T.input.dont_extend {
 		return nil

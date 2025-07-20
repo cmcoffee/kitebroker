@@ -117,14 +117,14 @@ func (T *DemotePermissionsTask) Main() (err error) {
 			for _, v := range folders {
 				T.folder_count.Add(1)
 				// Only process folders this user has too high of permissions, or is the owner of folder.
-				if (T.input.permission_id < 5) {
+				if T.input.permission_id < 5 {
 					if v.CurrentUserRole.ID > 5 {
 						continue
 					}
 					if v.CurrentUserRole.ID <= T.input.permission_id {
 						continue
 					}
-				} else if (T.input.permission_id > 5) {
+				} else if T.input.permission_id > 5 {
 					if v.CurrentUserRole.ID >= T.input.permission_id {
 						continue
 					}

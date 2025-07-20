@@ -11,19 +11,25 @@ import (
 	"time"
 )
 
-// Max/Min chunk size for kiteworks
+// kw_chunk_size_max defines the maximum chunk size.
+// kw_chunk_size_min defines the minimum chunk size.
 const (
 	kw_chunk_size_max = 68157440
 	kw_chunk_size_min = 1048576
 )
 
+// ErrNoUploadID indicates that the upload ID was not found.
+// ErrUploadNoResp indicates an empty response from the server.
+// ErrUploadFinished indicates the upload is already completed.
 var (
 	ErrNoUploadID     = errors.New("Upload ID not found.")
 	ErrUploadNoResp   = errors.New("Unexpected empty resposne from server.")
 	ErrUploadFinished = errors.New("Upload already marked as complete.")
 )
 
-// Returns chunk_size, total number of chunks and last chunk size.
+// chunksCalc calculates the total number of chunks required for a given size.
+// It considers the maximum and minimum chunk sizes to determine the optimal
+// number of chunks. It returns the total number of chunks.
 func (K *KWSession) chunksCalc(total_size int64) (total_chunks int64) {
 	chunk_size := K.MaxChunkSize
 
@@ -42,11 +48,12 @@ func (K *KWSession) chunksCalc(total_size int64) (total_chunks int64) {
 	return (total_size / chunk_size) + 1
 }
 
-// Uploads file from specific local path, uploads in chunks, allows resume.
-func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.ReadSeekCloser, path ...string) (*KiteObject, error) {
-	if s.trans_limiter != nil {
-		s.trans_limiter <- struct{}{}
-		defer func() { <-s.trans_limiter }()
+// uploadFile uploads a file to the KiteWorks server.
+// It handles chunking, progress tracking, and error handling.
+func (K KWSession) uploadFile(filename string, upload_id int, source_reader io.ReadSeekCloser, path ...string) (*KiteObject, error) {
+	if K.trans_limiter != nil {
+		K.trans_limiter <- struct{}{}
+		defer func() { <-K.trans_limiter }()
 	}
 
 	var upload_data struct {
@@ -66,7 +73,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 		return nil, err
 	}
 
-	err = s.Call(APIRequest{
+	err = K.Call(APIRequest{
 		Method: "GET",
 		Path:   SetPath("/rest/uploads/%d", upload_id),
 		Params: SetParams(Query{"with": "(id,totalSize,totalChunks,uploadedChunks,finished,uploadedSize)"}),
@@ -108,14 +115,14 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 	var resp_data *KiteObject
 
 	for transferred_bytes < total_bytes || total_bytes == 0 {
-		req, err := s.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI))
+		req, err := K.NewRequest("POST", fmt.Sprintf("/%s", upload_data.URI))
 		if err != nil {
 			return nil, err
 		}
 
 		req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
-		Trace("[kiteworks]: %s", s.Username)
+		Trace("[kiteworks]: %s", K.Username)
 		Trace("--> METHOD: \"POST\" PATH: \"%v\" (CHUNK %d OF %d)\n", req.URL.Path, ChunkIndex+1, upload_data.TotalChunks)
 		Trace("--> HEADER: Content-Type: [multipart/form-data]")
 
@@ -136,7 +143,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 		fields["compressionSize"] = fmt.Sprintf("%d", ChunkSize)
 		fields["originalSize"] = fmt.Sprintf("%d", ChunkSize)
 
-		req.Body = iotimeout.NewReadCloser(src, s.RequestTimeout)
+		req.Body = iotimeout.NewReadCloser(src, K.RequestTimeout)
 		mimebody.ConvertFormFile(req, "content", filename, fields, ChunkSize)
 
 		for k, v := range fields {
@@ -145,7 +152,7 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 
 		Trace("\\-> FORM DATA: name=\"content\"; filename=\"%s\"", filename)
 
-		resp, err := s.APIClient.SendRequest(s.Username, req)
+		resp, err := K.APIClient.SendRequest(K.Username, req)
 		if err != nil {
 			return nil, err
 		}
@@ -168,16 +175,17 @@ func (s KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 	return resp_data, nil
 }
 
-// Create a new file version for an existing file.
-func (S KWSession) newFileVersion(file_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+// newFileVersion initiates a new file version upload.
+// It returns the ID of the new file version or an error.
+func (K KWSession) newFileVersion(file_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
 
-	if err := S.Call(APIRequest{
+	if err := K.Call(APIRequest{
 		Method: "POST",
 		Path:   SetPath("/rest/files/%s/actions/initiateUpload", file_id),
-		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
+		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": K.chunksCalc(size)}, Query{"returnEntity": true}, params),
 		Output: &upload,
 	}); err != nil {
 		return -1, err
@@ -185,16 +193,17 @@ func (S KWSession) newFileVersion(file_id string, filename string, size int64, m
 	return upload.ID, nil
 }
 
-// Creates a new upload for a folder.
-func (S KWSession) newFolderUpload(folder_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
+// newFolderUpload initiates a new upload for a given folder.
+// It returns the upload ID or an error if the request fails.
+func (K KWSession) newFolderUpload(folder_id string, filename string, size int64, mod_time time.Time, params ...interface{}) (int, error) {
 	var upload struct {
 		ID int `json:"id"`
 	}
 
-	if err := S.Call(APIRequest{
+	if err := K.Call(APIRequest{
 		Method: "POST",
 		Path:   SetPath("/rest/folders/%s/actions/initiateUpload", folder_id),
-		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": S.chunksCalc(size)}, Query{"returnEntity": true}, params),
+		Params: SetParams(PostJSON{"filename": filename, "totalSize": size, "clientModified": WriteKWTime(mod_time.UTC()), "totalChunks": K.chunksCalc(size)}, Query{"returnEntity": true}, params),
 		Output: &upload,
 	}); err != nil {
 		return -1, err
@@ -202,9 +211,9 @@ func (S KWSession) newFolderUpload(folder_id string, filename string, size int64
 	return upload.ID, nil
 }
 
-// Uploads file from specific local path, uploads in chunks, allows resume.
+// Upload Uploads file from specific local path, uploads in chunks, allows resume.
 // Will assume source will be closed, it is on caller to reinitiate upload request open source upon failure.
-func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version, resume bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
+func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version, resume bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
 	var flags BitFlag
 
 	const (
@@ -243,11 +252,11 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	}
 
 	target := fmt.Sprintf("%s:%s:%d:%d", dst.ID, filename, size, mod_time.UTC().Unix())
-	uploads := s.db.Table("uploads")
+	uploads := K.db.Table("uploads")
 
 	delete_upload := func(target string) {
 		if uploads.Get(target, &UploadRecord) {
-			s.Call(APIRequest{
+			K.Call(APIRequest{
 				Method: "DELETE",
 				Path:   SetPath("/rest/uploads/%d", UploadRecord.ID),
 			})
@@ -262,7 +271,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	var uid int
 
 	if uploads.Get(target, &UploadRecord) {
-		if output, err := s.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
+		if output, err := K.uploadFile(filename, UploadRecord.ID, src, dest_path); err != nil {
 			Debug("Error attempting to resume file %s: %s", filename, err.Error())
 			delete_upload(target)
 			return nil, err
@@ -276,7 +285,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		modified, _ := ReadKWTime(dst.ClientModified)
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {
 			if flags.Has(OverwriteFile) {
-				uid, err = s.newFileVersion(dst.ID, filename, size, mod_time)
+				uid, err = K.newFileVersion(dst.ID, filename, size, mod_time)
 				if err != nil {
 					return nil, err
 				}
@@ -289,7 +298,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 				uploads.Unset(target)
 				return nil, nil
 			} else if flags.Has(VersionFile) {
-				uid, err = s.newFileVersion(dst.ID, filename, size, mod_time)
+				uid, err = K.newFileVersion(dst.ID, filename, size, mod_time)
 				if err != nil {
 					return nil, err
 				}
@@ -298,18 +307,18 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 			}
 		}
 	} else {
-		files, err := s.Folder(dst.ID).Files(SetParams(Query{"deleted": false, "name": filename}))
+		files, err := K.Folder(dst.ID).Files(SetParams(Query{"deleted": false, "name": filename}))
 		if err != nil {
 			return nil, err
 		}
 		if len(files) == 0 {
-			uid, err = s.newFolderUpload(dst.ID, filename, size, mod_time)
+			uid, err = K.newFolderUpload(dst.ID, filename, size, mod_time)
 			if err != nil {
 				return nil, err
 			}
 		} else {
 			files[0].Path = dest_path
-			return s.Upload(filename, size, mod_time, overwrite_newer, auto_version, resume, files[0], src)
+			return K.Upload(filename, size, mod_time, overwrite_newer, auto_version, resume, files[0], src)
 		}
 
 	}
@@ -320,7 +329,7 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	UploadRecord.Size = size
 	uploads.Set(target, &UploadRecord)
 
-	file, err = s.uploadFile(filename, uid, src, dest_path)
+	file, err = K.uploadFile(filename, uid, src, dest_path)
 	if err == nil {
 		uploads.Unset(target)
 	}
@@ -328,47 +337,51 @@ func (s KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	return
 }
 
-// Quiet Download
-func (s KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
+// QDownload downloads the content of a KiteObject.
+// It returns a ReadSeekCloser and an error.
+func (K KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
 
-	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
+	req, err := K.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
-	err = s.SetToken(s.Username, req)
+	err = K.SetToken(K.Username, req)
 
-	downloader := s.WebDownload(req)
+	downloader := K.WebDownload(req)
 	downloader.Seek(-500, -500)
 
 	return downloader, err
 }
 
-// Downloads a file to from Kiteworks
-func (s KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
+// Download retrieves the content of a KiteObject as a ReadSeekCloser.
+// It handles request creation, token setting, and transfer monitoring.
+// Returns the ReadSeekCloser and an error if any occurred.
+func (K KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
 	if file == nil {
 		return nil, fmt.Errorf("nil file object provided.")
 	}
 
-	req, err := s.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
+	req, err := K.NewRequest("GET", SetPath("/rest/files/%s/content", file.ID))
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
-	err = s.SetToken(s.Username, req)
+	err = K.SetToken(K.Username, req)
 
-	return transferMonitor(file.Name, file.Size, rightToLeft, s.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
+	return transferMonitor(file.Name, file.Size, rightToLeft, K.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
 }
 
-// Kiteworks File Download to Local File
-func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_counter_cb func(c int)) (err error) {
+// LocalDownload downloads a file to a local path.
+// It handles existing files, modification times, and potential errors.
+func (K KWSession) LocalDownload(file *KiteObject, local_path string, transfer_counter_cb func(c int)) (err error) {
 	if file == nil {
 		return fmt.Errorf("nil file object provided.")
 	}
@@ -398,7 +411,7 @@ func (s KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 		return nil
 	}
 
-	f, err := s.Download(file)
+	f, err := K.Download(file)
 	if err != nil {
 		return err
 	}

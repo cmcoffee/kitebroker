@@ -11,7 +11,8 @@ import (
 	"time"
 )
 
-// Create New Task Report.
+// NewTaskReport creates a new TaskReport instance.
+// It initializes the report with the given name, file, and flags.
 func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
 	return &TaskReport{
 		name:       name,
@@ -22,7 +23,7 @@ func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
 	}
 }
 
-// TraskReport
+// TaskReport encapsulates task execution details and reporting.
 type TaskReport struct {
 	lock       sync.Mutex
 	name       string
@@ -32,7 +33,7 @@ type TaskReport struct {
 	tallys     []*Tally
 }
 
-// Generates Summary Report
+// Summary prints a report summarizing the task execution.
 func (t *TaskReport) Summary(errors uint32) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
@@ -111,21 +112,23 @@ func (t *TaskReport) Summary(errors uint32) {
 	return
 }
 
-// Tally for TaskReport.
+// Tally represents a counter.
+//
+// It tracks a single tally with a configurable format.
 type Tally struct {
 	name   string
 	count  *int64
 	Format func(val int64) string
 }
 
-// Generates a new Tally for the TaskReport
-func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
-	r.lock.Lock()
-	defer r.lock.Unlock()
+// Tally returns or creates a tally with the given name, optionally formatting its value.
+func (t *TaskReport) Tally(name string, format ...func(val int64) string) (new_tally Tally) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
 
-	for i := 0; i < len(r.tallys); i++ {
-		if name == r.tallys[i].name {
-			return *r.tallys[i]
+	for i := 0; i < len(t.tallys); i++ {
+		if name == t.tallys[i].name {
+			return *t.tallys[i]
 		}
 	}
 	new_tally.name = name
@@ -137,31 +140,31 @@ func (r *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	} else {
 		new_tally.Format = format[0]
 	}
-	r.tallys = append(r.tallys, &new_tally)
+	t.tallys = append(t.tallys, &new_tally)
 	return
 }
 
-// Gets name from Tally
+// Name returns the name of the tally.
 func (c Tally) Name() string {
 	return c.name
 }
 
-// Add to Tally
+// Add increments the tally by the given integer.
 func (c Tally) Add(num int) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+int64(num))
 }
 
-// Add to Tally
+// Add64 atomically adds the given int64 value to the tally's count.
 func (c Tally) Add64(num int64) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
 }
 
-// Remove from Tally
+// Del subtracts the given number from the tally's count.
 func (c Tally) Del(num int) {
 	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)-int64(num))
 }
 
-// Get the value of the Tally
+// Value returns the current value of the tally.
 func (c Tally) Value() int64 {
 	return atomic.LoadInt64(c.count)
 }
