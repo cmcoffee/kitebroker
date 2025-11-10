@@ -1,0 +1,87 @@
+package user
+
+import (
+	"fmt"
+	. "kitebroker/core"
+)
+
+type CloneFolderTask struct {
+	input struct {
+		source_folder string
+		dest_folder   string
+	}
+	sourceFolderID string
+	destFolderID   string
+	newFolderName  string
+	overwrite      bool
+	includeFiles   bool
+	includeSub     bool
+	KiteBrokerTask
+}
+
+func (T CloneFolderTask) New() Task {
+	return new(CloneFolderTask)
+}
+
+func (T CloneFolderTask) Name() string {
+	return "clone_folder"
+}
+
+func (T CloneFolderTask) Desc() string {
+	return "Clones a folder, including options for files and subfolders."
+}
+
+// Init initializes the CloneFolderTask by parsing command line flags and checking that all required arguments are provided.
+func (T *CloneFolderTask) Init() (err error) {
+	T.Flags.StringVar(&T.input.source_folder, "src", "", "Path of the source folder to clone.")
+	T.Flags.StringVar(&T.input.dest_folder, "dst", "", "Path of the destination folder where the clone will be created.")
+	T.Flags.StringVar(&T.newFolderName, "name", "", "Name for the new cloned folder. If not provided, the source folder's name will be used.")
+	T.Flags.BoolVar(&T.overwrite, "overwrite", "Whether to overwrite the destination folder if it already exists.")
+	T.Flags.BoolVar(&T.includeFiles, "files", "Whether to include files in the cloned folder.")
+	T.Flags.BoolVar(&T.includeSub, "subfolders", "Whether to include subfolders in the cloned folder.")
+	T.Flags.Order("src", "dst", "name", "files", "subfolders", "overwrite")
+	T.Flags.InlineArgs("src", "dst")
+	if err = T.Flags.Parse(); err != nil {
+		return err
+	}
+	if T.input.source_folder == "" || T.input.dest_folder == "" {
+		return fmt.Errorf("source and destination folder paths must be provided")
+	}
+
+	return
+
+}
+
+func (T *CloneFolderTask) Main() (err error) {
+	source, err := T.KW.Find(T.input.source_folder)
+	if err != nil {
+		return err
+	}
+	if source.Type != "d" {
+		return fmt.Errorf("source path is not a folder")
+	}
+	T.sourceFolderID = source.ID
+	dest, err := T.KW.Find(T.input.dest_folder)
+	if err != nil {
+		return err
+	}
+	if dest.Type != "d" {
+		return fmt.Errorf("destination path is not a folder")
+	}
+	T.destFolderID = dest.ID
+	//if T.newFolderName == "" {
+	//	T.newFolderName = source.Name
+	//}
+
+	processor := func(user *KWSession, obj *KiteObject) error {
+		switch obj.Type {
+		case "d":
+
+		case "f":
+
+		}
+	}
+
+	crawler := T.KW.Folder(T.sourceFolderID).Crawler(processor)
+
+}

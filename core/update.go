@@ -3,8 +3,6 @@ package core
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/cmcoffee/snugforge/iotimeout"
-	"github.com/cmcoffee/snugforge/nfo"
 	"io"
 	"net/http"
 	"net/url"
@@ -13,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // kitebrokerUpdater manages the update process for Kitebroker.
@@ -124,7 +125,7 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 	return false, string(remote_ver)
 }
 
-// update_self attempts to download and replace the current executable.
+// update_self downloads and applies the latest update for the application.
 func (k kitebrokerUpdater) update_self() {
 	defer Exit(0)
 

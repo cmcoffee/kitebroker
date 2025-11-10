@@ -3,14 +3,15 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	"github.com/cmcoffee/snugforge/eflag"
-	"github.com/cmcoffee/snugforge/nfo"
 	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // APPNAME is the application name "kitebroker
@@ -21,15 +22,7 @@ const APPNAME = "kitebroker"
 //go:embed version.txt
 var VERSION string
 
-// Authentication method constants.
-// SIGNATURE_AUTH represents signature-based authentication.
-// PASSWORD_AUTH represents password-based authentication.
-const (
-	SIGNATURE_AUTH = iota
-	PASSWORD_AUTH
-)
-
-// global holds application-wide configuration and state.
+// global is the application-wide configuration and state.
 var global struct {
 	cfg           ConfigStore
 	db            Database
@@ -47,6 +40,7 @@ var global struct {
 	pause         bool
 	as_user       string
 	gen_token     bool
+	show_admin    bool
 	show_custom   bool
 	single_thread bool
 }
@@ -81,10 +75,17 @@ func load_config(config_file string) (err error) {
 	switch strings.ToLower(global.cfg.Get("configuration", "auth_flow")) {
 	case "signature":
 		global.auth_mode = SIGNATURE_AUTH
+		global.show_admin = true
 	case "password":
 		global.auth_mode = PASSWORD_AUTH
+	case "jwt":
+		global.auth_mode = JWT_AUTH
+		global.show_admin = true
+	case "authorization":
+		global.auth_mode = AUTHORIZATION_CODE_AUTH
 	default:
-		global.auth_mode = PASSWORD_AUTH
+		global.auth_mode = SIGNATURE_AUTH
+		global.show_admin = true
 		return fmt.Errorf("Unknown auth_flow setting in %s: %s", config_file, global.cfg.Get("configuration", "auth_flow"))
 	}
 
@@ -122,7 +123,7 @@ func main() {
 	flags.BoolVar(&global.sysmode, "quiet", "Minimal output for non-interactive processes.")
 	flags.BoolVar(&global.pause, "pause", "Pause after execution.")
 
-	if global.cfg.Get("configuration", "auth_flow") == "signature" {
+	if global.show_admin {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")
 	}
 	flags.BoolVar(&global.gen_token, "auth_token_only", "Returns the generated auth token, then exits.")
@@ -217,7 +218,7 @@ func main() {
 
 	if *setup {
 		init_database()
-		config_api(true, false)
+		config_api(true)
 		return
 	}
 

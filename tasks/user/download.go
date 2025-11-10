@@ -211,6 +211,10 @@ func (T *FolderDownloadTask) ProcessFolder(folder *KiteObject, local_path string
 	var next []child
 
 	// Do iterative loop if no threads are available, do recursion if there are.
+	// Process folder contents iteratively or recursively based on available threads
+	// This function handles downloading files and traversing subfolders
+	// It uses a queue-based approach to manage folder traversal efficiently
+
 	for {
 		if len(folders) < n+1 {
 			if len(next) > 0 {

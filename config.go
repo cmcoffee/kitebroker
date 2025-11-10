@@ -6,13 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"github.com/cmcoffee/snugforge/nfo"
-	"github.com/cmcoffee/snugforge/options"
 	. "kitebroker/core"
 	"net"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/nfo"
 )
 
 // Wrapper for config items stored in database
@@ -21,7 +21,7 @@ type dbCFG struct{}
 // Holds database configuration settings.
 var dbConfig dbCFG
 
-// user retrieves the configured username.
+// user returns the user account from the database.
 func (d dbCFG) user() (account string) {
 	global.db.Get("kitebroker", "account", &account)
 	return
@@ -34,8 +34,8 @@ func (d dbCFG) set_user(account string) {
 	global.db.Set("kitebroker", "account", &account)
 }
 
-// max_api_calls returns the maximum allowed API calls.
-// Returns 3 if the value is not found in the database.
+// max_api_calls returns the maximum number of API calls allowed concurrently.
+// It retrieves the value from the database, defaulting to 3 if not found.
 func (d dbCFG) max_api_calls() (max int) {
 	found := global.db.Get("kitebroker", "max_api_calls", &max)
 	if !found {
@@ -114,7 +114,7 @@ func (d dbCFG) chunk_size_mb() (max int) {
 	return
 }
 
-// init_kw_api initializes the Kite Connect API.
+// init_kw_api initializes the Kiteworks API.
 // It authenticates with the server using configured credentials.
 func init_kw_api() {
 	if global.kw != nil {
@@ -124,32 +124,36 @@ func init_kw_api() {
 	if !global.cfg.Exists("do_not_modify") {
 		Fatal("Outdated configuration file, please obtain a new config file via https://github.com/cmcoffee/kitebroker/kitebroker.cfg")
 	}
-	config_api(false, false)
+
+	config_api(false)
+
 	Flash("[%s]: Authenticating, please wait...", global.kw.Server)
+
 	username := dbConfig.user()
 	if global.as_user != NONE {
 		username = global.as_user
 	}
-	user, err := global.kw.Login(username)
-	if err != nil {
-		if !IsAPIError(err) {
-			Fatal(err)
-		} else {
-			if global.as_user != NONE {
-				Fatal(err)
-			}
-		}
-		Err(err)
-		Log("\n")
-		config_api(true, true)
-		os.Exit(1)
-	}
-	global.user = *user
-	if global.auth_mode != SIGNATURE_AUTH {
-		dbConfig.set_user(string(user.Username))
-	} else if global.as_user != NONE {
+
+	user := global.kw.Session(username)
+	global.user = user
+
+	if global.as_user != NONE {
+		username = global.as_user
 		global.kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, dbConfig.user())
 	}
+
+	switch global.auth_mode {
+	case SIGNATURE_AUTH:
+		global.kw.ReaquireToken = true
+		global.kw.Flags.Set(SIGNATURE_AUTH)
+	case JWT_AUTH:
+		global.kw.ReaquireToken = true
+		global.kw.Flags.Set(JWT_AUTH)
+	case PASSWORD_AUTH:
+		global.kw.ReaquireToken = false
+		global.kw.Flags.Set(PASSWORD_AUTH)
+	}
+
 	init_logging()
 }
 
@@ -414,11 +418,11 @@ func pause() {
 // config_api configures and tests the KiteWork API connection.
 // It allows users to set server details, credentials, and other options.
 // It can also test the configuration to ensure successful communication.
-func config_api(configure_api, test_required bool) {
+func config_api(configure_api bool) {
 
 	var bad_test bool
 
-	setup := options.NewOptions("--- kiteworks API configuration ---", "(selection or 'q' to save & exit)", 'q')
+	setup := nfo.NewOptions("--- kiteworks API configuration ---", "(selection or 'q' to save & exit)", 'q')
 	client_app_id, client_app_secret := load_api_configs()
 	redirect_uri := global.cfg.Get("configuration", "redirect_uri")
 	proxy_uri := global.cfg.Get("configuration", "proxy_uri")
@@ -427,57 +431,74 @@ func config_api(configure_api, test_required bool) {
 	var signature string
 	global.db.Get("kitebroker", "signature", &signature)
 
-	if global.auth_mode == SIGNATURE_AUTH {
-		setup.StringVar(&account, "User Account", account, "Please provide e-mail address of user account.")
+	var jwt_key_type, jwt_key, jwt_iss, jwt_uid string
+	global.db.Get("kitebroker", "jwt_key", &jwt_key)
+	global.db.Get("kitebroker", "jwt_key_type", &jwt_key_type)
+	global.db.Get("kitebroker", "jwt_iss", &jwt_iss)
+	global.db.Get("kitebroker", "jwt_uid", &jwt_uid)
+
+	setup.StringVar(&account, "User Account", account, "Please provide e-mail address of user account.")
+
+	switch global.auth_mode {
+	case SIGNATURE_AUTH:
+		setup.SecretVar(&signature, "Kiteworks Signature Secret", signature, NONE)
+	case JWT_AUTH:
+		auth := nfo.NewOptions(" [Kiteworks JWT Configuration] ", "(selection or 'q' to return to previous)", 'q')
+		auth.TextAreaVar(&jwt_key, "JWT RSA Private Key", "Paste JWT RSA Private Key Here...")
+		auth.StringVar(&jwt_uid, "JWT UID Attribute", jwt_uid, "Please provide UID Attribute for JWT Claims. (should match Kiteworks UID Attribute within the API Configuration.)")
+		auth.StringVar(&jwt_iss, "JWT Issuer", jwt_iss, "Please provide the Issuer (ISS) for JWT claims. (should match Kiteworks Issuer within the API Configuration.)")
+		setup.Options("Kiteworks JWT Settings", auth, false)
 	}
 
-	server := setup.String("kiteworks Host", global.cfg.Get("configuration", "server"), "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", false)
+	server := setup.String("Kiteworks Host", global.cfg.Get("configuration", "server"), "Please provide the kiteworks appliance hostname. (ie.. kiteworks.domain.com)", false)
 
 	setup.StringVar(&client_app_id, "Client Application ID", client_app_id, NONE)
 	setup.SecretVar(&client_app_secret, "Client Secret Key", client_app_secret, NONE)
-
-	if global.auth_mode == SIGNATURE_AUTH {
-		setup.SecretVar(&signature, "Signature Secret", signature, NONE)
-	} else {
-		setup.Func("Reset user credentials", func() bool {
-			kw := new(APIClient)
-			kw.SetDatabase(global.db.Sub("KWAPI"))
-			kw.TokenStore.Delete(account)
-			account = NONE
-			dbConfig.set_user(account)
-			Notice("User account has been reset, you will be prompted for credentials at next run/API test.")
-			pause()
-			return false
-		})
-	}
-
-	if IsBlank(redirect_uri) || global.auth_mode == SIGNATURE_AUTH {
-		setup.StringVar(&redirect_uri, "Redirect URI", redirect_uri, "Redirect URI should simply match setting in kiteworks admin, default: https://kitebroker")
-	}
+	setup.StringVar(&redirect_uri, "Redirect URI", redirect_uri, "Redirect URI should simply match setting in kiteworks admin, default: https://kitebroker")
 
 	ssl_verify := setup.Bool("Verify SSL", global.cfg.GetBool("configuration", "ssl_verify"))
 	proxy := proxyValue{"Proxy Server", proxy_uri}
 	setup.Register(&proxy)
 
-	advanced := options.NewOptions(NONE, "(selection or 'q' to return to previous)", 'q')
+	advanced := nfo.NewOptions("  [Advanced Settings/Configuration]  ", "(selection or 'q' to return to previous)", 'q')
 	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
 	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
 	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 10)
 	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 65", 1, 65)
 	lock_db := advanced.Bool("Machine Locked", _db_lock_status())
+	setup.Options("Advanced Configuration Options", advanced, false)
 
-	setup.Options("Advanced", advanced, false)
+	setup.Func("Clear current authorization token(s).", func() bool {
+		kw := new(APIClient)
+		kw.SetDatabase(global.db.Sub("KWAPI"))
+		kw.TokenStore.Delete(account)
+		account = account
+		dbConfig.set_user(account)
+		Notice("Tokens cleared from system, a new access token will be generated at next run/API test.")
+		pause()
+		return false
+	})
 
-	//Saves current coneciguration.
+	//Saves current configuration.
 	save_config := func() {
 		Critical(global.cfg.Set("configuration", "redirect_uri", redirect_uri))
 		Critical(global.cfg.Set("configuration", "proxy_uri", proxy.Get().(string)))
 		Critical(global.cfg.Set("configuration", "server", strings.TrimPrefix(strings.ToLower(*server), "https://")))
 		Critical(global.cfg.Set("configuration", "ssl_verify", *ssl_verify))
 		set_api_configs(client_app_id, client_app_secret)
-		if global.auth_mode == SIGNATURE_AUTH && !IsBlank(signature) {
-			global.db.CryptSet("kitebroker", "signature", &signature)
+		switch global.auth_mode {
+		case SIGNATURE_AUTH:
+			if !IsBlank(signature) {
+				global.db.CryptSet("kitebroker", "signature", &signature)
+			}
+		case JWT_AUTH:
+			if !IsBlank(jwt_key) {
+				global.db.CryptSet("kitebroker", "jwt_key", &jwt_key)
+			}
+			global.db.Set("kitebroker", "jwt_iss", &jwt_iss)
+			global.db.Set("kitebroker", "jwt_uid", &jwt_uid)
+			//global.db.Set("kitebroker", "jwt_uid", &jwt_uid)
 		}
 		dbConfig.set_user(account)
 		dbConfig.set_connect_timeout_secs(*connect_timeout_secs)
@@ -489,41 +510,43 @@ func config_api(configure_api, test_required bool) {
 			_set_db_locker()
 		}
 		Critical(global.cfg.TrimSave())
-
 	}
 
 	var authenticated bool
 
 	setup_account := func() string {
-		if IsBlank(account) {
-			auth, err := global.kw.Login(NONE)
-			if err != nil {
-				Fatal(err)
-			}
-			global.user = *auth
-			dbConfig.set_user(global.user.Username)
-		} else {
-			global.user = global.kw.Session(account)
-		}
+		global.user = global.kw.Session(account)
 		authenticated = true
 		return global.user.Username
 	}
 
-	// Loads API Configuration
+	// load_api configures the global KWAPI instance with the provided settings.
+	// It sets up the server address, authentication method, credentials,
+	// and other parameters required for communicating with the Kitebroker API.
+	// Returns true if the configuration is successful, false otherwise.
 	load_api := func() bool {
 		if IsBlank(*server, redirect_uri, client_app_id, client_app_secret) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(signature)) || (global.auth_mode == SIGNATURE_AUTH && IsBlank(account)) {
 			return false
 		}
 		kw := &KWAPI{APIClient: new(APIClient)}
 		kw.Server = strings.TrimPrefix(strings.ToLower(*server), "https://")
-		if global.auth_mode == SIGNATURE_AUTH {
-			kw.Signature(signature)
-		}
-		if global.auth_mode == SIGNATURE_AUTH {
+
+		switch global.auth_mode {
+		case SIGNATURE_AUTH:
 			kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, account)
-		} else {
+			kw.Flags.Set(SIGNATURE_AUTH)
+			kw.Signature(signature)
+		case PASSWORD_AUTH:
 			kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
+			kw.Flags.Set(PASSWORD_AUTH)
+		case JWT_AUTH:
+			kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, account)
+			kw.Flags.Set(JWT_AUTH)
+			kw.JWT().Key(jwt_key)
+			kw.JWT().Issuer(jwt_iss)
+			kw.JWT().UIDAttribute(jwt_uid)
 		}
+
 		kw.APIClient.NewToken = kw.KWNewToken
 		kw.SetDatabase(global.db.Sub("KWAPI"))
 		kw.RedirectURI = redirect_uri
@@ -550,14 +573,24 @@ func config_api(configure_api, test_required bool) {
 
 	var tested bool
 
+	// test_api validates the current API configuration by attempting to call the /rest/users/me endpoint.
+	// It handles authentication, token loading/deletion, and error handling.
 	test_api := func() bool {
+
 		if !load_api() {
 			Err("API is missing some required configuration, please revisit '*** UNCONFIGURED ***' settings.")
 			pause()
 			return false
 		}
 
+		retry_count := global.kw.Retries
+		defer func() {
+			global.kw.Retries = retry_count
+		}()
+		global.kw.Retries = 0
+
 		if global.auth_mode == SIGNATURE_AUTH {
+			global.kw.Flags.Set(SIGNATURE_AUTH)
 			global.kw.TokenStore.Delete(account)
 		}
 
@@ -607,7 +640,7 @@ func config_api(configure_api, test_required bool) {
 			tested = false
 			if setup.Select(true) {
 				*server = strings.TrimPrefix(strings.ToLower(*server), "https://")
-				if load_api() && !tested && nfo.GetConfirm("\nWould you like to validate changes with a quick test?") {
+				if load_api() && !tested && nfo.ConfirmDefault("\nWould you like to validate changes with a quick test?", true) {
 					Stdout("\n")
 					if test_api() {
 						save_config()
@@ -620,7 +653,7 @@ func config_api(configure_api, test_required bool) {
 					break
 				}
 			} else if bad_test {
-				if nfo.GetConfirm("\nCould not successfully validate settings, save anyway?") {
+				if nfo.ConfirmDefault("\nCould not successfully validate settings, save anyway?", true) {
 					save_config()
 					break
 				} else {
@@ -629,7 +662,7 @@ func config_api(configure_api, test_required bool) {
 			}
 			break
 		}
-		if test_required && (bad_test || !tested) {
+		if bad_test || !tested {
 			os.Exit(1)
 		}
 	}

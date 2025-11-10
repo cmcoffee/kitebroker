@@ -9,6 +9,8 @@ import (
 	"kitebroker/tasks/user"
 )
 
+// init registers all available tasks with the command system.
+// It categorizes tasks into universal and admin-only categories.
 func init() {
 	// Register Universal Tasks:
 	command.Register(new(user.ListTask))

@@ -8,6 +8,7 @@ import (
 	"strings"
 )
 
+// UserRenamerTask represents a task to rename user emails based on a CSV file.
 type UserRenamerTask struct {
 	input struct {
 		all_users bool
@@ -19,14 +20,17 @@ type UserRenamerTask struct {
 	KiteBrokerTask
 }
 
+// New creates a new UserRenamerTask.
 func (T UserRenamerTask) New() Task {
 	return new(UserRenamerTask)
 }
 
+// Name returns the name of the task.
 func (T UserRenamerTask) Name() string {
 	return "user_renamer"
 }
 
+// Desc returns the description of the task.
 func (T UserRenamerTask) Desc() string {
 	return "Rename email accounts with CSV."
 }

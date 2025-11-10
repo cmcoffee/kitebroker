@@ -50,6 +50,7 @@ func (T *DemotePermissionsTask) Init() (err error) {
 	return
 }
 
+// Main performs the core logic of demoting permissions for users and folders.
 func (T *DemotePermissionsTask) Main() (err error) {
 	T.limiter = NewLimitGroup(50)
 	T.user_count = T.Report.Tally("Users Analyzed")
@@ -145,6 +146,7 @@ func (T *DemotePermissionsTask) Main() (err error) {
 	return nil
 }
 
+// ProcessFolder demotes a user's permissions on a given folder.
 func (T *DemotePermissionsTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *KiteObject) {
 	o_sess := T.KW.Session(folder.UserID) // Owner session for demoting user.
 	Log("Demoting permissions to %s for %s on %s ...", T.input.perm_string, user.Email, folder.Path)

@@ -3,23 +3,24 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/cmcoffee/snugforge/eflag"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"text/tabwriter"
 	"time"
+
+	"github.com/cmcoffee/snugforge/eflag"
 )
 
 // NewTaskReport creates a new TaskReport instance.
-// It initializes the report with the given name, file, and flags.
+// It initializes the task report with the given name, file, and flags.
 func NewTaskReport(name string, file string, flags *FlagSet) *TaskReport {
 	return &TaskReport{
 		name:       name,
 		file:       file,
 		flags:      flags,
 		start_time: time.Now().Round(time.Millisecond),
-		tallys:     make([]*Tally, 0),
+		Tallies:    make([]*Tally, 0),
 	}
 }
 
@@ -30,7 +31,7 @@ type TaskReport struct {
 	file       string
 	flags      *FlagSet
 	start_time time.Time
-	tallys     []*Tally
+	Tallies    []*Tally
 }
 
 // Summary prints a report summarizing the task execution.
@@ -96,9 +97,9 @@ func (t *TaskReport) Summary(errors uint32) {
 		rt = x
 	}
 	fmt.Fprintf(text, "\tRuntime: \t%v\n", rt)
-	if t.tallys != nil {
-		for i := 0; i < len(t.tallys); i++ {
-			fmt.Fprintf(text, "\t%s: \t%s\n", t.tallys[i].name, t.tallys[i].Format(*t.tallys[i].count))
+	if t.Tallies != nil {
+		for i := 0; i < len(t.Tallies); i++ {
+			fmt.Fprintf(text, "\t%s: \t%s\n", t.Tallies[i].name, t.Tallies[i].Format(*t.Tallies[i].count))
 		}
 	}
 	fmt.Fprintf(text, "\tErrors: \t%d\n", errors)
@@ -126,9 +127,9 @@ func (t *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	for i := 0; i < len(t.tallys); i++ {
-		if name == t.tallys[i].name {
-			return *t.tallys[i]
+	for i := 0; i < len(t.Tallies); i++ {
+		if name == t.Tallies[i].name {
+			return *t.Tallies[i]
 		}
 	}
 	new_tally.name = name
@@ -140,7 +141,7 @@ func (t *TaskReport) Tally(name string, format ...func(val int64) string) (new_t
 	} else {
 		new_tally.Format = format[0]
 	}
-	t.tallys = append(t.tallys, &new_tally)
+	t.Tallies = append(t.Tallies, &new_tally)
 	return
 }
 

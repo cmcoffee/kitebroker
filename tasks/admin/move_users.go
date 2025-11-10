@@ -5,6 +5,7 @@ import (
 	. "kitebroker/core"
 )
 
+// MoveMyFolder is a task that relocates folders under 'My Folder' for specified users.
 type MoveMyFolder struct {
 	input struct {
 		user_emails []string
@@ -13,18 +14,22 @@ type MoveMyFolder struct {
 	KiteBrokerTask
 }
 
+// New creates a new MoveMyFolder task.
 func (T *MoveMyFolder) New() Task {
 	return new(MoveMyFolder)
 }
 
+// Name returns the name of the task.
 func (T *MoveMyFolder) Name() string {
 	return "move_my_folder"
 }
 
+// Desc returns a description of the task.
 func (T *MoveMyFolder) Desc() string {
 	return "Relocate folders under My Folder."
 }
 
+// Init initializes the task, parsing flags and setting up input parameters.
 func (T *MoveMyFolder) Init() (err error) {
 	T.Flags.MultiVar(&T.input.user_emails, "user_emails", "<email@domain.com>", "Users to run on.")
 	if err := T.Flags.Parse(); err != nil {
@@ -34,6 +39,7 @@ func (T *MoveMyFolder) Init() (err error) {
 	return
 }
 
+// RelocateUserMyFolder relocates the 'My Folder' contents for a given user.
 func (T *MoveMyFolder) RelocateUserMyFolder(username string) (err error) {
 	Log("Processing user %s ...", username)
 	user, err := T.KW.Admin().FindUser(username)
@@ -65,6 +71,7 @@ func (T *MoveMyFolder) RelocateUserMyFolder(username string) (err error) {
 	return
 }
 
+// Main is the main function that executes the task.
 func (T *MoveMyFolder) Main() (err error) {
 	// Main function
 	if len(T.input.user_emails) == 0 {

@@ -16,8 +16,11 @@ xcuserdata
 tasks/classified/*
 classified.go
 
-#jetbrains
+#vscode/jetbrains
 .idea
+.vscode
+.roo
+*.code-workspace
 
 # svn & cvs
 add_repo.sh
@@ -27,4 +30,7 @@ custom_tasks.go
 tasks/custom
 .svn
 CVS
+
+# AI Agents
+AGENTS.md
 

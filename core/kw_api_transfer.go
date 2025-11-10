@@ -3,12 +3,13 @@ package core
 import (
 	"errors"
 	"fmt"
-	"github.com/cmcoffee/snugforge/iotimeout"
-	"github.com/cmcoffee/snugforge/mimebody"
 	"io"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/mimebody"
 )
 
 // kw_chunk_size_max defines the maximum chunk size.
@@ -23,13 +24,12 @@ const (
 // ErrUploadFinished indicates the upload is already completed.
 var (
 	ErrNoUploadID     = errors.New("Upload ID not found.")
-	ErrUploadNoResp   = errors.New("Unexpected empty resposne from server.")
+	ErrUploadNoResp   = errors.New("Unexpected empty response from server.")
 	ErrUploadFinished = errors.New("Upload already marked as complete.")
 )
 
-// chunksCalc calculates the total number of chunks required for a given size.
-// It considers the maximum and minimum chunk sizes to determine the optimal
-// number of chunks. It returns the total number of chunks.
+// chunksCalc calculates the number of chunks required to upload a file,
+// based on the maximum chunk size and the total file size.
 func (K *KWSession) chunksCalc(total_size int64) (total_chunks int64) {
 	chunk_size := K.MaxChunkSize
 
@@ -211,7 +211,7 @@ func (K KWSession) newFolderUpload(folder_id string, filename string, size int64
 	return upload.ID, nil
 }
 
-// Upload Uploads file from specific local path, uploads in chunks, allows resume.
+// Upload uploads file from specific local path, uploads in chunks, allows resume.
 // Will assume source will be closed, it is on caller to reinitiate upload request open source upon failure.
 func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overwrite_newer, auto_version, resume bool, dst KiteObject, src ReadSeekCloser) (file *KiteObject, err error) {
 	var flags BitFlag

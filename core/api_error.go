@@ -24,7 +24,7 @@ type APIError interface {
 // It either refreshes the token if a signature key exists or
 // deletes it from the store.
 func (s *APIClient) clear_token(username string) {
-	if s.secrets.signature_key == nil {
+	if s.running {
 		token, err := s.TokenStore.Load(username)
 		if err != nil {
 			Critical(err)
@@ -35,7 +35,7 @@ func (s *APIClient) clear_token(username string) {
 			}
 		} else {
 			s.TokenStore.Delete(username)
-			Critical(fmt.Errorf("Access token is no longer valid."))
+			//Critical(err)
 		}
 	} else {
 		s.TokenStore.Delete(username)
@@ -47,6 +47,7 @@ func (s *APIClient) clear_token(username string) {
 func (s *APIClient) isTokenError(username string, err error) bool {
 	if s.TokenErrorCodes != nil {
 		if IsAPIError(err, s.TokenErrorCodes[0:]...) {
+			Err(err)
 			s.clear_token(username)
 			return true
 		}
@@ -57,6 +58,7 @@ func (s *APIClient) isTokenError(username string, err error) bool {
 				s.clear_token(username)
 				return false
 			}
+			Debug(err)
 			s.clear_token(username)
 			return true
 		}
@@ -106,7 +108,9 @@ func (e *APIError) Register(code, message string) {
 	}
 }
 
-// Error returns the error message as a string.
+// Error returns the error message as a string. It formats the error message based on the number of errors present.
+// If there is only one error, it returns a formatted string with the message and code.
+// If there are multiple errors, it returns a string with each error on a new line, prefixed with an index and code.
 func (e APIError) Error() string {
 	str := make([]string, 0)
 	e_len := len(e.message)

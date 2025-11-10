@@ -151,6 +151,7 @@ func (d DBase) CountKeys(table string) int {
 }
 
 // Tables returns a list of all table names in the database.
+// It retrieves the table names from the underlying store and handles any errors that occur during the process.
 func (d DBase) Tables() []string {
 	tables, err := d.Store.Tables()
 	Critical(err)

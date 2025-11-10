@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/cmcoffee/snugforge/eflag"
 	. "kitebroker/core"
 	"os"
 	"runtime"
@@ -10,6 +9,8 @@ import (
 	"sync"
 	"text/tabwriter"
 	"time"
+
+	"github.com/cmcoffee/snugforge/eflag"
 )
 
 var command menu
@@ -149,7 +150,7 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	my_entry.flags.DurationVar(&global.freq, "repeat", global.freq, NONE)
 	my_entry.flags.BoolVar(&global.new_task_file, "new_task", NONE)
 	my_entry.flags.BoolVar(&global.pause, "pause", NONE)
-	if global.auth_mode == SIGNATURE_AUTH {
+	if global.show_admin {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", NONE)
 	}
 
@@ -201,8 +202,8 @@ func (m *menu) Show() {
 
 	var user_cmd_prompt string
 
-	if global.auth_mode == SIGNATURE_AUTH {
-		user_cmd_prompt = "User Commands:\n"
+	if global.show_admin {
+		user_cmd_prompt = "User Tasks:\n"
 	} else {
 		user_cmd_prompt = "Commands:\n"
 	}
@@ -215,7 +216,7 @@ func (m *menu) Show() {
 
 	items = items[0:0]
 
-	if global.auth_mode == SIGNATURE_AUTH {
+	if global.show_admin {
 		for _, k := range m.admin_tasks {
 			if IsBlank(m.entries[k].desc) {
 				continue
@@ -223,7 +224,7 @@ func (m *menu) Show() {
 			m.cmd_text(k, m.entries[k].desc)
 		}
 		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
-			os.Stderr.Write([]byte("Admin Commands:\n"))
+			os.Stderr.Write([]byte("Admin Tasks:\n"))
 			m.text.Write([]byte(fmt.Sprintf("\n")))
 			m.text.Flush()
 		}
@@ -281,8 +282,8 @@ func (m *menu) Select(input [][]string) (err error) {
 		return eflag.ErrHelp
 	}
 
-	// Remove admin tools if not set to SIGNATURE_AUTH
-	if global.auth_mode != SIGNATURE_AUTH {
+	// Remove admin tools if show_admin is false.
+	if !global.show_admin {
 		m.mutex.Lock()
 		for _, k := range m.admin_tasks {
 			delete(m.entries, k)

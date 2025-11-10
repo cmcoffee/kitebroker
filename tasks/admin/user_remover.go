@@ -11,33 +11,34 @@ import (
 
 type UserRemoverTask struct {
 	input struct {
-		all_users         bool
-		profile_id        int
-		user_emails       []string
-		unverified        bool
-		suspended         bool
-		deactivated       bool
-		reassign_to       string
-		dry_run           bool
-		retain_perms      bool
-		delete_myfolder   bool
-		remote_wipe       bool
-		withdraw_links    bool
-		external_only     bool
-		limit             int
-		csv_file          string
-		inactive_days     uint
-		ignore_inactivity bool
+		profile_id      int
+		user_emails     []string
+		unverified      bool
+		suspended       bool
+		deactivated     bool
+		reassign_to     string
+		dry_run         bool
+		retain_perms    bool
+		delete_myfolder bool
+		remote_wipe     bool
+		withdraw_links  bool
+		external_only   bool
+		limit           int
+		csv_file        string
+		inactive_days   uint
+		process_active  bool
+		force           bool
 	}
-	limit            int
-	prefix           string
-	user_count       Tally
-	user_removed     Tally
-	inactivity_time  time.Time
-	read_csv_file    bool
-	last_activity    map[string]time.Time
-	reassign_to_sess KWSession
-	reassign_to_id   string
+	limit                   int
+	prefix                  string
+	user_count              Tally
+	user_removed            Tally
+	inactivity_time         time.Time
+	read_csv_file           bool
+	last_activity           map[string]time.Time
+	reassign_to_sess        KWSession
+	reassign_to_id          string
+	last_activity_available bool
 	KiteBrokerTask
 }
 
@@ -53,37 +54,43 @@ func (T UserRemoverTask) Desc() string {
 	return "Delete and reassign inactive accounts."
 }
 
+// Initializes the UserRemoverTask, parsing flags, setting up variables, and performing initial validation.
 func (T *UserRemoverTask) Init() (err error) {
 	T.last_activity = make(map[string]time.Time)
 
-	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Specify inactive user(s) to cleanup")
-	T.Flags.BoolVar(&T.input.ignore_inactivity, "danger", "Overrides Inactivity Flag for accounts.")
-	T.Flags.BoolVar(&T.input.all_users, "all_users", "Process all inactive users.")
+	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Specify user(s) to cleanup.")
+	T.Flags.BoolVar(&T.input.process_active, "active", "Process both active and inactive accounts. (DANGEROUS)")
+	T.Flags.BoolVar(&T.input.process_active, "danger", "")
+	T.Flags.BoolVar(&T.input.force, "force", "Override critical safeties on account deletions. (EXTREMELY DANGEROUS)")
 	T.Flags.UintVar(&T.input.inactive_days, "inactive_days", 0, "Maximum number in days of inactivity.")
 	T.Flags.BoolVar(&T.input.unverified, "unverified", "Delete only users who are unverified.")
 	T.Flags.BoolVar(&T.input.suspended, "suspended", "Delete only users who are suspended.")
 	T.Flags.StringVar(&T.input.reassign_to, "reassign_to", "<user@domain.com>", "User to reassign folders to.")
 	T.Flags.BoolVar(&T.input.retain_perms, "retain_perms", "Retain permissions to shared data.")
-	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target inactive users within specified profile.")
-	//T.Flags.BoolVar(&T.input.delete_myfolder, "del_my_folder", "Delete My Folders for users reassigned.")
+	T.Flags.IntVar(&T.input.profile_id, "profile_id", 0, "Target users within specified profile.")
 	T.Flags.BoolVar(&T.input.dry_run, "dry_run", "Simulate removal of users without actually deleting accounts.")
 	T.Flags.BoolVar(&T.input.remote_wipe, "remote_wipe", "Remote wipe any data on user's mobile device.")
 	T.Flags.BoolVar(&T.input.withdraw_links, "withdraw_links", "Withdraw all file links and request file links sent by user.")
 	T.Flags.BoolVar(&T.input.external_only, "external_only", "Only remove external accounts")
 	T.Flags.IntVar(&T.input.limit, "limit", -1, "Limit number of accounts to remove, -1 for all users.")
-	T.Flags.StringVar(&T.input.csv_file, "csv_file", "<Users-Report-1652909468.csv>", "Users Report CSV File")
+	T.Flags.StringVar(&T.input.csv_file, "csv_file", "<Users-Report-1652909468.csv>", "Specify a Users Report CSV File for targeting users for cleanup.")
+	// "active" and "force" flags are ordered first to highlight their importance and potential danger,
+	// ensuring they appear together and are easily noticed by users.
+	T.Flags.Order("active", "force", "inactive_days", "users", "profile_id", "csv_file")
 	if err = T.Flags.Parse(); err != nil {
 		return err
 	}
 
 	T.limit = T.input.limit
 
-	if IsBlank(T.input.csv_file) && T.input.inactive_days > 0 {
-		if !T.input.unverified {
-			return fmt.Errorf("--csv_file is required if --inactive_days is specified.")
-		}
+	if T.input.inactive_days == 0 && !T.input.process_active && !T.input.suspended && !T.input.force {
+		return fmt.Errorf("Please specify --inactive_days or --suspended to proceed.")
 	}
 
+	if T.input.process_active && IsBlank(T.input.csv_file) && len(T.input.user_emails) == 0 && !T.input.force && T.input.inactive_days == 0 && !T.input.suspended {
+		return fmt.Errorf("Please specify --suspended, --inactive_days, --csv_file or specified --users.")
+	}
+	T.inactivity_time = time.Now().UTC().Add((time.Hour * 24) * -time.Duration(T.input.inactive_days))
 	if T.input.inactive_days > 0 {
 		T.inactivity_time = time.Now().UTC().Add((time.Hour * 24) * time.Duration(T.input.inactive_days) * -1)
 	}
@@ -92,19 +99,28 @@ func (T *UserRemoverTask) Init() (err error) {
 		T.read_csv_file = true
 	}
 
-	if !T.input.all_users && len(T.input.user_emails) < 1 && T.input.profile_id == 0 && !T.read_csv_file {
-		return fmt.Errorf("Must either run with --all_users, provide a --profile_id or specify --users.")
+	if T.input.inactive_days == 0 && T.input.profile_id == 0 && len(T.input.user_emails) == 0 && !T.input.unverified && !T.input.suspended && T.input.process_active && T.input.force && IsBlank(T.input.csv_file) {
+		return fmt.Errorf("Aborting as this would remove ALL users from the system, MUST specify some filtering criteria.")
 	}
-
-	if T.input.all_users && (len(T.input.user_emails) > 0 || T.input.profile_id != 0) && !T.read_csv_file {
-		return fmt.Errorf("--all_users is incompatible with --users and --profile_id.")
-	}
-
-	//if IsBlank(T.input.reassign_to) {
-	//	return fmt.Errorf("Must provide a --reassign_to account to proceed.")
-	//}
 
 	return
+}
+
+// CheckLastActivityAPI determines if the Kite system has last activity data available.
+// It retrieves the current user's information from the Kite system.
+// If the user's LastActivityDateTime is not blank, it indicates that last activity data is available,
+// and the function returns false. Otherwise, it returns true, indicating that last activity data is not available.
+func (T *UserRemoverTask) CheckLastActivityAPI() bool {
+	me, err := T.KW.Admin().MyUser()
+	if err != nil {
+		Warn("Got error trying to find info on system: %v", err)
+		return false
+	}
+	if !IsBlank(me.LastActivityDateTime) {
+		return false
+	} else {
+		return true
+	}
 }
 
 func (T *UserRemoverTask) Main() (err error) {
@@ -116,6 +132,8 @@ func (T *UserRemoverTask) Main() (err error) {
 		T.prefix = "(DRY-RUN ONLY) "
 		T.user_removed = T.Report.Tally("Accounts to remove")
 	}
+
+	T.last_activity_available = T.CheckLastActivityAPI()
 
 	if T.read_csv_file {
 		err = T.ReadCSV(T.input.csv_file)
@@ -143,33 +161,27 @@ func (T *UserRemoverTask) Main() (err error) {
 		params = SetParams(params, Query{"suspended": true})
 	}
 
-	if !T.read_csv_file {
-		if T.input.all_users {
+	if !T.read_csv_file && len(T.input.user_emails) == 0 {
+		if T.input.profile_id == 0 {
 			user_emails, err := T.KW.Admin().GetAllUsers(params)
 			if err != nil {
 				return err
 			}
 			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
+		} else {
+			user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
+			if err != nil {
+				return err
+			}
+			T.input.user_emails = append(T.input.user_emails, user_emails[:0]...)
 		}
 	} else {
 		for k := range T.last_activity {
 			T.input.user_emails = append(T.input.user_emails, k)
 		}
 	}
-	/*
-		if len(T.input.user_emails) == 0 && T.input.profile_id > 0 {
-			user_emails, err := T.KW.Admin().FindProfileUsers(T.input.profile_id, params)
-			if err != nil {
-				return err
-			}
-			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
-		}
-	*/
-	user_list := T.input.user_emails
 
-	if T.input.all_users {
-		user_list = nil
-	}
+	user_list := T.input.user_emails
 
 	user_getter, err := T.KW.Admin().Users(user_list, T.input.profile_id, params)
 	if err != nil {
@@ -207,6 +219,9 @@ func (T *UserRemoverTask) Main() (err error) {
 	return nil
 }
 
+// ReadCSV parses a CSV file containing user data, specifically extracting
+// the last activity time for each user and storing it in the T.last_activity map.
+// It handles potential errors during file opening, CSV parsing, and time parsing.
 func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 	f, err := os.Open(file)
 	if err != nil {
@@ -243,11 +258,24 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 
 	for i, val := range records {
 		if i == 0 {
+			if len(val) > 9 {
+				return fmt.Errorf("CSV has fewer columns than expected, aborting.")
+			}
+			if !strings.Contains(strings.ToLower(val[8]), "last activity") {
+				Stdout(val[8])
+				return fmt.Errorf("Did not find Last Activity in header, aborting.")
+			}
+			if !strings.Contains(strings.ToLower(val[7]), "created") {
+				return fmt.Errorf("Did not find Created in header, aborting.")
+			}
 			continue
 		}
-		ttp := val[7]
+		if len(val) < 9 {
+			return fmt.Errorf("CSV has fewer columns than expected, aborting.")
+		}
+		ttp := val[8]
 		if IsBlank(ttp) {
-			ttp = val[6]
+			ttp = val[7]
 		}
 		parse_time, err := time.Parse(time_format, ttp)
 		if err != nil {
@@ -264,102 +292,142 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 
 		T.last_activity[strings.ToLower(email)] = parse_time
 	}
+	if len(T.last_activity) == 0 {
+		return fmt.Errorf("Error parsing %s, please check file and try again..", file)
+	}
 	return nil
 }
 
+// CheckLastActivity determines if a user is inactive based on their last activity time.
+// It first attempts to retrieve the last activity time from the KiteUser interface.
+// If that fails, it checks if the last activity time was pre-loaded from the CSV file.
+// If a pre-loaded time exists, it compares it to the inactivity threshold.
+func (T UserRemoverTask) CheckLastActivity(input KiteUser) (bool, time.Time, error) {
+	last_activity_time, err := input.LastActivity()
+	if err != nil {
+		if last_activity, ok := T.last_activity[strings.ToLower(input.Email)]; ok {
+			last_activity_time = last_activity
+		} else {
+			if T.last_activity_available {
+				last_activity, err = ReadKWTime(input.Created)
+				if err != nil {
+					return false, last_activity_time, err
+				}
+				last_activity_time = last_activity
+			} else {
+				return false, last_activity_time, err
+			}
+		}
+	}
+
+	if T.input.inactive_days == 0 {
+		return true, last_activity_time, nil
+	}
+
+	if T.inactivity_time.Unix() > last_activity_time.Unix() {
+		return true, last_activity_time, nil
+	}
+
+	return false, last_activity_time, nil
+}
+
+// RemoveUser removes a user based on configured criteria and flags.
+// It checks for various conditions such as self-removal prevention,
+// external/internal user status, profile ID matching, deactivation status,
+// verification status, suspension status, and inactivity based on last activity time.
+// If all criteria are met, the user is either dry-run removed or actually deleted
+// via the Kite API, potentially reassigning data or withdrawing file links.
 func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	T.user_count.Add(1)
-	Log("Inspecting user %s...", input.Email)
 
-	//if T.input.profile_id > 0 {
-	//	if input.ProfileID != T.input.profile_id {
-	//		return false
-	//	}
-	//}
+	Log("Inspecting user %s ...", input.Email)
 
-	if !input.Deactivated {
-
-		if input.Verified && !T.input.ignore_inactivity {
-			return false
-		}
-		if T.inactivity_time.IsZero() {
-			return false
-		}
-	}
-
-	if T.input.unverified {
-		if input.Verified {
-			return false
-		}
-	}
-
-	if T.input.suspended {
-		if !input.Suspended {
-			return false
-		}
-	}
-
-	if T.input.external_only {
-		if input.Internal {
-			return false
-		}
-	}
-
-	if T.input.profile_id != 0 {
-		if input.UserTypeID != T.input.profile_id {
-			return false
-		}
-	}
-
-	created, err := ReadKWTime(input.Created)
-	if err != nil {
-		Err("%s: %v", input.Email, err)
-	}
-
-	if T.input.unverified && T.inactivity_time.Unix() < created.Unix() {
+	// Prevent self-removal.
+	if input.Email == T.KW.Username {
+		Log("[%s]: Cannot remove self, skipping user..", input.Email)
 		return false
 	}
 
-	if !T.inactivity_time.IsZero() && !T.input.ignore_inactivity {
-		if last_activity, ok := T.last_activity[strings.ToLower(input.Email)]; ok {
-			if T.inactivity_time.Unix() < last_activity.Unix() {
-				return false
-			}
-			Log("%sRemoving user: %s (deactivated:%v/suspended:%v/verified:%v/last activity:%s)", T.prefix, input.Email, input.Deactivated, input.Suspended, input.Verified, strings.TrimSuffix(last_activity.String(), " +0000 UTC"))
-		} else {
+	// Skip internal users if --external_only is set.
+	if T.input.external_only {
+		if input.Internal {
+			Debug("[%s]: User is not external, skipping user..", input.Email)
 			return false
 		}
-	} else {
-		Log("%sRemoving user: %s (deactivated:%v/suspended:%v/verified:%v)", T.prefix, input.Email, input.Deactivated, input.Suspended, input.Verified)
 	}
+
+	// Skip users whose profile ID doesn't match the configured ID.
+	if T.input.profile_id != 0 {
+		if input.UserTypeID != T.input.profile_id {
+			Debug("[%s]: Profile ID (%d) does not match required profile id %d, skipping user..", input.Email, input.UserTypeID, T.input.profile_id)
+			return false
+		}
+	}
+
+	// Skip active users unless --active is set.
+	if !input.Deactivated {
+		if !T.input.process_active {
+			Debug("[%s]: User is not marked as deactivated, skipping user.. (must use --active to override)", input.Email)
+			return false
+		}
+	}
+
+	// Skip verified users if --unverified is set.
+	if T.input.unverified {
+		if input.Verified {
+			Debug("[%s]: User is verified, skipping user..", input.Email)
+			return false
+		}
+	}
+
+	// Skip suspended users if --suspended is set.
+	if T.input.suspended {
+		if !input.Suspended {
+			Debug("[%s]: User is not suspended, skipping user..", input.Email)
+			return false
+		}
+	}
+
+	// Check for inactivity based on last activity time.
+	chk_inactivity, last_activity, err := T.CheckLastActivity(input)
+	if !chk_inactivity {
+		if err != nil {
+			Err("[%s]: %s", input.Email, err.Error())
+		}
+		Debug("[%s]: User's last activity (%s) is less than %d days ago, skipping user..", input.Email, last_activity, T.input.inactive_days)
+		return false
+	}
+
+	Log("%sRemoving user: %s (deactivated:%v/suspended:%v/verified:%v/last activity:%s)", T.prefix, input.Email, input.Deactivated, input.Suspended, input.Verified, strings.TrimSuffix(last_activity.String(), " +0000 UTC"))
+
+	// Dry-run removal.
 	if T.input.dry_run {
 		T.user_removed.Add(1)
 		return true
 	}
 
+	// Configure API parameters for deletion.
 	params := SetParams(Query{"partialSuccess": false})
 
+	// Reassign data to another user if retain_to is specified.
 	if !IsBlank(T.input.reassign_to) {
 		params = SetParams(params, Query{"retainToUser": T.reassign_to_id, "retainData": true})
 	} else {
+		// Otherwise, delete unshared data.
 		params = SetParams(params, Query{"retainData": false, "deleteUnsharedData": true})
 	}
 
+	// Configure other deletion options.
 	params = SetParams(params, Query{"retainPermissionToSharedData": T.input.retain_perms})
 	params = SetParams(params, Query{"remoteWipe": T.input.remote_wipe})
 	params = SetParams(params, Query{"withdrawFileLinks": T.input.withdraw_links, "withdrawRequestFiles": T.input.withdraw_links})
 
+	// Delete the user via the Kite API.
 	err = T.KW.Admin().DeleteUser(input, params)
 	if err != nil {
-		Err(err)
+		Err("[%s]: %s", input.Email, err.Error())
 		return false
 	}
-
-	/* My folder is still a protected folder.
-	if T.input.delete_myfolder && !IsBlank(input.SyncDirID) {
-		err = T.KW.Folder(input.SyncDirID).Delete()
-		Err(err)
-	}*/
 
 	T.user_removed.Add(1)
 	return true

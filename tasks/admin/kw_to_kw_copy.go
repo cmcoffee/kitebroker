@@ -37,20 +37,23 @@ type KW_TO_KWTask struct {
 	KiteBrokerTask
 }
 
+// New returns a new instance of KW_TO_KWTask.
 func (T KW_TO_KWTask) New() Task {
 	return new(KW_TO_KWTask)
 }
 
+// Name returns the name of the task.
 func (T KW_TO_KWTask) Name() string {
 	return "kw_to_kw_copy"
 }
 
+// Desc returns the description of the task.
 func (T KW_TO_KWTask) Desc() string {
 	return "Migrates users and files from remote Kiteworks server."
 }
 
+// Init initializes the task.
 func (T *KW_TO_KWTask) Init() (err error) {
-
 	var (
 		secret string
 		sig    string
@@ -60,6 +63,7 @@ func (T *KW_TO_KWTask) Init() (err error) {
 
 	T.Flags.IntVar(&T.input.dst_profile_id, "dest_profile_id", 0, "Destination KW Profile ID")
 	T.Flags.IntVar(&T.input.src_profile_id, "src_profile_id", 0, "Source Profile ID")
+	T.Flags.StringVar(&T.old_domain, "old_domain", "<old_domain.com>", "Source users domain.")
 	T.Flags.StringVar(&T.SRC.Server, "src_server", "<source kw server>", "Source KW Server")
 	T.Flags.StringVar(&T.input.src_admin_user, "src_admin", "<admin@domain.com>", "Source Admin User Account")
 	T.Flags.StringVar(&T.SRC.ApplicationID, "src_app_id", "<app id>", "Source Client App ID")
@@ -93,6 +97,7 @@ func (T *KW_TO_KWTask) Init() (err error) {
 	return
 }
 
+// MapProfiles maps source profiles to destination profiles.
 func (T *KW_TO_KWTask) MapProfiles() (err error) {
 	T.src_dst_profile_map = make(map[int]int)
 	src_profiles, err := T.SRC.Session(T.input.src_admin_user).Admin().Profiles()
@@ -117,6 +122,21 @@ func (T *KW_TO_KWTask) MapProfiles() (err error) {
 	return nil
 }
 
+// FindDestProfileID returns the destination profile ID based on the source ID.
+// It first checks if a global destination profile ID is set. If not, it looks up the
+// destination profile ID in a map that maps source profile IDs to destination profile IDs.
+// If no mapping is found, it returns 0.
+func (T *KW_TO_KWTask) FindDestProfileID(id int) int {
+	if T.input.dst_profile_id != 0 {
+		return T.input.dst_profile_id
+	}
+	if v, ok := T.src_dst_profile_map[id]; ok {
+		return v
+	}
+	return 0
+}
+
+// Main is the main function of the task.
 func (T *KW_TO_KWTask) Main() (err error) {
 	T.folders_count = T.Report.Tally("Folders Analyzed")
 	T.files_count = T.Report.Tally("Files Analyzed")
@@ -135,11 +155,17 @@ func (T *KW_TO_KWTask) Main() (err error) {
 
 	var copy_users []KiteUser
 
-	split := strings.Split(T.input.user_emails[0], "@")
-	if len(split) < 2 {
-		return fmt.Errorf("Unable to obtain email domain from %s.", T.input.user_emails[0])
+	if IsBlank(T.old_domain) && len(T.input.user_emails) > 0 {
+		split := strings.Split(T.input.user_emails[0], "@")
+		if len(split) < 2 {
+			return fmt.Errorf("Unable to obtain email domain from %s.", T.input.user_emails[0])
+		}
+		T.old_domain = split[1]
 	}
-	T.old_domain = split[1]
+
+	if !IsBlank(T.new_domain) && IsBlank(T.new_domain) {
+		return fmt.Errorf("If you specify a new_domain, you must specify an old_domain.")
+	}
 
 	Debug("Old Domain: %s, New Domain: %s", T.old_domain, T.new_domain)
 
@@ -192,12 +218,14 @@ func (T *KW_TO_KWTask) Main() (err error) {
 					}
 				}
 
-				if _, ok := T.src_dst_profile_map[u.UserTypeID]; !ok {
+				dest_profile_id := T.FindDestProfileID(u.UserTypeID)
+
+				if dest_profile_id == 0 {
 					Err("Could not find profile mapping for %s on destination system, skipping user.", u.Email)
 					continue
 				}
 
-				if _, err := T.KW.Admin().NewUser(T.SwapEmails(u.Email), T.src_dst_profile_map[u.UserTypeID], true, false); err != nil {
+				if _, err := T.KW.Admin().NewUser(T.SwapEmails(u.Email), dest_profile_id, true, false); err != nil {
 					if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
 						Err("Could not create users %s: %v, skipping user.", u.Email, err)
 						continue
@@ -217,6 +245,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 	return
 }
 
+// MigrateUser represents a user to be migrated.
 type MigrateUser struct {
 	src      *KiteUser
 	dst      *KiteUser
@@ -224,13 +253,15 @@ type MigrateUser struct {
 	dst_sess KWSession
 }
 
-func (T KW_TO_KWTask) SwapEmails(input string) string {
+// SwapEmails swaps the domain of an email address.
+func (T *KW_TO_KWTask) SwapEmails(input string) string {
 	if IsBlank(T.new_domain) {
 		return input
 	}
 	return strings.Replace(input, T.old_domain, T.new_domain, -1)
 }
 
+// CopyUser copies a user from the source to the destination.
 func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 	err = T.SRC.Session(T.input.src_admin_user).Admin().ActivateUser(src_user.ID)
 	if err != nil {
@@ -271,6 +302,7 @@ func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 
 }
 
+// SetPerms sets the permissions for a folder.
 func (T *KW_TO_KWTask) SetPerms(migration_users *MigrateUser, folder *KiteObject, members []KiteMember) (err error) {
 	users := make(map[int][]string)
 	for _, m := range members {
@@ -294,6 +326,7 @@ func (T *KW_TO_KWTask) SetPerms(migration_users *MigrateUser, folder *KiteObject
 	return
 }
 
+// CloneFolder clones a folder from the source to the destination.
 func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObject) (err error) {
 	if folder.CurrentUserRole.ID != 5 || folder.Path == "basedir" {
 		return nil
@@ -446,6 +479,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 	return
 }
 
+// ProcessFolder processes a folder and its subfolders.
 func (T *KW_TO_KWTask) ProcessFolder(migration_users *MigrateUser, folder *KiteObject) {
 	// Folder is already complete, return to caller.
 	var folders []*KiteObject

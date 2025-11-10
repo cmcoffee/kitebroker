@@ -7,8 +7,6 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"github.com/cmcoffee/snugforge/iotimeout"
-	"github.com/cmcoffee/snugforge/mimebody"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +15,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/snugforge/iotimeout"
+	"github.com/cmcoffee/snugforge/mimebody"
 )
 
 // APIClient represents a client for interacting with the Kiteworks API.
@@ -32,10 +33,12 @@ type APIClient struct {
 	RequestTimeout  time.Duration                        // Timeout for request to be answered from kiteworks server.
 	ConnectTimeout  time.Duration                        // Timeout for TLS connection to kiteworks server.
 	MaxChunkSize    int64                                // Max Upload chunk size in bytes, min = 1M, max = 68M
+	Flags           BitFlag                              // Additional APIClient Flags
 	Retries         uint                                 // Max retries on a failed call
 	TokenStore      TokenStore                           // TokenStore for reading and writing auth tokens securely.
+	ReaquireToken   bool                                 // Whether to reacquire token on failure.
 	db              Database                             // Database for APIClient.
-	secrets         api_secrets                          // Encrypted config options such as signature token, client secret key.
+	Config          api_config                           // Encrypted config options such as signature token, client secret key.
 	limiter         chan struct{}                        // Implements a limiter for API calls/transfers to/from appliance.
 	trans_limiter   chan struct{}                        // Implements a file transfer limiter.
 	NewToken        func(username string) (*Auth, error) // Provides new access_token.
@@ -43,6 +46,7 @@ type APIClient struct {
 	RetryErrorCodes []string                             // Error codes ("ERR_INTERNAL_SERVER_ERROR"), that should induce a retry. (will automatically try TokenErrorCodes as well)
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
 	token_lock      sync.Mutex                           // Mutex for dealing with token expiry.
+	running         bool                                 // Indicates if the APIClient is in running state.
 }
 
 // _is_retry_error is a bitmask for retryable errors.
@@ -269,17 +273,33 @@ func (T *kvLiteStore) Delete(username string) error {
 	return nil
 }
 
-// api_secrets holds encrypted configuration options such as signature token,
+// api_config holds encrypted configuration options such as signature token,
 // client secret key, and key for encrypting/decrypting data.
-type api_secrets struct {
-	key               []byte
-	signature_key     []byte
-	client_secret_key []byte
+type api_config struct {
+	key        []byte
+	config_map map[string][]byte
+}
+
+func (k *api_config) Set(key, value string) {
+	if k.config_map == nil {
+		k.config_map = make(map[string][]byte)
+	}
+	k.config_map[key] = k.encrypt(value)
+}
+
+func (k *api_config) Get(key string) string {
+	if k.config_map == nil {
+		k.config_map = make(map[string][]byte)
+	}
+	if v, ok := k.config_map[key]; ok {
+		return k.decrypt(v)
+	}
+	return ""
 }
 
 // Encrypts the given string using AES with CFB encryption.
 // It initializes the key if it's nil.
-func (k *api_secrets) encrypt(input string) []byte {
+func (k *api_config) encrypt(input string) []byte {
 
 	if k.key == nil {
 		k.key = RandBytes(32)
@@ -299,7 +319,7 @@ func (k *api_secrets) encrypt(input string) []byte {
 
 // Decrypts the given ciphertext using the stored key.
 // Returns an empty string if the key is not set.
-func (k *api_secrets) decrypt(input []byte) string {
+func (k *api_config) decrypt(input []byte) string {
 	if k.key == nil {
 		return NONE
 	}
@@ -312,28 +332,10 @@ func (k *api_secrets) decrypt(input []byte) string {
 	return string(output)
 }
 
-// GetSignature retrieves the API signature.
-// It decrypts the signature key if it exists.
-func (s *APIClient) GetSignature() string {
-	var sig string
-
-	if s.secrets.signature_key != nil {
-		sig = s.secrets.decrypt(s.secrets.signature_key)
-	}
-
-	return sig
-}
-
 // GetClientSecret retrieves the client secret.
 // It decrypts the stored client secret if available.
 func (s *APIClient) GetClientSecret() string {
-	var secret string
-
-	if s.secrets.client_secret_key != nil {
-		secret = s.secrets.decrypt(s.secrets.client_secret_key)
-	}
-
-	return secret
+	return s.Config.Get("client_secret")
 }
 
 // APIRequest represents a request to be made to the API.
@@ -455,11 +457,14 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 			Debug("Access token expired, using refresh token instead.")
 			// First attempt to use a refresh token if there is one.
 			err = s.refreshToken(username, token)
-			if err != nil && s.secrets.signature_key == nil {
+			if err != nil {
 				Debug("Unable to use refresh token: %v", err)
-				Fatal("Access token has expired, must reauthenticate for new access token.")
+				if s.running && !s.ReaquireToken {
+					Fatal("Access token has expired, must reauthenticate for new access token.")
+				}
+				token = nil
+				err = nil
 			}
-			err = nil
 		}
 	}
 
@@ -468,6 +473,7 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 			return fmt.Errorf("APIClient: NewToken not initialized.")
 		}
 		s.TokenStore.Delete(username)
+
 		token, err = s.NewToken(username)
 		if err != nil {
 			return err
@@ -481,6 +487,9 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 			return err
 		}
 	}
+
+	s.running = true
+
 	return nil
 }
 
@@ -513,7 +522,7 @@ func (s *APIClient) refreshToken(username string, auth *Auth) error {
 
 	postform := &url.Values{
 		"client_id":     {client_id},
-		"client_secret": {s.secrets.decrypt(s.secrets.client_secret_key)},
+		"client_secret": {s.GetClientSecret()},
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {auth.RefreshToken},
 	}
@@ -580,15 +589,9 @@ type MimeBody struct {
 	Limit     int64
 }
 
-// Signature sets the signature key used for authenticating requests.
-// It encrypts the provided key before storing it.
-func (s *APIClient) Signature(signature_key string) {
-	s.secrets.signature_key = s.secrets.encrypt(signature_key)
-}
-
 // ClientSecret sets the client secret key, encrypting it for storage.
 func (s *APIClient) ClientSecret(client_secret_key string) {
-	s.secrets.client_secret_key = s.secrets.encrypt(client_secret_key)
+	s.Config.Set("client_secret", client_secret_key)
 }
 
 // Auth represents the authentication token.
@@ -690,6 +693,7 @@ func (s *APIClient) respErrorCheck(resp *http.Response) (err error) {
 		return err
 	}
 
+	// Default to KW API errors if no custom scanner is set.
 	if s.ErrorScanner == nil {
 		s.ErrorScanner = kwapiError
 	}

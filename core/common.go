@@ -6,17 +6,18 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"github.com/cmcoffee/snugforge/cfg"
-	"github.com/cmcoffee/snugforge/eflag"
-	"github.com/cmcoffee/snugforge/nfo"
-	"github.com/cmcoffee/snugforge/swapreader"
-	"github.com/cmcoffee/snugforge/xsync"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/cmcoffee/snugforge/cfg"
+	"github.com/cmcoffee/snugforge/eflag"
+	"github.com/cmcoffee/snugforge/nfo"
+	"github.com/cmcoffee/snugforge/swapreader"
+	"github.com/cmcoffee/snugforge/xsync"
 )
 
 // err_table stores error messages for reporting.
@@ -145,7 +146,7 @@ func GetBodyBytes(input []byte) func() (io.ReadCloser, error) {
 
 // RunTask executes the given task with provided database, report, and arguments.
 // It initializes the task, sets dependencies, and runs the main logic.
-func (K KWSession) RunTask(input Task, db Database, report *TaskReport, args ...map[string]interface{}) (err error) {
+func (T *KiteBrokerTask) SubTask(input Task, session KWSession, db_persist bool, args ...map[string]interface{}) (report TaskReport, err error) {
 	var arg_string []string
 	for _, arg := range args {
 		for k, v := range arg {
@@ -171,20 +172,23 @@ func (K KWSession) RunTask(input Task, db Database, report *TaskReport, args ...
 			}
 		}
 	}
+	sub_name := fmt.Sprintf("SubTask_%s_%s", input.Name(), session.Username)
 	task := input.Get()
-	task.DB = db
+	task.DB = T.DB.Sub(sub_name)
+	defer func() {
+		if !db_persist {
+			T.DB.Drop(sub_name)
+		}
+	}()
 	flags := FlagSet{EFlagSet: eflag.NewFlagSet("SubTask", eflag.ReturnErrorOnly)}
 	flags.FlagArgs = arg_string
 	task.Flags = flags
 	if err = input.Init(); err != nil {
-		return err
+		return
 	}
-	task.KW = K
-	task.Report = report
-	if err = input.Main(); err != nil {
-		return err
-	}
-	return nil
+	task.KW = session
+	task.Report = NewTaskReport(input.Name(), "SubTask", &flags)
+	return
 }
 
 // NONE is an empty string representing no path separator.
@@ -411,7 +415,8 @@ func MkDir(name ...string) (err error) {
 	return nil
 }
 
-// ReadKWTime Parse Timestamps from kiteworks
+// ReadKWTime parses a timestamp string in Kiteworks format (RFC3339 with potential "+0000" timezone)
+// and returns a time.Time object. It replaces "+0000" with "Z" to ensure RFC3339 compliance before parsing.
 func ReadKWTime(input string) (time.Time, error) {
 	input = strings.Replace(input, "+0000", "Z", 1)
 	return time.Parse(time.RFC3339, input)
@@ -503,6 +508,9 @@ func Dequote(input string) string {
 	return output
 }
 
+// Delete removes a file at the given path.
+// It uses the LocalPath function to adapt the path to the local filesystem
+// before attempting to remove the file using os.Remove.
 func Delete(path string) error {
 	return os.Remove(LocalPath(path))
 }

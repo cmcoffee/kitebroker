@@ -5,6 +5,8 @@ import (
 	. "kitebroker/core"
 )
 
+// AddUserTask manages the process of adding users to folders.
+// It handles user selection, folder access, and permission assignment.
 type AddUserTask struct {
 	input struct {
 		all_users     bool
@@ -144,6 +146,8 @@ func (T *AddUserTask) Main() (err error) {
 	return nil
 }
 
+// ProcessFolder recursively processes folders, adding a user to each folder
+// unless the folder is "My Folder", in which case it recurses into subfolders.
 func (T *AddUserTask) ProcessFolder(sess *KWSession, user *KiteUser, folder *KiteObject) {
 	if folder.Path != "My Folder" {
 		err := sess.Folder(folder.ID).AddUsersToFolder([]string{T.input.user_to_add}, 2, false, false)

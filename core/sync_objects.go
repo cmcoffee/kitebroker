@@ -4,6 +4,7 @@ import (
 	"time"
 )
 
+// SyncFile represents a file that has been synchronized.
 type SyncFile struct {
 	Name            string        `json:"name"`
 	Description     string        `json:"description,omitempty"`
@@ -22,6 +23,9 @@ type SyncFile struct {
 	Tasks           []SyncTask    `json:"tasks,omitempty"`
 }
 
+// SyncFolder represents a folder to be synchronized.
+// It contains information about the source, destination,
+// and permissions for the folder.
 type SyncFolder struct {
 	Name              string           `json:"name"`
 	Description       string           `json:"description,omitempty"`
@@ -35,11 +39,14 @@ type SyncFolder struct {
 	Permissions       []SyncPermission `json:"permissions"`
 }
 
+// SyncPermission represents a permission for syncing.
+// It defines which user has which role for a synced folder.
 type SyncPermission struct {
 	User string `json:"username"`
 	Role int    `json:"role"`
 }
 
+// SyncTask represents a unit of work to be synchronized.
 type SyncTask struct {
 	ID          string    `json:"id"`
 	Disposition int       `json:"disposition"`

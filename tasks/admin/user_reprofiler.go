@@ -138,7 +138,9 @@ func (T *UserProfilerTask) Main() (err error) {
 	return err
 }
 
-// Changes the profile.
+// change_profile changes the profile of a user.
+// It takes the user ID as input and updates the user's profile to the new profile ID specified in the UserProfilerTask.
+// It also handles data retention and deletion based on the reassign_to_id field.
 func (T *UserProfilerTask) change_profile(user_id string) (err error) {
 	params := make(PostJSON)
 

@@ -2,12 +2,13 @@ package core
 
 import (
 	"fmt"
-	"github.com/cmcoffee/snugforge/iotimeout"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
 const (
@@ -130,6 +131,8 @@ func (W *web_downloader) Seek(offset int64, whence int) (int64, error) {
 	return offset, nil
 }
 
+// WebDownload downloads content from multiple HTTP requests.
+// It returns a ReadSeekCloser that can be used to read the downloaded content.
 func (s *APIClient) WebDownload(reqs ...*http.Request) ReadSeekCloser {
 	if s.trans_limiter != nil {
 		s.trans_limiter <- struct{}{}

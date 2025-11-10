@@ -1,8 +1,35 @@
-## Kitebroker: Automation Assistant for Kiteworks – User Guide
+## Kitebroker: Automation Assistant for Kiteworks - User Guide
 
 **Introduction**
 
-Kitebroker is a command-line tool and framework designed for automating flows for files and administrative tasks via the Kiteworks API. This guide provides instructions on setting up and using Kitebroker to streamline your Kiteworks operations.
+Kitebroker is a command-line tool and framework designed for automating flows for files and administrative tasks via the Kiteworks API. This guide provides instructions on setting up and using Kitebroker to streamline your Kiteworks operations. Kitebroker supports both OAuth 2.0 with Signature Authorization and JSON Web Token (JWT) based authentication, providing flexibility for different security requirements.
+
+**Configuration**
+
+Kitebroker utilizes a configuration file, `kitebroker.ini`, to store persistent settings. This file allows you to pre-configure your Kiteworks connection details, eliminating the need to repeatedly enter them during each invocation. The `kitebroker.ini` file will be located in the same directory as the Kitebroker executable.
+
+**Example `kitebroker.ini`:**
+
+```ini
+[configuration]
+auth_flow = signature # (or jwt or password)
+redirect_uri = https://kitebroker
+ssl_verify = true
+proxy_uri = 
+server = kiteworks.example.com
+
+[do_not_modify]
+api_cfg_0 = 
+api_cfg_1 = 
+```
+
+**Configuration Options:**
+
+*   **`auth_flow`**:  Specifies the authentication flow. Valid values are `signature`, `jwt`, and `password`.
+*   **`redirect_uri`**: The redirect URI used during the OAuth authorization flow (required for Signature Authorization).
+*   **`ssl_verify`**:  A boolean value (true/false) indicating whether to verify the SSL certificate of the Kiteworks server.
+*   **`proxy_uri`**:  The URI of a proxy server to use for connecting to Kiteworks.
+*   **`server`**:  The hostname or IP address of your Kiteworks server.
 
 **Prerequisites**
 
@@ -10,40 +37,24 @@ Before using Kitebroker, ensure your Kiteworks system is configured for API use,
 
 **Installation and Setup**
 
-1.  **License Verification:** Verify your Kiteworks license is enabled for API usage. Log in to the Kiteworks admin UI and navigate to *Application Setup -> Licenses*.
-
-2.  **Kitebroker Application Creation:** Add Kitebroker to the system by navigating to *Application Setup -> Client and Plugins*, selecting the *API* tab, and clicking "+ Create Custom Application". Configure the following settings:
+1.  **License Verification:** Verify your Kiteworks license is enabled for API usage. Log in to the Kiteworks admin UI and navigate to _Application Setup -> Licenses_.
+2.  **Kitebroker Application Creation:** Add Kitebroker to the system by navigating to _Application Setup -> Client and Plugins_, selecting the _API_ tab, and clicking "+ Create Custom Application". Configure the following settings:
     *   **Name:** kitebroker
     *   **Description:** kitebroker: API Assistant for Kiteworks
-    *   **Flows:** Select *Signature Authorization*
-    *   **Enable Refresh Token:** Enabled
-    *   **Signature Key:** You can generate a random key or use an existing one.
-    *   **Redirect URI:** The default is `https://kitebroker/`, but this can be modified.
+    *   **Flows:** Select either _Signature Authorization_, _JWT_ or _User Credential_.
+    *   **Enable Refresh Token:** Enabled (for Signature Authorization and User Credential only.  Not applicable for JWT)
+    *   **Signature Key:** You can generate a random key or use an existing one. (For Signature Authorization only)
+    *   **Redirect URI:** The default is `https://kitebroker/`, but this can be modified. (For Signature Authorization only)
 
 **Configuration – Kiteworks API Settings**
 
-After creating the application, you must configure Kitebroker with your Kiteworks API credentials. Run the following command in your terminal:
+Aside from auth_flow, all other configuration items are available via `kitebroker --setup`.
 
-```bash
-kitebroker --setup
-```
-
-This will prompt you to enter the following information:
-
-1.  **User Account:** `user123@example.com` (or your designated Kiteworks user)
-2.  **Kiteworks Host:** `kiteworks.example.com` (or your Kiteworks instance URL)
-3.  **Client Application ID:** `a1b2c3d4-e5f6-7890-1234-567890abcdef` (the ID generated when creating the Kitebroker application in Kiteworks)
-4.  **Client Secret Key:** (the secret key generated when creating the Kitebroker application in Kiteworks)
-5.  **Signature Secret:** (the signature secret associated with your Kitebroker application)
-6.  **Redirect URI:** The default is `https://kitebroker/`, but this can be modified.
+The `kitebroker --setup` command can still be used to initially populate or update settings in the `kitebroker.ini` file. This command will prompt you for the necessary information, and then write it to the configuration file.
 
 **Command-Line Usage**
 
-Kitebroker is used via the command line. The basic syntax is:
-
-```bash
-kitebroker [options]... <command> [parameters]...
-```
+`kitebroker [options]... <command> [parameters]...`
 
 **Available Options:**
 
@@ -60,27 +71,25 @@ kitebroker [options]... <command> [parameters]...
 
 **Available Commands:**
 
-**User Commands:**
+*   **User Commands:**
+    *   `ls`: Lists folders and/or files in Kiteworks.
+    *   `upload`: Uploads folders and/or files to Kiteworks.
+    *   `download`: Downloads folders and/or files from Kiteworks.
+    *   `push_files`: Pushes files within folders to mobile devices.
 
-*   `ls`: Lists folders and/or files in Kiteworks.
-*   `upload`: Uploads folders and/or files to Kiteworks.
-*   `download`: Downloads folders and/or files from Kiteworks.
-*   `push_files`: Pushes files within folders to mobile devices.
-
-**Admin Commands:**
-
-*   `demote_permissions`: Demotes folder permissions from a profile or user.
-*   `csv_onboard`: Adds users to a folder.
-*   `folder_file_expiry`: Modifies the folder and file expiry.
-*   `user_reprofiler`: Changes user profiles.
-*   `file_cleanup`: Removes files from the system older than a specified date.
-*   `user_remover`: Deletes and reassigns inactive accounts.
-*   `kw_to_kw_copy`: Migrates users and files from a remote Kiteworks server.
-*   `move_my_folder`: Relocates folders under *My Folder*.
-*   `add_user_to_folder`: Adds a downloader to top-level folders.
-*   `folder_metadata`: Retrieves folder metadata from a user's folders.
-*   `folder_report`: Provides permission details of folders in Kiteworks.
-*   `update_user`: Updates user information.
-*   `user_renamer`: Renames email accounts with a CSV file.
+*   **Admin Commands:**
+    *   `demote_permissions`: Demotes folder permissions from a profile or user.
+    *   `csv_onboard`: Adds users to a folder.
+    *   `folder_file_expiry`: Modifies the folder and file expiry.
+    *   `user_reprofiler`: Changes user profiles.
+    *   `file_cleanup`: Removes files from the system older than a specified date.
+    *   `user_remover`: Deletes and reassigns inactive accounts.
+    *   `kw_to_kw_copy`: Migrates users and files from a remote Kiteworks server.
+    *   `move_my_folder`: Relocates folders under _My Folder_.
+    *   `add_user_to_folder`: Adds a downloader to top-level folders.
+    *   `folder_metadata`: Retrieves folder metadata from a user's folders.
+    *   `folder_report`: Provides permission details of folders in Kiteworks.
+    *   `update_user`: Updates user information.
+    *   `user_renamer`: Renames email accounts with a CSV file.
 
 For detailed help on any command, type `kitebroker <command> --help`.
