@@ -2,9 +2,12 @@ package admin
 
 import (
 	"fmt"
-	. "kitebroker/core"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(FileCleanerTask)) }
 
 type FileCleanerTask struct {
 	input struct {
@@ -29,16 +32,12 @@ type FileCleanerTask struct {
 	KiteBrokerTask
 }
 
-func (T FileCleanerTask) New() Task {
-	return new(FileCleanerTask)
-}
-
 func (T FileCleanerTask) Name() string {
 	return "file_cleanup"
 }
 
 func (T FileCleanerTask) Desc() string {
-	return "Remove files from system older than a specified date."
+	return "Files & Folders:Remove files from system older than a specified date."
 }
 
 func (T *FileCleanerTask) Init() (err error) {

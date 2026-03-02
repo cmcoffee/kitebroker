@@ -2,10 +2,13 @@ package admin
 
 import (
 	"fmt"
-	. "kitebroker/core"
 	"strings"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(FolderFileExpiryTask)) }
 
 type FolderFileExpiryTask struct {
 	input struct {
@@ -29,16 +32,12 @@ type FolderFileExpiryTask struct {
 	KiteBrokerTask
 }
 
-func (T FolderFileExpiryTask) New() Task {
-	return new(FolderFileExpiryTask)
-}
-
 func (T FolderFileExpiryTask) Name() string {
 	return "folder_file_expiry"
 }
 
 func (T FolderFileExpiryTask) Desc() string {
-	return "Modifies the folder and file expiry."
+	return "Files & Folders:Modifies the folder and file expiry."
 }
 
 func (T *FolderFileExpiryTask) Init() (err error) {

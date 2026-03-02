@@ -4,13 +4,14 @@ import (
 	"bufio"
 	"encoding/csv"
 	"fmt"
-	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
 
 var folder_perms = map[string]int{
@@ -20,6 +21,8 @@ var folder_perms = map[string]int{
 	"viewer":       6,
 	"uploader":     7,
 }
+
+func init() { RegisterAdminTask(new(CSVOnboardTask)) }
 
 type CSVOnboardTask struct {
 	// input variables
@@ -44,16 +47,12 @@ type CSVOnboardTask struct {
 	KiteBrokerTask
 }
 
-func (T *CSVOnboardTask) New() Task {
-	return new(CSVOnboardTask)
-}
-
 func (T *CSVOnboardTask) Name() string {
 	return "csv_onboard"
 }
 
 func (T *CSVOnboardTask) Desc() string {
-	return "Add users to Folder."
+	return "Users:Add users to folders from CSV."
 }
 
 func (T *CSVOnboardTask) Init() (err error) {

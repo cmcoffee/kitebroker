@@ -30,11 +30,10 @@ type kitebrokerUpdater struct {
 	proxyURL     string
 }
 
-//global.cfg.Get("configuration", "proxy_uri")
-//!global.cfg.GetBool("configuration", "ssl_verify")
-
-// UpdateKitebroker Updates the kitebroker.ioapp.(*http.io. ReaderFrom io.Reader{io.NewSection(io.NewSectionReader(io.NewBuffer(buffer.(*Bytes").Bytes()io.NewReader(buffer.(*buffer).Bytes())io.NewBuffer(buffer.(*buffer).Bytes())})})
-// with the latest version if available.
+// UpdateKitebroker checks for and applies updates to Kitebroker.
+// It uses the provided parameters to determine the application
+// details and update source, and handles SSL verification and
+// proxy settings during the update process.
 func UpdateKitebroker(appName string, localVer string, localPath string, localExec string, sslVerify bool, proxyURL string) {
 
 	k := &kitebrokerUpdater{
@@ -83,6 +82,9 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 		if num < 10 {
 			return fmt.Sprintf("0%d", num)
 		}
+		if num > 100 && num < 1000 {
+			return fmt.Sprintf("0%d", num)
+		}
 		return fmt.Sprintf("%d", num)
 	}
 
@@ -114,7 +116,7 @@ func (k kitebrokerUpdater) check_for_update() (bool, string) {
 	}
 	l_ver, err = cleanup_version(k.localVer)
 	if err != nil {
-		Fatal("Could not determine local version: %s", remote_ver)
+		Fatal("Could not determine local version: %s", k.localVer)
 	}
 
 	Debug("Remote: %d vs Local: %d", r_ver, l_ver)
@@ -141,7 +143,9 @@ func (k kitebrokerUpdater) update_self() {
 
 	temp_file_name := LocalPath(fmt.Sprintf("%s/%s.incomplete", k.localPath, fmt.Sprintf("%s.%s", k.localExec, build)))
 
-	os.Remove(temp_file_name)
+	if err = os.Remove(temp_file_name); err != nil && !os.IsNotExist(err) {
+		Critical(err)
+	}
 
 	f, err := os.OpenFile(temp_file_name, os.O_CREATE|os.O_RDWR, 0775)
 	Critical(err)
@@ -195,7 +199,7 @@ func (k kitebrokerUpdater) http_get(target string) (*http.Response, error) {
 	)
 
 	if !IsBlank(k.proxyURL) {
-		proxy_url, err = url.Parse(strings.Join([]string{k.proxyURL}, ""))
+		proxy_url, err = url.Parse(k.proxyURL)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +210,7 @@ func (k kitebrokerUpdater) http_get(target string) (*http.Response, error) {
 		transport.Proxy = http.ProxyURL(proxy_url)
 	}
 
-	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: k.sslVerify}
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: !k.sslVerify}
 	transport.DisableKeepAlives = true
 
 	req, err := http.NewRequest("GET", target, nil)

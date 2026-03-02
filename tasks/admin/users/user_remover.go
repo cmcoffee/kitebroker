@@ -3,11 +3,14 @@ package admin
 import (
 	"encoding/csv"
 	"fmt"
-	. "kitebroker/core"
 	"os"
 	"strings"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(UserRemoverTask)) }
 
 type UserRemoverTask struct {
 	input struct {
@@ -28,6 +31,7 @@ type UserRemoverTask struct {
 		inactive_days   uint
 		process_active  bool
 		force           bool
+		archive_mail    bool
 	}
 	limit                   int
 	prefix                  string
@@ -42,16 +46,12 @@ type UserRemoverTask struct {
 	KiteBrokerTask
 }
 
-func (T UserRemoverTask) New() Task {
-	return new(UserRemoverTask)
-}
-
 func (T UserRemoverTask) Name() string {
 	return "user_remover"
 }
 
 func (T UserRemoverTask) Desc() string {
-	return "Delete and reassign inactive accounts."
+	return "Users:Delete and reassign inactive accounts."
 }
 
 // Initializes the UserRemoverTask, parsing flags, setting up variables, and performing initial validation.
@@ -73,6 +73,7 @@ func (T *UserRemoverTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.withdraw_links, "withdraw_links", "Withdraw all file links and request file links sent by user.")
 	T.Flags.BoolVar(&T.input.external_only, "external_only", "Only remove external accounts")
 	T.Flags.IntVar(&T.input.limit, "limit", -1, "Limit number of accounts to remove, -1 for all users.")
+	T.Flags.BoolVar(&T.input.archive_mail, "archive_mail", "Archive messages to folders prior to deleting account.")
 	T.Flags.StringVar(&T.input.csv_file, "csv_file", "<Users-Report-1652909468.csv>", "Specify a Users Report CSV File for targeting users for cleanup.")
 	// "active" and "force" flags are ordered first to highlight their importance and potential danger,
 	// ensuring they appear together and are easily noticed by users.
@@ -95,6 +96,10 @@ func (T *UserRemoverTask) Init() (err error) {
 		T.inactivity_time = time.Now().UTC().Add((time.Hour * 24) * time.Duration(T.input.inactive_days) * -1)
 	}
 
+	if T.input.archive_mail && IsBlank(T.input.reassign_to) {
+		return fmt.Errorf("--archive_mail requires --reassign_to to proceed.")
+	}
+
 	if !IsBlank(T.input.csv_file) {
 		T.read_csv_file = true
 	}
@@ -106,21 +111,16 @@ func (T *UserRemoverTask) Init() (err error) {
 	return
 }
 
-// CheckLastActivityAPI determines if the Kite system has last activity data available.
-// It retrieves the current user's information from the Kite system.
-// If the user's LastActivityDateTime is not blank, it indicates that last activity data is available,
-// and the function returns false. Otherwise, it returns true, indicating that last activity data is not available.
+// CheckLastActivityAPI reports whether the Kiteworks system exposes last-activity
+// data via the API. It checks the calling user's own record: if LastActivityDateTime
+// is populated the feature is present and the function returns true; otherwise false.
 func (T *UserRemoverTask) CheckLastActivityAPI() bool {
 	me, err := T.KW.Admin().MyUser()
 	if err != nil {
 		Warn("Got error trying to find info on system: %v", err)
 		return false
 	}
-	if !IsBlank(me.LastActivityDateTime) {
-		return false
-	} else {
-		return true
-	}
+	return !IsBlank(me.LastActivityDateTime)
 }
 
 func (T *UserRemoverTask) Main() (err error) {
@@ -173,7 +173,7 @@ func (T *UserRemoverTask) Main() (err error) {
 			if err != nil {
 				return err
 			}
-			T.input.user_emails = append(T.input.user_emails, user_emails[:0]...)
+			T.input.user_emails = append(T.input.user_emails, user_emails[0:]...)
 		}
 	} else {
 		for k := range T.last_activity {
@@ -227,6 +227,7 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 	reader := csv.NewReader(f)
 	records, err := reader.ReadAll()
 	if err != nil {
@@ -258,7 +259,7 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 
 	for i, val := range records {
 		if i == 0 {
-			if len(val) > 9 {
+			if len(val) < 9 {
 				return fmt.Errorf("CSV has fewer columns than expected, aborting.")
 			}
 			if !strings.Contains(strings.ToLower(val[8]), "last activity") {
@@ -298,6 +299,10 @@ func (T *UserRemoverTask) ReadCSV(file string) (err error) {
 	return nil
 }
 
+func (T UserRemoverTask) ReactivateUser(input KiteUser) (err error) {
+	return T.KW.Admin().ActivateUser(input.ID)
+}
+
 // CheckLastActivity determines if a user is inactive based on their last activity time.
 // It first attempts to retrieve the last activity time from the KiteUser interface.
 // If that fails, it checks if the last activity time was pre-loaded from the CSV file.
@@ -308,7 +313,7 @@ func (T UserRemoverTask) CheckLastActivity(input KiteUser) (bool, time.Time, err
 		if last_activity, ok := T.last_activity[strings.ToLower(input.Email)]; ok {
 			last_activity_time = last_activity
 		} else {
-			if T.last_activity_available {
+			if !T.last_activity_available {
 				last_activity, err = ReadKWTime(input.Created)
 				if err != nil {
 					return false, last_activity_time, err
@@ -404,6 +409,28 @@ func (T UserRemoverTask) RemoveUser(input KiteUser) bool {
 	if T.input.dry_run {
 		T.user_removed.Add(1)
 		return true
+	}
+
+	if T.input.archive_mail {
+		Log("Archiving %s's mailbox ..", input.Email)
+		err := T.ReactivateUser(input)
+		if err != nil {
+			Err("[%s]: %s", input.Email, err.Error())
+			return false
+		}
+		sess := T.KW.Session(input.Email)
+		mail, err := sess.MailList()
+		if err != nil {
+			Err("[%s]: %s", input.Email, err)
+			return false
+		}
+		for _, v := range mail {
+			err = sess.Mail(v.ID).Archive("")
+			if err != nil {
+				Err("[%s]: %s", input.Email, err)
+				return false
+			}
+		}
 	}
 
 	// Configure API parameters for deletion.

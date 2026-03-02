@@ -2,36 +2,29 @@ package core
 
 import (
 	"bytes"
-	"crypto"
 	"crypto/hmac"
-	"crypto/rsa"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	rand2 "crypto/rand"
 
 	"github.com/cmcoffee/snugforge/iotimeout"
-	"github.com/cmcoffee/snugforge/nfo"
-	"github.com/google/uuid"
-	"github.com/youmark/pkcs8"
+	"github.com/cmcoffee/snugforge/jwcrypt"
 )
 
 const (
 	// SIGNATURE_AUTH represents signature-based authentication.
 	SIGNATURE_AUTH = 1 << iota
 	// PASSWORD_AUTH represents password-based authentication.
-	PASSWORD_AUTH
-	// JWT_AUTH represents JWT-based authentication.
 	JWT_AUTH
 	// AUTHORIZATION_CODE_AUTH represents authorization code-based authentication.
 	AUTHORIZATION_CODE_AUTH
@@ -75,6 +68,7 @@ func kwapiError(body []byte) (e APIError) {
 // It encapsulates the API client and provides methods for interacting with the Kiteworks API.
 type KWAPI struct {
 	*APIClient
+	errorScannerOnce sync.Once
 }
 
 // KWSession represents a user session with access to the KWAPI.
@@ -87,6 +81,9 @@ type KWSession struct {
 
 // Session creates a new session for the given username.
 func (K *KWAPI) Session(username string) KWSession {
+	K.errorScannerOnce.Do(func() {
+		K.ErrorScanner = kwapiError
+	})
 	return KWSession{username, K.db.Sub(username), K}
 }
 
@@ -194,11 +191,9 @@ func (K *KWAPI) KWNewToken(username string) (auth *Auth, err error) {
 
 	var post *url.Values
 
-	switch K.Flags.Switch(SIGNATURE_AUTH, PASSWORD_AUTH, JWT_AUTH) {
+	switch K.Flags.Switch(SIGNATURE_AUTH, JWT_AUTH) {
 	case SIGNATURE_AUTH:
 		post = K.signature_auth_flow(username)
-	case PASSWORD_AUTH:
-		post = K.password_auth_flow(username)
 	case JWT_AUTH:
 		post, err = K.jwt_auth_flow(username)
 		if err != nil {
@@ -328,9 +323,14 @@ func (K *KWAPI) signature_auth_flow(username string) *url.Values {
 	// Retrieve the signature key from our config.
 	signature := K.Config.Get("signature_key")
 
-	// Spin up randomizer seed on unix epoch in nano seconds for nonce.
-	randomizer := rand.New(rand.NewSource(int64(time.Now().UnixNano())))
-	nonce := randomizer.Int() % 999999
+	// Generate cryptographically secure nonce.
+	var nonce_bytes [4]byte
+	rand2.Read(nonce_bytes[:])
+	nonce := int(nonce_bytes[0])<<24 | int(nonce_bytes[1])<<16 | int(nonce_bytes[2])<<8 | int(nonce_bytes[3])
+	if nonce < 0 {
+		nonce = -nonce
+	}
+	nonce = nonce % 999999
 
 	// Create timestamp
 	timestamp := int64(time.Now().Unix())
@@ -359,35 +359,6 @@ func (K *KWAPI) signature_auth_flow(username string) *url.Values {
 	return postform
 }
 
-// password_auth_flow creates a URL-encoded form data for password-based authentication.
-// It constructs the form data with grant_type, username, and password, and returns it.
-// The password is securely retrieved from the user using nfo.GetSecret.
-func (K *KWAPI) password_auth_flow(username string) *url.Values {
-	postform := &url.Values{
-		"grant_type": {"password"},
-		"username":   {username},
-	}
-
-	defer PleaseWait.Hide()
-	Stdout("\n### %s authentication ###\n\n", K.Server)
-	PleaseWait.Hide()
-	Stdout(" -> Account Login(email): %s", username)
-
-	var password string
-	for password == NONE {
-		password = nfo.GetSecret(" -> Account Password: ")
-		Stdout("\n")
-		if password == NONE {
-			Err("Blank password provided.\n\n")
-			continue
-		}
-	}
-
-	postform.Set("password", password)
-	PleaseWait.Show()
-	return postform
-}
-
 // jwt_auth_flow creates a URL-encoded form data for JWT-based authentication.
 // It constructs a JWT assertion using the configured private key and issuer, signs it with RS256,
 // and returns the form data required for the Kiteworks OAuth token endpoint.
@@ -397,21 +368,11 @@ func (K *KWAPI) jwt_auth_flow(username string) (postform *url.Values, err error)
 		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
 	}
 
-	der, _ := pem.Decode(K.JWT().GetKey())
+	keyData := K.JWT().GetKey()
 
-	if der == nil {
-		return nil, fmt.Errorf("Invalid or Missing JWT RSA Private Key, please use --setup to Update JWT RSA Private Key.")
-	}
-
-	var key *rsa.PrivateKey
-
-	key, err = pkcs8.ParsePKCS8PrivateKeyRSA(der.Bytes)
+	key, err := jwcrypt.ParseRSAPrivateKey(keyData)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := key.Validate(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Invalid or Missing JWT RSA Private Key, please use --setup to Update JWT RSA Private Key: %w", err)
 	}
 
 	username_attribute := K.JWT().GetUIDAttribute()
@@ -427,7 +388,7 @@ func (K *KWAPI) jwt_auth_flow(username string) (postform *url.Values, err error)
 	Claims["exp"] = time.Now().Add(time.Duration(time.Second * 300)).Unix()
 	Claims["nbf"] = time.Now().Add(time.Duration(time.Second * -60)).Unix()
 	Claims["iat"] = time.Now().Unix()
-	Claims["jti"] = uuid.New().String()
+	Claims["jti"] = UUIDv4()
 	if strings.ToLower(username_attribute) != "sub" {
 		Claims[username_attribute] = username
 	}
@@ -437,50 +398,10 @@ func (K *KWAPI) jwt_auth_flow(username string) (postform *url.Values, err error)
 		Trace("\t%s: %v", k, v)
 	}
 
-	// jwt_encode encodes the input data to a JWT (JSON Web Token) format.
-	// It takes an input which can be a byte slice or any Go value that can be marshaled to JSON.
-	// The function returns the base64 URL-encoded string representation of the input data,
-	// with trailing '=' characters removed as per JWT specification.
-
-	jwt_encode := func(input interface{}) (output string, err error) {
-		var data []byte
-
-		switch i := input.(type) {
-		case []byte:
-			data = i
-		default:
-			data, err = json.Marshal(input)
-			if err != nil {
-				return "", err
-			}
-		}
-		return strings.TrimRight(base64.URLEncoding.EncodeToString(data), "="), nil
-	}
-
-	header, err := jwt_encode(map[string]string{"alg": "RS256", "type": "JWT"})
+	tokenStr, err := jwcrypt.SignRS512(key, Claims, map[string]string{"type": "JWT"})
 	if err != nil {
 		return nil, err
 	}
-	payload, err := jwt_encode(Claims)
-	if err != nil {
-		return nil, err
-	}
-
-	hash := crypto.SHA256
-
-	h := hash.New()
-	h.Write([]byte(fmt.Sprintf("%s.%s", header, payload)))
-	s, err := rsa.SignPKCS1v15(rand2.Reader, key, hash, h.Sum(nil))
-	if err != nil {
-		return nil, err
-	}
-
-	jwt_s, err := jwt_encode(s)
-	if err != nil {
-		return nil, err
-	}
-
-	tokenStr := fmt.Sprintf("%s.%s.%s", header, payload, jwt_s)
 	postform.Set("assertion", tokenStr)
 
 	return postform, nil

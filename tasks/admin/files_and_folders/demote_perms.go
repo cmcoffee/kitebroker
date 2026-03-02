@@ -2,8 +2,11 @@ package admin
 
 import (
 	"fmt"
-	. "kitebroker/core"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(DemotePermissionsTask)) }
 
 type DemotePermissionsTask struct {
 	input struct {
@@ -22,16 +25,12 @@ type DemotePermissionsTask struct {
 	KiteBrokerTask
 }
 
-func (T DemotePermissionsTask) New() Task {
-	return new(DemotePermissionsTask)
-}
-
 func (T DemotePermissionsTask) Name() string {
 	return "demote_permissions"
 }
 
 func (T DemotePermissionsTask) Desc() string {
-	return "Demotes folder permissions from a profile, or a user."
+	return "Files & Folders:Demote folder permissions for a profile or user."
 }
 
 func (T *DemotePermissionsTask) Init() (err error) {

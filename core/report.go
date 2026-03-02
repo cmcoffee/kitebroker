@@ -152,17 +152,17 @@ func (c Tally) Name() string {
 
 // Add increments the tally by the given integer.
 func (c Tally) Add(num int) {
-	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+int64(num))
+	atomic.AddInt64(c.count, int64(num))
 }
 
 // Add64 atomically adds the given int64 value to the tally's count.
 func (c Tally) Add64(num int64) {
-	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)+num)
+	atomic.AddInt64(c.count, num)
 }
 
 // Del subtracts the given number from the tally's count.
 func (c Tally) Del(num int) {
-	atomic.StoreInt64(c.count, atomic.LoadInt64(c.count)-int64(num))
+	atomic.AddInt64(c.count, -int64(num))
 }
 
 // Value returns the current value of the tally.

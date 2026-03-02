@@ -3,12 +3,14 @@ package user
 import (
 	"fmt"
 	"io/fs"
-	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterTask(new(FolderUploadTask)) }
 
 type FolderUploadTask struct {
 	input struct {
@@ -39,16 +41,12 @@ type upload struct {
 	dest  *KiteObject
 }
 
-func (T *FolderUploadTask) New() Task {
-	return new(FolderUploadTask)
-}
-
 func (T FolderUploadTask) Name() string {
 	return "upload"
 }
 
 func (T FolderUploadTask) Desc() string {
-	return "Upload folders and/or files to kiteworks."
+	return "Upload folders and/or files to Kiteworks."
 }
 
 func (T *FolderUploadTask) Init() (err error) {
@@ -181,11 +179,7 @@ func (T *FolderUploadTask) Main() (err error) {
 	}
 	T.crawl_wg.Wait()
 
-	for len(T.upload_chan) > 0 {
-		time.Sleep(time.Second)
-	}
-
-	// Shutdown upload
+	// All crawlers are done; signal the dispatcher to drain remaining items and exit.
 	T.upload_chan <- nil
 	T.upload_wg.Wait()
 

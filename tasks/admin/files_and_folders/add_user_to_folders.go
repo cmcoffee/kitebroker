@@ -2,8 +2,11 @@ package admin
 
 import (
 	"fmt"
-	. "kitebroker/core"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(AddUserTask)) }
 
 // AddUserTask manages the process of adding users to folders.
 // It handles user selection, folder access, and permission assignment.
@@ -25,16 +28,12 @@ type AddUserTask struct {
 	KiteBrokerTask
 }
 
-func (T AddUserTask) New() Task {
-	return new(AddUserTask)
-}
-
 func (T AddUserTask) Name() string {
 	return "add_user_to_folder"
 }
 
 func (T AddUserTask) Desc() string {
-	return "Adds Downloader to top-level folders."
+	return "Files & Folders:Add user as downloader to top-level folders."
 }
 
 func (T *AddUserTask) Init() (err error) {

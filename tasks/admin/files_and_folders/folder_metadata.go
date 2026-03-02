@@ -3,13 +3,16 @@ package admin
 import (
 	"encoding/csv"
 	"fmt"
-	. "kitebroker/core"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 	//"strings"
 )
+
+func init() { RegisterAdminTask(new(MetadataTask)) }
 
 type MetadataTask struct {
 	// input variables
@@ -34,16 +37,12 @@ type MetadataTask struct {
 	KiteBrokerTask
 }
 
-func (T MetadataTask) New() Task {
-	return new(MetadataTask)
-}
-
 func (T MetadataTask) Name() string {
 	return "folder_metadata"
 }
 
 func (T MetadataTask) Desc() string {
-	return "Retrieves folder metadata from user's folders."
+	return "Files & Folders:Retrieves folder metadata from user's folders."
 }
 
 func (T *MetadataTask) Init() (err error) {

@@ -4,6 +4,9 @@ import (
 	. "github.com/cmcoffee/kitebroker/core"
 )
 
+// Self-register this task. Use RegisterTask, RegisterAdminTask, or RegisterMigrationTask.
+func init() { RegisterTask(new(ExampleTask)) }
+
 // ExampleTask encapsulates the components required to execute a specific task.
 // It manages input flags and integrates with the KiteBrokerTask framework.
 type ExampleTask struct {
@@ -13,11 +16,6 @@ type ExampleTask struct {
 	}
 	// Required for all tasks
 	KiteBrokerTask
-}
-
-// New returns a new instance of the ExampleTask.
-func (T ExampleTask) New() Task {
-	return new(ExampleTask)
 }
 
 // Name returns the name of the task.

@@ -3,12 +3,13 @@ package main
 import (
 	_ "embed"
 	"fmt"
-	. "kitebroker/core"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 
 	"github.com/cmcoffee/snugforge/eflag"
 	"github.com/cmcoffee/snugforge/nfo"
@@ -22,7 +23,7 @@ const APPNAME = "kitebroker"
 //go:embed version.txt
 var VERSION string
 
-// global is the application-wide configuration and state.
+// global holds application-wide configuration and state.
 var global struct {
 	cfg           ConfigStore
 	db            Database
@@ -64,32 +65,28 @@ func get_runtime_info() string {
 // It also sets the custom tasks flag.
 func load_config(config_file string) (err error) {
 	if err := load_config_defaults(); err != nil {
-		global.auth_mode = PASSWORD_AUTH
+		global.auth_mode = JWT_AUTH
 		return err
 	}
 	err = global.cfg.File(config_file)
 	if err != nil {
-		global.auth_mode = SIGNATURE_AUTH
+		global.auth_mode = JWT_AUTH
 		return err
 	}
 	switch strings.ToLower(global.cfg.Get("configuration", "auth_flow")) {
 	case "signature":
 		global.auth_mode = SIGNATURE_AUTH
 		global.show_admin = true
-	case "password":
-		global.auth_mode = PASSWORD_AUTH
 	case "jwt":
 		global.auth_mode = JWT_AUTH
 		global.show_admin = true
 	case "authorization":
 		global.auth_mode = AUTHORIZATION_CODE_AUTH
 	default:
-		global.auth_mode = SIGNATURE_AUTH
+		global.auth_mode = JWT_AUTH
 		global.show_admin = true
 		return fmt.Errorf("Unknown auth_flow setting in %s: %s", config_file, global.cfg.Get("configuration", "auth_flow"))
 	}
-
-	global.show_custom = global.cfg.GetBool("configuration", "custom_tasks")
 
 	return nil
 }
@@ -122,6 +119,7 @@ func main() {
 	version := flags.Bool("version", "")
 	flags.BoolVar(&global.sysmode, "quiet", "Minimal output for non-interactive processes.")
 	flags.BoolVar(&global.pause, "pause", "Pause after execution.")
+	flags.BoolVar(&global.show_custom, "custom", NONE)
 
 	if global.show_admin {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")
@@ -141,6 +139,8 @@ func main() {
 
 	f_err := flags.Parse(os.Args[1:])
 
+	loadTasks()
+
 	if global.debug {
 		enable_debug()
 	}
@@ -150,9 +150,27 @@ func main() {
 	}
 
 	if *version {
-		Stdout("### %s v%s ###", APPNAME, VERSION)
-		Stdout("\n")
-		Stdout("Written by Craig M. Coffee. (craig@snuglab.com)")
+		Stdout(`
+           .
+          /|\
+         / | \        _  ___ _       _               _
+        /  |  \      | |/ (_) |_ ___| |__  _ __ ___ | | _____ _ __
+       /   |   \     | ' /| | __/ _ \ '_ \| '__/ _ \| |/ / _ \ '__|
+      /    |    \    | . \| | ||  __/ |_) | | | (_) |   <  __/ |
+     /_____|_____\   |_|\_\_|\__\___|_.__/|_|  \___/|_|\_\___|_|
+     \     |     /
+      \    |    /      v%s
+       \   |   /
+        \  |  /        Written by Craig M. Coffee.
+         \ | /         craig@snuglab.com
+          \|/
+           '
+           |
+          /
+         |
+          \
+           |
+`, VERSION)
 		Exit(0)
 	}
 
@@ -194,9 +212,6 @@ func main() {
 			return true
 		})
 	}
-
-	// We need to do a quick look to see what commands we display for --help
-	// err := load_config(FormatPath(fmt.Sprintf("%s/%s.ini", global.root, APPNAME)))
 
 	if f_err != nil {
 		if f_err != eflag.ErrHelp {

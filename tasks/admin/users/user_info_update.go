@@ -3,12 +3,15 @@ package admin
 import (
 	"bytes"
 	"fmt"
+	"os"
+
 	//"github.com/cmcoffee/snugforge/csvp"
 	//"io/ioutil"
-	. "kitebroker/core"
-	"os"
+	. "github.com/cmcoffee/kitebroker/core"
 	//"strings"
 )
+
+func init() { RegisterAdminTask(new(UserInfoTask)) }
 
 type UserInfoTask struct {
 	// input variables
@@ -20,16 +23,12 @@ type UserInfoTask struct {
 	KiteBrokerTask
 }
 
-func (T UserInfoTask) New() Task {
-	return new(UserInfoTask)
-}
-
 func (T UserInfoTask) Name() string {
 	return "update_user"
 }
 
 func (T UserInfoTask) Desc() string {
-	return "Update user information."
+	return "Users:Update user information."
 }
 
 func (T *UserInfoTask) Init() (err error) {

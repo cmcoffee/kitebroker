@@ -5,31 +5,25 @@
 package main
 
 import (
-	"kitebroker/tasks/admin"
-	"kitebroker/tasks/user"
+	. "github.com/cmcoffee/kitebroker/core"
+
+	_ "github.com/cmcoffee/kitebroker/tasks/admin/files_and_folders"
+	_ "github.com/cmcoffee/kitebroker/tasks/admin/users"
+	_ "github.com/cmcoffee/kitebroker/tasks/migration/kiteworks"
+	_ "github.com/cmcoffee/kitebroker/tasks/migration/box"
+	_ "github.com/cmcoffee/kitebroker/tasks/migration/quatrix"
+	_ "github.com/cmcoffee/kitebroker/tasks/user"
 )
 
-// init registers all available tasks with the command system.
-// It categorizes tasks into universal and admin-only categories.
-func init() {
-	// Register Universal Tasks:
-	command.Register(new(user.ListTask))
-	command.Register(new(user.FolderUploadTask))
-	command.Register(new(user.FolderDownloadTask))
-	command.Register(new(user.PushFileTask))
-
-	// Register Signature Only Tasks:
-	command.RegisterAdmin(new(admin.DemotePermissionsTask))
-	command.RegisterAdmin(new(admin.CSVOnboardTask))
-	command.RegisterAdmin(new(admin.FolderFileExpiryTask))
-	command.RegisterAdmin(new(admin.UserProfilerTask))
-	command.RegisterAdmin(new(admin.FileCleanerTask))
-	command.RegisterAdmin(new(admin.UserRemoverTask))
-	command.RegisterAdmin(new(admin.KW_TO_KWTask))
-	command.RegisterAdmin(new(admin.MoveMyFolder))
-	command.RegisterAdmin(new(admin.AddUserTask))
-	command.RegisterAdmin(new(admin.MetadataTask))
-	command.RegisterAdmin(new(admin.FolderReportTask))
-	command.RegisterAdmin(new(admin.UserInfoTask))
-	command.RegisterAdmin(new(admin.UserRenamerTask))
+// loadTasks drains the core task registry and registers tasks with the command menu.
+func loadTasks() {
+	for _, t := range RegisteredMigrationTasks() {
+		command.RegisterMigration(t)
+	}
+	for _, t := range RegisteredTasks() {
+		command.Register(t)
+	}
+	for _, t := range RegisteredAdminTasks() {
+		command.RegisterAdmin(t)
+	}
 }

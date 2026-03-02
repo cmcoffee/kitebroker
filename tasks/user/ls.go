@@ -1,9 +1,12 @@
 package user
 
 import (
-	. "kitebroker/core"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterTask(new(ListTask)) }
 
 // ListTask Object for task.
 type ListTask struct {
@@ -14,17 +17,12 @@ type ListTask struct {
 	KiteBrokerTask
 }
 
-// New Task objects need to be able create a new copy of itself.
-func (T ListTask) New() Task {
-	return new(ListTask)
-}
-
 func (T ListTask) Name() string {
 	return "ls"
 }
 
 func (T ListTask) Desc() string {
-	return "List folders and/or files in kiteworks."
+	return "List folders and/or files in Kiteworks."
 }
 
 // Init Task init function, should parse flag, do pre-checks.

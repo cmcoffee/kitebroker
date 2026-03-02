@@ -2,8 +2,11 @@ package admin
 
 import (
 	"fmt"
-	. "kitebroker/core"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(MoveMyFolder)) }
 
 // MoveMyFolder is a task that relocates folders under 'My Folder' for specified users.
 type MoveMyFolder struct {
@@ -14,11 +17,6 @@ type MoveMyFolder struct {
 	KiteBrokerTask
 }
 
-// New creates a new MoveMyFolder task.
-func (T *MoveMyFolder) New() Task {
-	return new(MoveMyFolder)
-}
-
 // Name returns the name of the task.
 func (T *MoveMyFolder) Name() string {
 	return "move_my_folder"
@@ -26,14 +24,20 @@ func (T *MoveMyFolder) Name() string {
 
 // Desc returns a description of the task.
 func (T *MoveMyFolder) Desc() string {
-	return "Relocate folders under My Folder."
+	return "Users:Move folders from My Folder to top level."
 }
 
 // Init initializes the task, parsing flags and setting up input parameters.
 func (T *MoveMyFolder) Init() (err error) {
 	T.Flags.MultiVar(&T.input.user_emails, "user_emails", "<email@domain.com>", "Users to run on.")
+	run := T.Flags.Bool("run", "Execute the task.")
+	T.Flags.Order("run")
 	if err := T.Flags.Parse(); err != nil {
 		return err
+	}
+
+	if !*run {
+		return fmt.Errorf("Please specify --run to execute this task.")
 	}
 
 	return

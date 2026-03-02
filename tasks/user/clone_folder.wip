@@ -19,10 +19,6 @@ type CloneFolderTask struct {
 	KiteBrokerTask
 }
 
-func (T CloneFolderTask) New() Task {
-	return new(CloneFolderTask)
-}
-
 func (T CloneFolderTask) Name() string {
 	return "clone_folder"
 }

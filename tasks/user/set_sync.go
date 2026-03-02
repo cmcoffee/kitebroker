@@ -2,8 +2,10 @@ package user
 
 import (
 	"fmt"
-	. "kitebroker/core"
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterTask(new(PushFileTask)) }
 
 type PushFileTask struct {
 	input struct {
@@ -21,23 +23,25 @@ type PushFileTask struct {
 	KiteBrokerTask
 }
 
-func (T PushFileTask) New() Task {
-	return new(PushFileTask)
-}
-
 func (T PushFileTask) Name() string {
 	return "push_files"
 }
 
 func (T PushFileTask) Desc() string {
-	return "Pushs files within folders to mobile devices."
+	return "Push files within folders to mobile devices."
 }
 
 func (T *PushFileTask) Init() (err error) {
 	T.Flags.MultiVar(&T.input.folders, "folders", "<My Folder>", "Folder(s) to comb for pushing files, and folders nested..")
+	run := T.Flags.Bool("run", "Execute the task.")
+	T.Flags.Order("run")
 	T.Flags.InlineArgs("folders")
 	if err := T.Flags.Parse(); err != nil {
 		return err
+	}
+
+	if !*run {
+		return fmt.Errorf("Please specify --run to execute this task.")
 	}
 
 	return

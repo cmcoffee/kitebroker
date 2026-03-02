@@ -123,7 +123,6 @@ func (f *FlagSet) Text() (output []string) {
 // Task defines the interface for Kite broker tasks.
 // It provides methods for creating, initializing, and running tasks.
 type Task interface {
-	New() Task
 	Get() *KiteBrokerTask
 	Name() string
 	Desc() string
@@ -135,6 +134,10 @@ type Task interface {
 // It is a map of string keys to interface{} values,
 // allowing for flexible task configuration.
 type TaskArgs map[string]interface{}
+
+func NeedInteract() {
+	nfo.PressEnter("\n(press enter to continue)")
+}
 
 // GetBodyBytes returns a function that returns an io.ReadCloser
 // for the given byte slice.
@@ -199,6 +202,7 @@ const (
 )
 
 var (
+	NewOptions      = nfo.NewOptions
 	Log             = nfo.Log             // Standard Log Output
 	Fatal           = nfo.Fatal           // Fatal Log Output & Exit.
 	Notice          = nfo.Notice          // Notice Log Output
@@ -300,12 +304,10 @@ func SplitPath(path string) (folder_path []string) {
 		path = strings.TrimSuffix(path, "\\")
 		folder_path = strings.Split(path, "\\")
 	}
-	if len(folder_path) == 0 {
-		folder_path = append(folder_path, path)
-	}
 	for i := 0; i < len(folder_path); i++ {
 		if folder_path[i] == NONE {
 			folder_path = append(folder_path[:i], folder_path[i+1:]...)
+			i--
 		}
 	}
 	return
@@ -323,6 +325,7 @@ func MD5Sum(filename string) (sum string, err error) {
 	if err != nil {
 		return
 	}
+	defer file.Close()
 
 	var (
 		o int64
@@ -359,6 +362,14 @@ func MD5Sum(filename string) (sum string, err error) {
 	hex.Encode(s, md5sum)
 
 	return string(s), nil
+}
+
+func UUIDv4() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // RandBytes Generates a random byte slice of length specified.

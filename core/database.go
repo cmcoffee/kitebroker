@@ -54,6 +54,12 @@ func (t Table) Drop() {
 	Critical(t.table.Drop())
 }
 
+func (T Table) GetString(key string) string {
+	var x string
+	T.Get(key, &x)
+	return x
+}
+
 // Get retrieves a value from the table by key. It returns true if the value
 // was found, and false otherwise. Critical errors are handled internally.
 func (t Table) Get(key string, value interface{}) bool {

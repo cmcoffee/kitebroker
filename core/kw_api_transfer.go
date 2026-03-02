@@ -82,7 +82,7 @@ func (K KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 	if err != nil {
 		return nil, ErrNoUploadID
 	}
-
+	
 	if upload_data.Finished {
 		return nil, ErrUploadFinished
 	}
@@ -171,7 +171,6 @@ func (K KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 	if resp_data == nil || (IsBlank(resp_data.ID) || resp_data.ID == "0") {
 		return nil, ErrUploadNoResp
 	}
-
 	return resp_data, nil
 }
 
@@ -291,11 +290,13 @@ func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 				}
 			} else {
 				uploads.Unset(target)
+				src.Close()
 				return nil, nil
 			}
 		} else {
 			if dst.Size == size {
 				uploads.Unset(target)
+				src.Close()
 				return nil, nil
 			} else if flags.Has(VersionFile) {
 				uid, err = K.newFileVersion(dst.ID, filename, size, mod_time)
@@ -303,6 +304,7 @@ func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 					return nil, err
 				}
 			} else {
+				src.Close()
 				return nil, nil
 			}
 		}
@@ -337,6 +339,28 @@ func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 	return
 }
 
+func (K kw_rest_mail) DownloadAttachment(attachment_id string) (ReadSeekCloser, error) {
+	if attachment_id == "" {
+		return nil, fmt.Errorf("Blank attachment provided.")
+	}
+
+	req, err := K.NewRequest("GET", SetPath("/rest/mail/%s/attachments/%s/content", K.mail_id, attachment_id))
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
+
+	if err = K.SetToken(K.Username, req); err != nil {
+		return nil, err
+	}
+
+	downloader := K.WebDownload(req)
+	downloader.Seek(-500, -500)
+
+	return downloader, nil
+}
+
 // QDownload downloads the content of a KiteObject.
 // It returns a ReadSeekCloser and an error.
 func (K KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
@@ -351,12 +375,14 @@ func (K KWSession) QDownload(file *KiteObject) (ReadSeekCloser, error) {
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
-	err = K.SetToken(K.Username, req)
+	if err = K.SetToken(K.Username, req); err != nil {
+		return nil, err
+	}
 
 	downloader := K.WebDownload(req)
 	downloader.Seek(-500, -500)
 
-	return downloader, err
+	return downloader, nil
 }
 
 // Download retrieves the content of a KiteObject as a ReadSeekCloser.
@@ -374,9 +400,11 @@ func (K KWSession) Download(file *KiteObject) (ReadSeekCloser, error) {
 
 	req.Header.Set("X-Accellion-Version", fmt.Sprintf("%d", DEFAULT_KWAPI_VERSION))
 
-	err = K.SetToken(K.Username, req)
+	if err = K.SetToken(K.Username, req); err != nil {
+		return nil, err
+	}
 
-	return transferMonitor(file.Name, file.Size, rightToLeft, K.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), err
+	return transferMonitor(file.Name, file.Size, rightToLeft, K.WebDownload(req), strings.TrimSuffix(file.Path, file.Name)), nil
 }
 
 // LocalDownload downloads a file to a local path.

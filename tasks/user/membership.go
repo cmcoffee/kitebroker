@@ -2,7 +2,7 @@ package user
 
 import (
 	"fmt"
-	. "kitebroker/core"
+	. "github.com/cmcoffee/kitebroker/core"
 	"strings"
 )
 
@@ -19,16 +19,12 @@ type MembershipTask struct {
 	KiteBrokerTask
 }
 
-func (T *MembershipTask) New() Task {
-	return new(MembershipTask)
-}
-
 func (T *MembershipTask) Name() string {
 	return "membership"
 }
 
 func (T *MembershipTask) Desc() string {
-	return "Modify membership task for folders."
+	return "Add or remove folder members."
 }
 
 // Init Task init function, should parse flag, do pre-checks.

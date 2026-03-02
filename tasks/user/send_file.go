@@ -20,16 +20,12 @@ type SendFileTask struct {
 	KiteBrokerTask
 }
 
-func (T SendFileTask) New() Task {
-	return new(SendFileTask)
-}
-
 func (T SendFileTask) Name() string {
 	return "send_file"
 }
 
 func (T SendFileTask) Desc() string {
-	return "Send files/folders in kiteworks."
+	return "Send files via Kiteworks email."
 }
 
 // Init Task init function, should parse flag, do pre-checks.

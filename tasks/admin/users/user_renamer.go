@@ -3,10 +3,13 @@ package admin
 import (
 	"encoding/csv"
 	"fmt"
-	. "kitebroker/core"
 	"os"
 	"strings"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(UserRenamerTask)) }
 
 // UserRenamerTask represents a task to rename user emails based on a CSV file.
 type UserRenamerTask struct {
@@ -20,11 +23,6 @@ type UserRenamerTask struct {
 	KiteBrokerTask
 }
 
-// New creates a new UserRenamerTask.
-func (T UserRenamerTask) New() Task {
-	return new(UserRenamerTask)
-}
-
 // Name returns the name of the task.
 func (T UserRenamerTask) Name() string {
 	return "user_renamer"
@@ -32,7 +30,7 @@ func (T UserRenamerTask) Name() string {
 
 // Desc returns the description of the task.
 func (T UserRenamerTask) Desc() string {
-	return "Rename email accounts with CSV."
+	return "Users:Rename email accounts with CSV."
 }
 
 func (T *UserRenamerTask) Init() (err error) {

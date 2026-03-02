@@ -2,13 +2,15 @@ package main
 
 import (
 	"fmt"
-	. "kitebroker/core"
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
 	"text/tabwriter"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 
 	"github.com/cmcoffee/snugforge/eflag"
 )
@@ -17,12 +19,13 @@ var command menu
 
 // menu represents a menu structure for managing and executing tasks.
 type menu struct {
-	mutex        sync.RWMutex
-	text         *tabwriter.Writer
-	entries      map[string]*menu_elem
-	tasks        []string
-	admin_tasks  []string
-	custom_tasks []string
+	mutex           sync.RWMutex
+	text            *tabwriter.Writer
+	entries         map[string]*menu_elem
+	tasks           []string
+	admin_tasks     []string
+	migration_tasks []string
+	custom_tasks    []string
 }
 
 // cmd_text writes a command and its description to the menu text.
@@ -37,6 +40,7 @@ const (
 	_admin_task
 	// _custom_task represents the flag for custom tasks.
 	_custom_task
+	_migration_task
 )
 
 // menu_elem represents a single menu entry.
@@ -54,6 +58,10 @@ type menu_elem struct {
 // RegisterAdmin registers an admin task with the menu.
 func (m *menu) RegisterAdmin(task Task) {
 	m.register(task.Name(), _admin_task, task)
+}
+
+func (m *menu) RegisterMigration(task Task) {
+	m.register(task.Name(), _migration_task, task)
 }
 
 // Register registers a new task with the menu.
@@ -159,6 +167,8 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 		m.admin_tasks = append(m.admin_tasks, name)
 	case _custom_task:
 		m.custom_tasks = append(m.custom_tasks, name)
+	case _migration_task:
+		m.migration_tasks = append(m.migration_tasks, name)
 	default:
 		m.tasks = append(m.tasks, name)
 	}
@@ -177,6 +187,18 @@ func (m *menu) Show() {
 
 	if m.text == nil {
 		m.text = tabwriter.NewWriter(os.Stderr, 25, 1, 3, '.', 0)
+	}
+
+	for _, k := range m.migration_tasks {
+		if IsBlank(m.entries[k].desc) {
+			continue
+		}
+		m.cmd_text(k, m.entries[k].desc)
+	}
+	if m.migration_tasks != nil && len(m.migration_tasks) > 0 {
+		os.Stderr.Write([]byte("Migration Tasks:\n"))
+		m.text.Write([]byte(fmt.Sprintf("\n")))
+		m.text.Flush()
 	}
 
 	if global.show_custom {
@@ -216,15 +238,40 @@ func (m *menu) Show() {
 
 	items = items[0:0]
 
+	type sub_cmd struct {
+		name string
+		desc string
+	}
+
+	sub_menu := make(map[string][]sub_cmd)
+	var sub_cats []string
+
 	if global.show_admin {
 		for _, k := range m.admin_tasks {
 			if IsBlank(m.entries[k].desc) {
+				continue
+			}
+			if val := strings.Split(m.entries[k].desc, ":"); len(val) > 1 {
+				sub := strings.TrimSpace(val[0])
+				desc := strings.TrimSpace(val[1])
+				if _, ok := sub_menu[sub]; !ok {
+					sub_cats = append(sub_cats, sub)
+				}
+				sub_menu[sub] = append(sub_menu[sub], sub_cmd{name: k, desc: desc})
 				continue
 			}
 			m.cmd_text(k, m.entries[k].desc)
 		}
 		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
 			os.Stderr.Write([]byte("Admin Tasks:\n"))
+			m.text.Write([]byte(fmt.Sprintf("\n")))
+			m.text.Flush()
+		}
+		for _, sub := range sub_cats {
+			for _, v := range sub_menu[sub] {
+				m.cmd_text(fmt.Sprintf(" %s", v.name), v.desc)
+			}
+			os.Stderr.Write([]byte(fmt.Sprintf(" %s:\n", sub)))
 			m.text.Write([]byte(fmt.Sprintf("\n")))
 			m.text.Flush()
 		}
@@ -355,7 +402,7 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 				}
 				new_name := fmt.Sprintf("%s:%d", x.name, i)
-				new_task := x.task.New()
+				new_task := reflect.New(reflect.TypeOf(x.task).Elem()).Interface().(Task)
 				m.mutex.RUnlock()
 				command.RegisterName(new_name, new_task)
 				m.mutex.RLock()

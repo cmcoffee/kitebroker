@@ -47,13 +47,15 @@ type APIClient struct {
 	TokenErrorCodes []string                             // Error codes ("ERR_INVALID_GRANT"), that should indicate a problem with the current access token.
 	token_lock      sync.Mutex                           // Mutex for dealing with token expiry.
 	running         bool                                 // Indicates if the APIClient is in running state.
+	httpClient      *http.Client                         // Shared HTTP client for connection reuse.
+	clientOnce      sync.Once                            // Ensures HTTP client is initialized once.
 }
 
-// _is_retry_error is a bitmask for retryable errors.
-// _is_token_error is a bitmask for token-related errors.
+// _isRetryError is a bitmask for retryable errors.
+// _isTokenError is a bitmask for token-related errors.
 const (
-	_is_retry_error = 1 << iota
-	_is_token_error
+	_isRetryError = 1 << iota
+	_isTokenError
 )
 
 // APIRetryEngine manages retries for API calls.
@@ -61,7 +63,7 @@ const (
 // unique ID, user information, task context, and
 // additional error codes to consider for retries.
 type APIRetryEngine struct {
-	api                     APIClient
+	api                     *APIClient
 	attempt                 uint
 	uid                     string
 	user                    string
@@ -74,7 +76,7 @@ type APIRetryEngine struct {
 // / error codes for retry logic.
 func (s *APIClient) InitRetry(username string, task_description string, addtl_retry_error_codes ...string) *APIRetryEngine {
 	return &APIRetryEngine{
-		*s,
+		s,
 		0,
 		string(RandBytes(8)),
 		username,
@@ -101,15 +103,15 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 	}
 
 	if !IsBlank(a.user) && a.api.isTokenError(a.user, err) {
-		flag.Set(_is_token_error)
-		flag.Set(_is_retry_error)
+		flag.Set(_isTokenError)
+		flag.Set(_isRetryError)
 	} else {
 		if a.api.isRetryError(err) || !IsAPIError(err) || (len(a.addtl_retry_error_codes) > 0 && IsAPIError(err, a.addtl_retry_error_codes[0:]...)) {
-			flag.Set(_is_retry_error)
+			flag.Set(_isRetryError)
 		}
 	}
 
-	if flag.Has(_is_token_error | _is_retry_error) {
+	if flag.Has(_isTokenError | _isRetryError) {
 		if a.attempt == 0 {
 			if a.api.Retries > 0 {
 				Debug("[#%s] %s -> %s: %s (will retry)", a.uid, a.user, a.task, err.Error())
@@ -119,7 +121,7 @@ func (a *APIRetryEngine) CheckForRetry(err error) bool {
 		}
 	}
 
-	if flag.Has(_is_retry_error) {
+	if flag.Has(_isRetryError) {
 		a.api.BackoffTimer(uint(a.attempt))
 		a.attempt++
 		return true
@@ -693,18 +695,24 @@ func (s *APIClient) respErrorCheck(resp *http.Response) (err error) {
 		return err
 	}
 
+	var escanner func(body []byte) APIError
+
 	// Default to KW API errors if no custom scanner is set.
-	if s.ErrorScanner == nil {
-		s.ErrorScanner = kwapiError
+	if s.ErrorScanner != nil {
+		escanner = s.ErrorScanner
+	} else {
+		escanner = func(body []byte) (e APIError) {
+			return e
+		}
 	}
 
-	e := s.ErrorScanner(msg)
+	e := escanner(msg)
 	if !e.noError() {
 		snoop_response(resp.Status, &snoop_buffer)
 		return e
 	}
 
-	if resp.StatusCode >= 200 && resp.StatusCode <= 300 {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return nil
 	}
 
@@ -781,14 +789,21 @@ func snoop_response(respStatus string, body *bytes.Buffer) {
 	return
 }
 
-// SendRequest sends an HTTP request with configured settings.
-// It handles SSL verification, proxy configuration, timeouts,
-// and token setting based on the provided username. It also
-// wraps the request body with a timeout reader.
-func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.Response, err error) {
-	var transport http.Transport
+// initHTTPClient initializes the shared HTTP client and transport.
+// Called once via sync.Once to enable connection pooling and keep-alive.
+func (s *APIClient) initHTTPClient() {
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   s.ConnectTimeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout:   s.ConnectTimeout,
+		ResponseHeaderTimeout: s.RequestTimeout,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   100,
+		IdleConnTimeout:       90 * time.Second,
+	}
 
-	// Allows invalid certs if set to "no" in config.
 	if !s.VerifySSL {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
@@ -799,17 +814,17 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
 
-	transport.DialContext = (&net.Dialer{
-		Timeout: s.ConnectTimeout,
-	}).DialContext
-
-	transport.TLSHandshakeTimeout = s.ConnectTimeout
-	transport.ResponseHeaderTimeout = s.RequestTimeout
-	transport.DisableKeepAlives = true
-
-	client := http.Client{
-		Transport: &transport,
+	s.httpClient = &http.Client{
+		Transport: transport,
 	}
+}
+
+// SendRequest sends an HTTP request with configured settings.
+// It handles SSL verification, proxy configuration, timeouts,
+// and token setting based on the provided username. It also
+// wraps the request body with a timeout reader.
+func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.Response, err error) {
+	s.clientOnce.Do(s.initHTTPClient)
 
 	// Must check token before sending request.
 	if !IsBlank(username) {
@@ -821,10 +836,9 @@ func (s *APIClient) SendRequest(username string, req *http.Request) (resp *http.
 
 	if req.Body != nil {
 		req.Body = iotimeout.NewReadCloser(req.Body, s.RequestTimeout)
-		client.Timeout = 0
 	}
 
-	resp, err = client.Do(req)
+	resp, err = s.httpClient.Do(req)
 	if err == nil {
 		err = s.respErrorCheck(resp)
 	}
@@ -848,7 +862,6 @@ func (s *APIClient) NewRequest(method, path string) (req *http.Request, err erro
 		req.Header.Set("User-Agent", s.AgentString)
 	}
 	req.Header.Set("Referer", "https://"+s.Server+"/")
-	req.Close = true
 
 	return req, nil
 }
@@ -898,13 +911,13 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 			req.Header.Set("Content-Type", "application/json")
 			Trace("--> HEADER: Content-Type: [application/json]")
 
-			json, err := json.Marshal(i)
+			json_data, err := json.Marshal(i)
 			if err != nil {
 				return err
 			}
 
-			Trace("\\-> POST JSON: %s", string(json))
-			body = json
+			Trace("\\-> POST JSON: %s", string(json_data))
+			body = json_data
 		case Query:
 			q := req.URL.Query()
 			for k, v := range i {

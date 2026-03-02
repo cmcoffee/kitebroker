@@ -1,9 +1,13 @@
 package admin
 
 import (
-	. "kitebroker/core"
+	"fmt"
 	"strings"
+
+	. "github.com/cmcoffee/kitebroker/core"
 )
+
+func init() { RegisterAdminTask(new(FolderReportTask)) }
 
 type FolderReportTask struct {
 	input struct {
@@ -12,21 +16,26 @@ type FolderReportTask struct {
 	KiteBrokerTask
 }
 
-func (T FolderReportTask) New() Task {
-	return new(FolderReportTask)
-}
-
 func (T FolderReportTask) Name() string {
 	return "folder_report"
 }
 
 func (T FolderReportTask) Desc() string {
-	return "Provides permission details of folders in Kiteworks."
+	return "Files & Folders:Generate CSV report of folder permissions."
 }
 
 func (T *FolderReportTask) Init() (err error) {
 	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Users to specify, blank for all users.")
-	err = T.Flags.Parse()
+	run := T.Flags.Bool("run", "Execute the task.")
+	T.Flags.Order("run")
+	if err = T.Flags.Parse(); err != nil {
+		return err
+	}
+
+	if !*run {
+		return fmt.Errorf("Please specify --run to execute this task.")
+	}
+
 	return
 }
 

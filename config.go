@@ -6,11 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	. "kitebroker/core"
 	"net"
 	"os"
 	"strings"
 	"time"
+
+	. "github.com/cmcoffee/kitebroker/core"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -39,7 +40,7 @@ func (d dbCFG) set_user(account string) {
 func (d dbCFG) max_api_calls() (max int) {
 	found := global.db.Get("kitebroker", "max_api_calls", &max)
 	if !found {
-		return 3
+		return 5
 	}
 	return
 }
@@ -55,7 +56,7 @@ func (d dbCFG) set_max_api_calls(max int) {
 func (d dbCFG) max_file_transfer() (max int) {
 	found := global.db.Get("kitebroker", "max_file_transfer", &max)
 	if !found {
-		return 3
+		return 5
 	}
 	return
 }
@@ -149,9 +150,6 @@ func init_kw_api() {
 	case JWT_AUTH:
 		global.kw.ReaquireToken = true
 		global.kw.Flags.Set(JWT_AUTH)
-	case PASSWORD_AUTH:
-		global.kw.ReaquireToken = false
-		global.kw.Flags.Set(PASSWORD_AUTH)
 	}
 
 	init_logging()
@@ -192,7 +190,7 @@ const default_config_file = `
 [configuration]
 user_login = 
 server =
-auth_flow = signature
+auth_flow = jwt
 redirect_uri = https://kitebroker/
 
 # Proxy server in URI format. (ie.. https://proxy.com:3128)
@@ -230,8 +228,6 @@ func init_database() {
 	//Defer(global.db.Close)
 }
 
-// get_ get_mac_addr returns the MAC address of the first network interface.
-// It returns nil if no MAC address is found.```go
 // get_mac_addr retrieves the MAC address of the network interface.
 // It returns the MAC address as a byte slice, or nil if not found.
 func get_mac_addr() []byte {
@@ -411,9 +407,7 @@ func (c *proxyValue) String() string {
 }
 
 // pause prints a message and waits for user input.
-func pause() {
-	nfo.PressEnter("\n(press enter to continue)")
-}
+var pause = NeedInteract
 
 // config_api configures and tests the KiteWork API connection.
 // It allows users to set server details, credentials, and other options.
@@ -463,7 +457,7 @@ func config_api(configure_api bool) {
 	advanced := nfo.NewOptions("  [Advanced Settings/Configuration]  ", "(selection or 'q' to return to previous)", 'q')
 	connect_timeout_secs := advanced.Int("Connection timeout seconds", dbConfig.connect_timeout_secs(), "Default Value: 12", 0, 600)
 	request_timeout_secs := advanced.Int("Request timeout seconds", dbConfig.request_timeout_secs(), "Default Value: 60", 0, 600)
-	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 5)
+	max_api_calls := advanced.Int("Maximum API Calls", dbConfig.max_api_calls(), "Default Value: 3", 1, 10)
 	max_file_transfer := advanced.Int("Maximum file transfers", dbConfig.max_file_transfer(), "Default Value: 3", 1, 10)
 	chunk_size_mb := advanced.Int("Chunk size in megabytes", dbConfig.chunk_size_mb(), "Default Value: 65", 1, 65)
 	lock_db := advanced.Bool("Machine Locked", _db_lock_status())
@@ -473,7 +467,6 @@ func config_api(configure_api bool) {
 		kw := new(APIClient)
 		kw.SetDatabase(global.db.Sub("KWAPI"))
 		kw.TokenStore.Delete(account)
-		account = account
 		dbConfig.set_user(account)
 		Notice("Tokens cleared from system, a new access token will be generated at next run/API test.")
 		pause()
@@ -498,7 +491,6 @@ func config_api(configure_api bool) {
 			}
 			global.db.Set("kitebroker", "jwt_iss", &jwt_iss)
 			global.db.Set("kitebroker", "jwt_uid", &jwt_uid)
-			//global.db.Set("kitebroker", "jwt_uid", &jwt_uid)
 		}
 		dbConfig.set_user(account)
 		dbConfig.set_connect_timeout_secs(*connect_timeout_secs)
@@ -536,9 +528,6 @@ func config_api(configure_api bool) {
 			kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, account)
 			kw.Flags.Set(SIGNATURE_AUTH)
 			kw.Signature(signature)
-		case PASSWORD_AUTH:
-			kw.AgentString = fmt.Sprintf("%s/%s", APPNAME, VERSION)
-			kw.Flags.Set(PASSWORD_AUTH)
 		case JWT_AUTH:
 			kw.AgentString = fmt.Sprintf("%s/%s (%s)", APPNAME, VERSION, account)
 			kw.Flags.Set(JWT_AUTH)
@@ -589,8 +578,7 @@ func config_api(configure_api bool) {
 		}()
 		global.kw.Retries = 0
 
-		if global.auth_mode == SIGNATURE_AUTH {
-			global.kw.Flags.Set(SIGNATURE_AUTH)
+		if global.auth_mode == SIGNATURE_AUTH || global.auth_mode == JWT_AUTH {
 			global.kw.TokenStore.Delete(account)
 		}
 

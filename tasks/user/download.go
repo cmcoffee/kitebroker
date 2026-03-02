@@ -2,10 +2,12 @@ package user
 
 import (
 	"fmt"
-	. "kitebroker/core"
+	. "github.com/cmcoffee/kitebroker/core"
 	"path/filepath"
 	"strings"
 )
+
+func init() { RegisterTask(new(FolderDownloadTask)) }
 
 type FolderDownloadTask struct {
 	input struct {
@@ -35,16 +37,12 @@ type download struct {
 	file *KiteObject
 }
 
-func (T FolderDownloadTask) New() Task {
-	return new(FolderDownloadTask)
-}
-
 func (T FolderDownloadTask) Name() string {
 	return "download"
 }
 
 func (T FolderDownloadTask) Desc() string {
-	return "Download folders and/or files from kiteworks."
+	return "Download folders and/or files from Kiteworks."
 }
 
 // Init function.

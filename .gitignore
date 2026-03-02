@@ -1,36 +1,20 @@
-# osx noise
+# filesystem noise
 .DS_Store
 @eaDir
 profile
 
-# xcode noise
+# build noise
 build/*
-*.mode1
-*.mode1v3
-*.mode2v3
-*.perspective
-*.perspectivev3
-*.pbxuser
-*.xcworkspace
+.*/
 xcuserdata
-tasks/classified/*
-classified.go
+*.code-workspace 
 
-#vscode/jetbrains
-.idea
-.vscode
-.roo
-*.code-workspace
-
-# svn & cvs
+# custom scripts
 add_repo.sh
 update_docs.sh
 update.sh
+
+# customer tasks
 custom_tasks.go
 tasks/custom
-.svn
-CVS
-
-# AI Agents
-AGENTS.md
-
+custom.go
