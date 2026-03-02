@@ -294,15 +294,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 	if err = T.configAPI(); err != nil {
 		return err
 	}
-
-	if IsBlank(T.input.src_domain) && len(T.input.user_emails) > 0 {
-		split := strings.Split(T.input.user_emails[0], "@")
-		if len(split) < 2 {
-			return fmt.Errorf("Unable to obtain email domain from %s.", T.input.user_emails[0])
-		}
-		T.input.src_domain = split[1]
-	}
-
+	
 	// Resolve source profile name to ID.
 	var src_profile_id int
 	if !IsBlank(T.input.src_profile_name) {
@@ -317,6 +309,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 	if !IsBlank(T.input.src_domain) {
 		params = SetParams(params, Query{"email:contains": T.input.src_domain})
 	}
+
 	user_getter, err := T.SRC.Session(T.src_admin).Admin().Users(T.input.user_emails, src_profile_id, params)
 	if err != nil {
 		return err
