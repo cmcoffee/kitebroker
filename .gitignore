@@ -18,3 +18,12 @@ update.sh
 custom_tasks.go
 tasks/custom
 custom.go
+
+# binaries
+kitebroker
+
+# AI tool config
+.aiignore
+
+# local data
+data/

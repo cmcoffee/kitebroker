@@ -152,6 +152,7 @@ func getBoxLogin(user BoxUserRecord) string {
 // boxNewToken returns a NewToken callback that performs Box JWT authentication.
 func boxNewToken(jsonConfigData []byte) func(string) (*Auth, error) {
 	return func(username string) (*Auth, error) {
+		Debug("[box]: Building JWT token for Box API.")
 		var boxJWT struct {
 			AppSettings struct {
 				ClientID string `json:"clientID"`
@@ -198,6 +199,7 @@ func boxNewToken(jsonConfigData []byte) func(string) (*Auth, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Failed to sign JWT: %v", err)
 		}
+		Debug("[box]: JWT signed successfully (kid=%s, enterprise=%s).", boxJWT.AppSettings.AppAuth.PublicKeyID, boxJWT.ID)
 
 		values := url.Values{}
 		values.Add("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
@@ -223,6 +225,7 @@ func boxNewToken(jsonConfigData []byte) func(string) (*Auth, error) {
 		}
 
 		token.Expires = time.Now().Add(time.Duration(token.Expires) * time.Second).Unix()
+		Debug("[box]: Token acquired, expires at %s.", time.Unix(token.Expires, 0))
 
 		return token, nil
 	}

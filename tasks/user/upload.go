@@ -107,8 +107,23 @@ func (T *FolderUploadTask) Main() (err error) {
 				retry := T.KW.InitRetry(T.KW.Username, fmt.Sprintf("%s/%s", up.dest.Name, up.finfo.Name()))
 				defer T.upload_wg.Done()
 				for {
+					if IsBlank(up.dest.Name) {
+						var dest_folder KiteObject
+						split := strings.Split(up.path, SLASH)
+						if len(split) > 3 {
+							dest_folder, err = T.KW.Folder("0").ResolvePath(strings.Join(split[len(split)-2:len(split)-1], "/"))
+						}
+						if err != nil {
+							Err("(%s) Unexpected error while uploading %s: %s", T.KW.Username, up.path, err.Error())
+							T.file_count.Del(1)
+						}
+						up.dest = &dest_folder
+					}
 					if err := T.UploadFile(up.path, up.finfo, up.dest); err != nil {
-						if retry.CheckForRetry(err) {
+						if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
+							break
+						}
+						if retry.CheckForRetry(err) && err != ErrNoFolder {
 							continue
 						}
 						Err("(%s) Unexpected error while uploading %s: %s", T.KW.Username, up.path, err.Error())
@@ -186,8 +201,14 @@ func (T *FolderUploadTask) Main() (err error) {
 	return
 }
 
+var ErrNoFolder = fmt.Errorf("Unable to upload file basedir/root folder.")
+
 func (T *FolderUploadTask) UploadFile(local_path string, finfo os.FileInfo, folder *KiteObject) (err error) {
+	if IsBlank(folder.Name) {
+		return ErrNoFolder
+	}
 	if T.cache.Check(finfo, folder) == true {
+		Debug("%s/%s: Skipped by local cache (already on server).", folder.Path, finfo.Name())
 		return nil
 	}
 

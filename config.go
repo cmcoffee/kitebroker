@@ -22,7 +22,7 @@ type dbCFG struct{}
 // Holds database configuration settings.
 var dbConfig dbCFG
 
-// user returns the user account from the database.
+// Retrieves the current user account from the database.
 func (d dbCFG) user() (account string) {
 	global.db.Get("kitebroker", "account", &account)
 	return
@@ -246,10 +246,12 @@ func get_mac_addr() []byte {
 // SecureDatabase opens a database file, handling potential decryption
 // or reset if hardware changes are detected.
 func SecureDatabase(file string) (Database, error) {
+	Debug("Opening database: %s (mac_lock=%v).", file, _db_lock_status())
 	// Provides us the mac address of the first interface.
 	db, err := OpenDB(file, _unlock_db()[0:]...)
 	if err != nil {
 		if err == ErrBadPadlock {
+			Debug("Database padlock mismatch, hardware change detected; resetting DB.")
 			Notice("Hardware changes detected, you will need to reauthenticate.")
 			if err := ResetDB(file); err != nil {
 				return nil, err
@@ -262,6 +264,7 @@ func SecureDatabase(file string) (Database, error) {
 			return nil, err
 		}
 	}
+	Debug("Database opened successfully.")
 	return db, nil
 }
 

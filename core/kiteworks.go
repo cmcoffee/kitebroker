@@ -491,14 +491,40 @@ func (K KWSession) Admin() kw_rest_admin {
 	return kw_rest_admin{&K}
 }
 
-// Activities retrieves activities with optional pagination.
-// It accepts offset, limit, and optional parameters for filtering.
-func (s kw_rest_admin) Activities(offset int, limit int, params ...interface{}) (err error) {
-	return s.DataCall(APIRequest{
+// KiteAdminActivity represents an admin activity entry from the Kiteworks admin activity log.
+type KiteAdminActivity struct {
+	ID            string                 `json:"id"`
+	Created       string                 `json:"created"`
+	EventName     string                 `json:"eventName"`
+	Description   string                 `json:"description"`
+	Successful    bool                   `json:"successful"`
+	UserName      string                 `json:"userName"`
+	IPAddress     string                 `json:"ipAddress"`
+	ClientName    string                 `json:"clientName"`
+	GeolocationID int                    `json:"geolocationId"`
+	Data          map[string]interface{} `json:"data"`
+}
+
+// Activities retrieves the admin activities list with pagination via EventsCall.
+// Required params: Query{"startDateTime": "...", "endDateTime": "..."}.
+// Optional params: eventFilters:in, objectIds:in, userId, maxPages, orderBy, compact.
+func (s kw_rest_admin) Activities(output interface{}, offset int, limit int, params ...interface{}) (err error) {
+	return s.EventsCall(APIRequest{
 		Method: "GET",
 		Path:   "/rest/admin/activities",
 		Params: SetParams(params[0:]...),
+		Output: output,
 	}, offset, limit)
+}
+
+// Activity retrieves detailed information about a specific admin activity by its UUID.
+func (s kw_rest_admin) Activity(id string, output interface{}, params ...interface{}) (err error) {
+	return s.Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/admin/activities/%s", id),
+		Params: SetParams(params[0:]...),
+		Output: output,
+	})
 }
 
 // Register registers a new user with the given email and password.
@@ -909,6 +935,18 @@ func (s kw_rest_folder) Folders(params ...interface{}) (children []KiteObject, e
 		Params: SetParams(params, Query{"with": "(path,currentUserRole)"}),
 	}, -1, 1000)
 
+	return
+}
+
+// UploadBase64 uploads a base64-encoded file to the folder via JSON.
+// This is a simple single-request upload without chunking, useful for testing.
+func (s kw_rest_folder) UploadBase64(name string, content_base64 string, params ...interface{}) (result KiteObject, err error) {
+	err = s.Call(APIRequest{
+		Method: "POST",
+		Path:   SetPath("/rest/folders/%s/actions/fileBase64Encoded", s.folder_id),
+		Params: SetParams(PostJSON{"name": name, "content": content_base64}, Query{"returnEntity": true}, params),
+		Output: &result,
+	})
 	return
 }
 

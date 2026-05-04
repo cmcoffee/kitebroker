@@ -104,6 +104,7 @@ func (K KWSession) uploadFile(filename string, upload_id int, source_reader io.R
 
 	if ChunkIndex > 0 {
 		if upload_data.UploadedSize > 0 && upload_data.UploadedChunks > 0 {
+			Debug("%s: Resuming upload from chunk %d/%d at byte %d.", filename, ChunkIndex+1, upload_data.TotalChunks, ChunkSize*ChunkIndex)
 			if _, err := src.Seek(ChunkSize*ChunkIndex, 0); err != nil {
 				return nil, err
 			}
@@ -284,26 +285,31 @@ func (K KWSession) Upload(filename string, size int64, mod_time time.Time, overw
 		modified, _ := ReadKWTime(dst.ClientModified)
 		if modified.UTC().Unix() > mod_time.UTC().Unix() {
 			if flags.Has(OverwriteFile) {
+				Debug("%s%s: Server copy is newer but overwrite_newer set; uploading new version.", dest_path, filename)
 				uid, err = K.newFileVersion(dst.ID, filename, size, mod_time)
 				if err != nil {
 					return nil, err
 				}
 			} else {
+				Debug("%s%s: Server copy is newer (%s vs %s); skipping upload.", dest_path, filename, modified.UTC(), mod_time.UTC())
 				uploads.Unset(target)
 				src.Close()
 				return nil, nil
 			}
 		} else {
 			if dst.Size == size {
+				Debug("%s%s: File already matches server (size=%d); skipping.", dest_path, filename, size)
 				uploads.Unset(target)
 				src.Close()
 				return nil, nil
 			} else if flags.Has(VersionFile) {
+				Debug("%s%s: Size differs (local=%d, server=%d); uploading new version.", dest_path, filename, size, dst.Size)
 				uid, err = K.newFileVersion(dst.ID, filename, size, mod_time)
 				if err != nil {
 					return nil, err
 				}
 			} else {
+				Debug("%s%s: Size differs but versioning disabled; skipping.", dest_path, filename)
 				src.Close()
 				return nil, nil
 			}
@@ -436,6 +442,7 @@ func (K KWSession) LocalDownload(file *KiteObject, local_path string, transfer_c
 	}
 
 	if dstat != nil && dstat.Size() == file.Size && dstat.ModTime().UTC().Unix() == mtime.UTC().Unix() {
+		Debug("%s/%s: Local file already up to date (size=%d, mtime=%s); skipping download.", strings.TrimSuffix(local_path, SLASH), file.Name, file.Size, mtime.UTC())
 		return nil
 	}
 

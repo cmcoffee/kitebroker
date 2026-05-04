@@ -294,7 +294,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 	if err = T.configAPI(); err != nil {
 		return err
 	}
-	
+
 	// Resolve source profile name to ID.
 	var src_profile_id int
 	if !IsBlank(T.input.src_profile_name) {
@@ -336,8 +336,10 @@ func (T *KW_TO_KWTask) Main() (err error) {
 		return fmt.Errorf("If you must specify an new_domain, you must specify a src_domain.")
 	}
 
-	Debug("Old Domain: %s, New Domain: %s", T.input.src_domain, T.input.new_domain)
-
+	if T.input.new_domain != NONE {
+		Debug("Old Domain: %s, New Domain: %s", T.input.src_domain, T.input.new_domain)
+	}
+	
 	T.users_count = T.Report.Tally("Synced Users")
 	T.FailedUsers = T.Report.Tally("Failed Users")
 	T.folders_count = T.Report.Tally("Synced Folders")
@@ -516,9 +518,12 @@ func (T *KW_TO_KWTask) SwapEmails(input string) string {
 // CopyUser copies a user from the source to the destination Kiteworks system.
 func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 	T.users_count.Add(1)
-	err = T.SRC.Session(T.src_admin).Admin().ActivateUser(src_user.ID)
-	if err != nil {
-		return err
+	if !src_user.IsActive() {
+		Debug("[%s]: Activating source user (ID=%s).", src_user.Email, src_user.ID)
+		err = T.SRC.Session(T.src_admin).Admin().ActivateUser(src_user.ID)
+		if err != nil {
+			return err
+		}
 	}
 
 	dst_user, err := T.KW.Admin().FindUser(T.SwapEmails(src_user.Email))
@@ -526,11 +531,15 @@ func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 		return err
 	}
 
-	err = T.KW.Admin().ActivateUser(dst_user.ID)
-	if err != nil {
-		return err
+	if !dst_user.IsActive() {
+		Debug("[%s]: Activating destination user (ID=%s).", dst_user.Email, dst_user.ID)
+		err = T.KW.Admin().ActivateUser(dst_user.ID)
+		if err != nil {
+			return err
+		}
 	}
 
+	Debug("[%s]: Source base folder ID: %s", src_user.Email, src_user.BaseDirID)
 	src_folder, err := T.SRC.Session(src_user.Email).Folder(src_user.BaseDirID).Info()
 	if err != nil {
 		return err
@@ -577,8 +586,12 @@ func (T *KW_TO_KWTask) SetPerms(migration_users *MigrateUser, folder *KiteObject
 	}
 	for k, v := range perm_map {
 		err = migration_users.dst_sess.Folder(folder.ID).AddUsersToFolder(v, k, false, true)
-		if err != nil && !IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED") {
-			Err(err)
+		if err != nil {
+			if IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED") {
+				Debug("[%s]: %s - Role %d already assigned to %v, skipping.", migration_users.dst.Email, folder.Path, k, v)
+			} else {
+				Err(err)
+			}
 		}
 	}
 	return
@@ -604,6 +617,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 			return err
 		}
 	}
+	Debug("[%s]: Resolved destination path for '%s' (cleanup=%v) -> dest_id=%s.", migration_users.dst.Email, folder.Path, T.input.cleanup, dest_folder.ID)
 
 	Log("[%s]: Source: %s -> Destination: /%s", migration_users.dst.Email, folder.Path, dest_folder.Path)
 

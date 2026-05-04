@@ -104,11 +104,24 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 	return K.APIClient.Call(api_req)
 }
 
-// DataCall retrieves data from the Kitebroker API, handling pagination and data aggregation.
+// DataCall retrieves data from the Kitebroker API using the "data" envelope key.
+// It is a wrapper around PageCall for endpoints that return {"data": [...]}.
+func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
+	return K.PageCall(req, "data", offset, limit)
+}
+
+// EventsCall retrieves data from the Kitebroker API using the "events" envelope key.
+// It is a wrapper around PageCall for endpoints that return {"events": [...]}.
+func (K KWSession) EventsCall(req APIRequest, offset, limit int) (err error) {
+	return K.PageCall(req, "events", offset, limit)
+}
+
+// PageCall retrieves data from the Kitebroker API, handling pagination and data aggregation.
+// The key parameter specifies the JSON envelope key that contains the array of results (e.g. "data" or "events").
 // It takes an API request, offset, and limit as input, and returns the aggregated data or an error.
 // The function handles pagination by repeatedly calling the API with updated offset and limit parameters
 // until all data has been retrieved or the limit is reached. It then aggregates the data and returns it.
-func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
+func (K KWSession) PageCall(req APIRequest, key string, offset, limit int) (err error) {
 	output := req.Output
 	params := req.Params
 
@@ -125,11 +138,7 @@ func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 		managed = true
 	}
 
-	var o struct {
-		Data interface{} `json:"data"`
-	}
-
-	o.Data = req.Output
+	Debug("PageCall %s: key=%s, offset=%d, limit=%d, managed=%v", req.Path, key, offset, limit, managed)
 
 	var tmp []map[string]interface{}
 
@@ -140,15 +149,17 @@ func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 	// Get response, decode it to a generic array of map[string]interface{}.
 	// Stack responses, them, and then encode the stack, then decode to original request.
 	for {
+		var o map[string]interface{}
+
 		req.Params = SetParams(params, Query{"limit": limit, "offset": offset})
 		req.Output = &o
 		if err = K.Call(req); err != nil {
 			return err
 		}
-		// Decode the results we get, convert to []map[string]interface{}, and stack results.
-		if o.Data != nil {
+		// Extract the array from the specified envelope key.
+		if o != nil && o[key] != nil {
 			enc_buff.Reset()
-			err := enc.Encode(o.Data)
+			err := enc.Encode(o[key])
 			if err != nil {
 				return err
 			}
@@ -158,6 +169,7 @@ func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 				return err
 			}
 			tmp = append(tmp, t[0:]...)
+			Debug("PageCall %s: Received %d records at offset %d, total accumulated %d.", req.Path, len(t), offset, len(tmp))
 			if len(t) < limit || managed {
 				break
 			} else {
@@ -167,6 +179,8 @@ func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 			return fmt.Errorf("Something unexpected happened, got an empty response.")
 		}
 	}
+
+	Debug("PageCall %s: Complete, returning %d total records.", req.Path, len(tmp))
 
 	enc_buff.Reset()
 
@@ -193,8 +207,10 @@ func (K *KWAPI) KWNewToken(username string) (auth *Auth, err error) {
 
 	switch K.Flags.Switch(SIGNATURE_AUTH, JWT_AUTH) {
 	case SIGNATURE_AUTH:
+		Debug("[%s]: Initiating authentication via signature flow.", username)
 		post = K.signature_auth_flow(username)
 	case JWT_AUTH:
+		Debug("[%s]: Initiating authentication via JWT flow.", username)
 		post, err = K.jwt_auth_flow(username)
 		if err != nil {
 			return nil, err
@@ -251,6 +267,7 @@ func (K *KWAPI) sendAuth(username string, postform *url.Values) (auth *Auth, err
 	}
 
 	auth.Expires = time.Now().Add(time.Duration(auth.Expires) * time.Second).Unix()
+	Debug("[%s]: Token acquired, expires at %s.", username, time.Unix(auth.Expires, 0))
 	return
 }
 
@@ -402,6 +419,7 @@ func (K *KWAPI) jwt_auth_flow(username string) (postform *url.Values, err error)
 	if err != nil {
 		return nil, err
 	}
+	Debug("[%s]: JWT signed successfully (jti=%s, exp=%d).", username, Claims["jti"], Claims["exp"])
 	postform.Set("assertion", tokenStr)
 
 	return postform, nil

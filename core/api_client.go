@@ -145,6 +145,7 @@ func (s *APIClient) Fulfill(username string, req *http.Request, output interface
 
 	if req.GetBody == nil && req.Body != nil {
 		dont_retry = true
+		Debug("[%s]: Request body is not re-readable; retry disabled for %s.", username, req.URL.Path)
 	} else {
 		orig_body := req.GetBody
 		req.GetBody = func() (io.ReadCloser, error) {
@@ -456,11 +457,11 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 	// If we find a token, check if it's still valid.
 	if token != nil {
 		if token.Expires <= time.Now().Unix() {
-			Debug("Access token expired, using refresh token instead.")
+			Debug("[%s]: Access token expired, using refresh token instead.", username)
 			// First attempt to use a refresh token if there is one.
 			err = s.refreshToken(username, token)
 			if err != nil {
-				Debug("Unable to use refresh token: %v", err)
+				Debug("[%s]: Unable to use refresh token: %v", username, err)
 				if s.running && !s.ReaquireToken {
 					Fatal("Access token has expired, must reauthenticate for new access token.")
 				}
@@ -480,6 +481,7 @@ func (s *APIClient) SetToken(username string, req *http.Request) (err error) {
 		if err != nil {
 			return err
 		}
+		Debug("[%s]: Acquired new access token.", username)
 	}
 
 	if token != nil {
@@ -957,7 +959,9 @@ func (s *APIClient) Call(api_req APIRequest) (err error) {
 // No delay occurs if the maximum number of retries has been reached.
 func (s *APIClient) BackoffTimer(retry uint) {
 	if retry < s.Retries {
-		time.Sleep((time.Second * time.Duration(retry+1)) * time.Duration(retry+1))
+		wait := (time.Second * time.Duration(retry+1)) * time.Duration(retry+1)
+		Debug("Backoff: waiting %s before retry %d.", wait, retry+1)
+		time.Sleep(wait)
 	}
 }
 
@@ -1020,6 +1024,7 @@ func (s *APIClient) PageCall(req APIRequest, offset, limit int) (err error) {
 			if len(t) < limit || managed {
 				break
 			} else {
+				Debug("PageCall %s: Fetched %d records so far (offset %d -> %d).", req.Path, len(tmp), offset, offset+limit)
 				offset = offset + limit
 			}
 		} else {

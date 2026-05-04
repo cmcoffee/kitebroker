@@ -42,7 +42,6 @@ var global struct {
 	as_user       string
 	gen_token     bool
 	show_admin    bool
-	show_custom   bool
 	single_thread bool
 }
 
@@ -104,7 +103,6 @@ func enable_trace() {
 }
 
 func main() {
-	nfo.HideTS()
 	defer Exit(0)
 
 	localExec := get_runtime_info()
@@ -119,7 +117,6 @@ func main() {
 	version := flags.Bool("version", "")
 	flags.BoolVar(&global.sysmode, "quiet", "Minimal output for non-interactive processes.")
 	flags.BoolVar(&global.pause, "pause", "Pause after execution.")
-	flags.BoolVar(&global.show_custom, "custom", NONE)
 
 	if global.show_admin {
 		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", "Run command as a specific user.")

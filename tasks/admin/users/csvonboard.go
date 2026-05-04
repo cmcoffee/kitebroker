@@ -24,6 +24,11 @@ var folder_perms = map[string]int{
 
 func init() { RegisterAdminTask(new(CSVOnboardTask)) }
 
+// CSVOnboardTask represents a task for onboarding users from a CSV file into folders.
+// It manages user additions, folder mappings, and handles internal/external domain logic.
+// The task supports subscribing users, notifying them, and applying restricted profiles.
+// It integrates with KiteBrokerTask for session management, rate limiting, and reporting.
+// CSVOnboardTask implements the Task interface and is initialized via RegisterAdminTask.
 type CSVOnboardTask struct {
 	// input variables
 	input struct {

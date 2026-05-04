@@ -159,7 +159,7 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	my_entry.flags.BoolVar(&global.new_task_file, "new_task", NONE)
 	my_entry.flags.BoolVar(&global.pause, "pause", NONE)
 	if global.show_admin {
-		flags.StringVar(&global.as_user, "run_as", "<user@domain.com>", NONE)
+		flags.StringVar(&global.as_user, "run_as", global.as_user, NONE)
 	}
 
 	switch t_flag {
@@ -174,69 +174,12 @@ func (m *menu) register(name string, t_flag uint, task Task) {
 	}
 }
 
-// Show displays the menu options to the standard error stream.
-// It iterates through registered tasks and their descriptions,
-// presenting them in a formatted manner.  It also handles
-// display of custom and admin tasks based on configuration
-// and authentication mode.
-func (m *menu) Show() {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
-
-	var items []string
-
-	if m.text == nil {
-		m.text = tabwriter.NewWriter(os.Stderr, 25, 1, 3, '.', 0)
+// showTaskSection displays a section of tasks, grouping any tasks whose
+// description contains ":" into sub-categories beneath the main section header.
+func (m *menu) showTaskSection(header string, tasks []string) {
+	if len(tasks) == 0 {
+		return
 	}
-
-	for _, k := range m.migration_tasks {
-		if IsBlank(m.entries[k].desc) {
-			continue
-		}
-		m.cmd_text(k, m.entries[k].desc)
-	}
-	if m.migration_tasks != nil && len(m.migration_tasks) > 0 {
-		os.Stderr.Write([]byte("Migration Tasks:\n"))
-		m.text.Write([]byte(fmt.Sprintf("\n")))
-		m.text.Flush()
-	}
-
-	if global.show_custom {
-		for _, k := range m.custom_tasks {
-			if IsBlank(m.entries[k].desc) {
-				continue
-			}
-			m.cmd_text(k, m.entries[k].desc)
-		}
-		if m.custom_tasks != nil && len(m.custom_tasks) > 0 {
-			os.Stderr.Write([]byte("Custom Tasks:\n"))
-			m.text.Write([]byte(fmt.Sprintf("\n")))
-			m.text.Flush()
-		}
-	}
-
-	for _, k := range m.tasks {
-		if IsBlank(m.entries[k].desc) {
-			continue
-		}
-		m.cmd_text(k, m.entries[k].desc)
-	}
-
-	var user_cmd_prompt string
-
-	if global.show_admin {
-		user_cmd_prompt = "User Tasks:\n"
-	} else {
-		user_cmd_prompt = "Commands:\n"
-	}
-
-	if m.tasks != nil && len(m.tasks) > 0 {
-		os.Stderr.Write([]byte(user_cmd_prompt))
-		m.text.Write([]byte(fmt.Sprintf("\n")))
-		m.text.Flush()
-	}
-
-	items = items[0:0]
 
 	type sub_cmd struct {
 		name string
@@ -246,35 +189,62 @@ func (m *menu) Show() {
 	sub_menu := make(map[string][]sub_cmd)
 	var sub_cats []string
 
+	for _, k := range tasks {
+		if IsBlank(m.entries[k].desc) {
+			continue
+		}
+		if val := strings.Split(m.entries[k].desc, ":"); len(val) > 1 {
+			sub := strings.TrimSpace(val[0])
+			desc := strings.TrimSpace(val[1])
+			if _, ok := sub_menu[sub]; !ok {
+				sub_cats = append(sub_cats, sub)
+			}
+			sub_menu[sub] = append(sub_menu[sub], sub_cmd{name: k, desc: desc})
+			continue
+		}
+		m.cmd_text(k, m.entries[k].desc)
+	}
+
+	os.Stderr.Write([]byte(header))
+	m.text.Write([]byte("\n"))
+	m.text.Flush()
+
+	for _, sub := range sub_cats {
+		for _, v := range sub_menu[sub] {
+			m.cmd_text(fmt.Sprintf(" %s", v.name), v.desc)
+		}
+		os.Stderr.Write([]byte(fmt.Sprintf(" %s:\n", sub)))
+		m.text.Write([]byte("\n"))
+		m.text.Flush()
+	}
+}
+
+// Show displays the menu options to the standard error stream.
+// It iterates through registered tasks and their descriptions,
+// presenting them in a formatted manner.  It also handles
+// display of custom and admin tasks based on configuration
+// and authentication mode.
+func (m *menu) Show() {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	if m.text == nil {
+		m.text = tabwriter.NewWriter(os.Stderr, 25, 1, 3, '.', 0)
+	}
+
+	m.showTaskSection("Custom Tasks:\n", m.custom_tasks)
+	m.showTaskSection("Migration Tasks:\n", m.migration_tasks)
+
+	var user_cmd_prompt string
 	if global.show_admin {
-		for _, k := range m.admin_tasks {
-			if IsBlank(m.entries[k].desc) {
-				continue
-			}
-			if val := strings.Split(m.entries[k].desc, ":"); len(val) > 1 {
-				sub := strings.TrimSpace(val[0])
-				desc := strings.TrimSpace(val[1])
-				if _, ok := sub_menu[sub]; !ok {
-					sub_cats = append(sub_cats, sub)
-				}
-				sub_menu[sub] = append(sub_menu[sub], sub_cmd{name: k, desc: desc})
-				continue
-			}
-			m.cmd_text(k, m.entries[k].desc)
-		}
-		if m.admin_tasks != nil && len(m.admin_tasks) > 0 {
-			os.Stderr.Write([]byte("Admin Tasks:\n"))
-			m.text.Write([]byte(fmt.Sprintf("\n")))
-			m.text.Flush()
-		}
-		for _, sub := range sub_cats {
-			for _, v := range sub_menu[sub] {
-				m.cmd_text(fmt.Sprintf(" %s", v.name), v.desc)
-			}
-			os.Stderr.Write([]byte(fmt.Sprintf(" %s:\n", sub)))
-			m.text.Write([]byte(fmt.Sprintf("\n")))
-			m.text.Flush()
-		}
+		user_cmd_prompt = "User Tasks:\n"
+	} else {
+		user_cmd_prompt = "Commands:\n"
+	}
+	m.showTaskSection(user_cmd_prompt, m.tasks)
+
+	if global.show_admin {
+		m.showTaskSection("Admin Tasks:\n", m.admin_tasks)
 	}
 
 	os.Stderr.Write([]byte(fmt.Sprintf("For extended help on any task, type %s <command> --help.\n", os.Args[0])))
@@ -309,7 +279,9 @@ func write_task_file(name, desc string, flags *FlagSet) {
 		}
 		Stdout("#\n")
 		if len(input.Value.String()) == 0 {
-			if input.DefValue[0] == '"' {
+			if len(input.DefValue) == 0 {
+				Stdout("#%s = \"\"", input.Name)
+			} else if input.DefValue[0] == '"' {
 				Stdout("#%s = \"%s\"", input.Name, input.DefValue[2:len(input.DefValue)-2])
 			} else {
 				Stdout("#%s = \"%s\"", input.Name, input.DefValue[1:len(input.DefValue)-1])
@@ -426,9 +398,6 @@ func (m *menu) Select(input [][]string) (err error) {
 	}
 
 	init_kw_api()
-	/*if !global.sysmode {
-		nfo.ShowTS()
-	}*/
 
 	if global.gen_token {
 		return

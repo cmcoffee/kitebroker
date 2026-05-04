@@ -16,16 +16,27 @@ import (
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
+// Update Information
+var updateServer = "dist.snuglab.com"
+var updateFolder = "kitebroker"
+
+// Alternative update paths for dev builds.
+var (
+	updateAltServer string
+	updateAltFolder string
+)
+
 // kitebrokerUpdater manages the update process for Kitebroker.
 // It encapsulates the necessary information and methods to
 // check for, download, and apply updates.
 type kitebrokerUpdater struct {
-	updateServer string
 	appName      string
 	localVer     string
 	remoteVer    string
 	localExec    string
 	localPath    string
+	updateServer string
+	updateFolder string
 	sslVerify    bool
 	proxyURL     string
 }
@@ -45,7 +56,13 @@ func UpdateKitebroker(appName string, localVer string, localPath string, localEx
 		proxyURL:  proxyURL,
 	}
 
-	k.updateServer = "dist.snuglab.com"
+	if IsBlank(updateAltServer) {
+		k.updateServer = updateServer
+		k.updateFolder = updateFolder
+	} else {
+		k.updateServer = updateAltServer
+		k.updateFolder = updateAltFolder
+	}
 
 	update_avail := false
 
@@ -68,7 +85,7 @@ func UpdateKitebroker(appName string, localVer string, localPath string, localEx
 func (k kitebrokerUpdater) check_for_update() (bool, string) {
 	//Log("### %s online-update ###\n\n", k.appName)
 	Log("Checking with https://%s...\n\n", k.updateServer)
-	resp, err := k.http_get(fmt.Sprintf("https://%s/kitebroker/version.txt", k.updateServer))
+	resp, err := k.http_get(fmt.Sprintf("https://%s/%s/version.txt", k.updateServer, k.updateFolder))
 	if err != nil {
 		Fatal(err)
 	}
@@ -135,7 +152,7 @@ func (k kitebrokerUpdater) update_self() {
 
 	build := fmt.Sprintf("%s-%s", current_os, runtime.GOARCH)
 
-	resp, err := k.http_get(fmt.Sprintf("https://%s/kitebroker/%s/%s", k.updateServer, build, k.localExec))
+	resp, err := k.http_get(fmt.Sprintf("https://%s/%s/%s/%s", k.updateServer, k.updateFolder, build, k.localExec))
 	if err != nil {
 		Fatal(err)
 	}
@@ -154,7 +171,7 @@ func (k kitebrokerUpdater) update_self() {
 
 	// If the filesize is different, online version is different.
 	Log("\nDownloading latest %s update from %s...", k.appName, k.updateServer)
-	src := transferMonitor("Download Update", resp.ContentLength, rightToLeft|nfo.ProgressBarSummary, nopSeeker(iotimeout.NewReadCloser(resp.Body, time.Minute)))
+	src := transferMonitor("Download Update", resp.ContentLength, nfo.ProgressBarSummary, nopSeeker(iotimeout.NewReadCloser(resp.Body, time.Minute)))
 
 	_, err = io.Copy(f, src)
 	if err != nil {

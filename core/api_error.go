@@ -24,20 +24,23 @@ type APIError interface {
 // It either refreshes the token if a signature key exists or
 // deletes it from the store.
 func (s *APIClient) clear_token(username string) {
+	Debug("[%s]: Clearing token (running=%v).", username, s.running)
 	if s.running {
 		token, err := s.TokenStore.Load(username)
 		if err != nil {
 			Critical(err)
 		}
 		if err := s.refreshToken(username, token); err == nil {
+			Debug("[%s]: Token refreshed successfully during clear_token.", username)
 			if err := s.TokenStore.Save(username, token); err != nil {
 				Critical(err)
 			}
 		} else {
+			Debug("[%s]: Refresh failed during clear_token (%v), deleting token.", username, err)
 			s.TokenStore.Delete(username)
-			//Critical(err)
 		}
 	} else {
+		Debug("[%s]: Deleting token (not running).", username)
 		s.TokenStore.Delete(username)
 	}
 }
