@@ -1,4 +1,4 @@
-package standby
+package mirror
 
 import (
 	"fmt"

@@ -1,4 +1,4 @@
-package standby
+package mirror
 
 import (
 	. "github.com/cmcoffee/kitebroker/core"
@@ -12,7 +12,7 @@ import (
 // child files/perms are gone by the time we get to those tables (we tolerate
 // the resulting 404s). Users are NEVER auto-deleted — stale users are
 // reported so an operator can decide whether to deactivate or remove them.
-func (T *KW_StandbyTask) prune(run_start_ts int64) {
+func (T *KW_MirrorTask) prune(run_start_ts int64) {
 	Log("\n=== Pruning orphans (objects on destination no longer on source) ===\n")
 
 	pruned_folders := T.Report.Tally("Pruned Folders")
@@ -40,7 +40,7 @@ func (T *KW_StandbyTask) prune(run_start_ts int64) {
 	Log("\n=== Prune Complete ===")
 }
 
-func (T *KW_StandbyTask) pruneFolders(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
+func (T *KW_MirrorTask) pruneFolders(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
 	for _, key := range T.state.folders.Keys() {
 		var m folder_mapping
 		if !T.state.folders.Get(key, &m) {
@@ -61,7 +61,7 @@ func (T *KW_StandbyTask) pruneFolders(run_start_ts int64, dst_session func(strin
 	}
 }
 
-func (T *KW_StandbyTask) pruneFiles(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
+func (T *KW_MirrorTask) pruneFiles(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
 	for _, key := range T.state.files.Keys() {
 		var m file_mapping
 		if !T.state.files.Get(key, &m) {
@@ -82,7 +82,7 @@ func (T *KW_StandbyTask) pruneFiles(run_start_ts int64, dst_session func(string)
 	}
 }
 
-func (T *KW_StandbyTask) prunePerms(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
+func (T *KW_MirrorTask) prunePerms(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
 	for _, key := range T.state.perms.Keys() {
 		var m perm_mapping
 		if !T.state.perms.Get(key, &m) {
@@ -118,7 +118,7 @@ func (T *KW_StandbyTask) prunePerms(run_start_ts int64, dst_session func(string)
 	}
 }
 
-func (T *KW_StandbyTask) pruneSshKeys(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
+func (T *KW_MirrorTask) pruneSshKeys(run_start_ts int64, dst_session func(string) KWSession, tally Tally) {
 	for _, key := range T.state.ssh_keys.Keys() {
 		var m ssh_key_mapping
 		if !T.state.ssh_keys.Get(key, &m) {
@@ -139,7 +139,7 @@ func (T *KW_StandbyTask) pruneSshKeys(run_start_ts int64, dst_session func(strin
 	}
 }
 
-func (T *KW_StandbyTask) reportStaleUsers(run_start_ts int64, tally Tally) {
+func (T *KW_MirrorTask) reportStaleUsers(run_start_ts int64, tally Tally) {
 	for _, key := range T.state.users.Keys() {
 		var m user_mapping
 		if !T.state.users.Get(key, &m) {

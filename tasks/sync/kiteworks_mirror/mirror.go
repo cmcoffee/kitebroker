@@ -1,4 +1,4 @@
-package standby
+package mirror
 
 import (
 	"fmt"
@@ -8,15 +8,19 @@ import (
 	"github.com/cmcoffee/kitebroker/tasks/migration/kiteworks"
 )
 
-func init() { RegisterTask(new(KW_StandbyTask)) }
+func init() { RegisterTask(new(KW_MirrorTask)) }
 
-// KW_StandbyTask copies a production Kiteworks server's users, folders,
+// KW_MirrorTask copies a production Kiteworks server's users, folders,
 // files, permissions, and SSH keys onto a hot-standby server. Each run
 // performs a full additive copy: anything new on source is created on
 // destination, anything already in sync is skipped. The persisted state
 // map records src→dst mappings as objects are copied — that's the
 // foundation a future webhook + reconcile layer will build on.
-type KW_StandbyTask struct {
+//
+// WIP: this task currently provides only periodic --run copy (with
+// optional --prune). Webhook-driven live sync is not yet implemented,
+// so the "mirror" is only as fresh as the most recent --run.
+type KW_MirrorTask struct {
 	input struct {
 		src_profile_name string
 		user_emails      []string
@@ -34,16 +38,16 @@ type KW_StandbyTask struct {
 	KiteBrokerTask
 }
 
-func (T KW_StandbyTask) Name() string {
-	return "kiteworks_standby"
+func (T KW_MirrorTask) Name() string {
+	return "kiteworks_mirror"
 }
 
-func (T KW_StandbyTask) Desc() string {
-	return "Sync: One-way copy from a Kiteworks production server to a hot standby."
+func (T KW_MirrorTask) Desc() string {
+	return "Sync: [WIP] One-way mirror from a Kiteworks production server to a hot standby. Periodic --run copy works; live sync not yet implemented."
 }
 
-func (T *KW_StandbyTask) Init() (err error) {
-	T.src_kw_db = T.DB.Sub("kiteworks_standby")
+func (T *KW_MirrorTask) Init() (err error) {
+	T.src_kw_db = T.DB.Sub("kiteworks_mirror")
 	T.src_kw_config = T.src_kw_db.Table("src_kw_config")
 	T.src_admin = T.src_kw_config.GetString("src_admin")
 
@@ -83,7 +87,7 @@ func (T *KW_StandbyTask) Init() (err error) {
 	return
 }
 
-func (T *KW_StandbyTask) Main() (err error) {
+func (T *KW_MirrorTask) Main() (err error) {
 	if err = T.configAPI(); err != nil {
 		return err
 	}
@@ -114,7 +118,7 @@ func (T *KW_StandbyTask) Main() (err error) {
 	return nil
 }
 
-func (T KW_StandbyTask) testAPI() bool {
+func (T KW_MirrorTask) testAPI() bool {
 	if !T.testConfig() {
 		Err("API is missing some required configuration, please revisit '*** UNCONFIGURED ***' settings.")
 		NeedInteract()
@@ -139,7 +143,7 @@ func (T KW_StandbyTask) testAPI() bool {
 	return true
 }
 
-func (T *KW_StandbyTask) testConfig() bool {
+func (T *KW_MirrorTask) testConfig() bool {
 	for _, v := range []string{"jwt_key", "jwt_uid", "jwt_iss", "app_id", "client_secret", "redirect_uri", "server", "admin"} {
 		if x := T.src_kw_config.GetString(v); x == NONE {
 			return false
@@ -148,7 +152,7 @@ func (T *KW_StandbyTask) testConfig() bool {
 	return true
 }
 
-func (T *KW_StandbyTask) configAPI() (err error) {
+func (T *KW_MirrorTask) configAPI() (err error) {
 	T.SRC.APIClient = new(APIClient)
 	T.SRC.APIClient.Server = T.src_kw_config.GetString("server")
 	jwt := T.SRC.JWT()
@@ -172,7 +176,7 @@ func (T *KW_StandbyTask) configAPI() (err error) {
 	return nil
 }
 
-func (T *KW_StandbyTask) apiSetup() (err error) {
+func (T *KW_MirrorTask) apiSetup() (err error) {
 	PleaseWait.Hide()
 	defer PleaseWait.Show()
 	var src_server, src_app_id, src_secret, src_redirect, jwt_key, jwt_uid, jwt_iss string
