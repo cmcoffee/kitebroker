@@ -21,10 +21,12 @@ type KW_TO_KWTask struct {
 		deactivate_src_user bool
 		no_files            bool
 		no_mail             bool
+		no_ssh_keys         bool
 		setup               bool
 		src_domain          string
 		new_domain          string
 	}
+	opts                CopyOptions
 	dst_profile_id      int
 	src_admin           string
 	src_kw_db           Database
@@ -39,6 +41,7 @@ type KW_TO_KWTask struct {
 	files_count         Tally
 	files_copied        Tally
 	mail_count          Tally
+	ssh_keys_count      Tally
 	transfer_counter    Tally
 	FailedUsers         Tally
 	src_dst_profile_map map[int]int
@@ -128,6 +131,7 @@ func (T *KW_TO_KWTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.deactivate_src_user, "deactivate", "Deactivate Users after copy command")
 	T.Flags.BoolVar(&T.input.no_files, "no_files", "Do not copy files.")
 	T.Flags.BoolVar(&T.input.no_mail, "no_mail", "Do not archive mail.")
+	T.Flags.BoolVar(&T.input.no_ssh_keys, "no_ssh_keys", "Do not copy SSH public keys.")
 	migrate := T.Flags.Bool("migrate", "Perform the actual migration.")
 	T.Flags.BoolVar(&T.report, "report", "Generate a report of source Kiteworks users, folders and files.")
 	T.Flags.BoolVar(&T.input.setup, "setup", "Configuration Remote Source Kiteworks Connection.")
@@ -264,7 +268,7 @@ func (T *KW_TO_KWTask) MapProfiles() (err error) {
 		dst_profile_map[strings.ToLower(v.Name)] = v.ID
 	}
 	Log("")
-	if !T.input.cleanup {
+	if !T.opts.Cleanup {
 		for _, v := range src_profiles {
 			if x, ok := dst_profile_map[strings.ToLower(v.Name)]; ok {
 				Log("Mapping profile: %s, Destination Profile ID: %d", v.Name, x)
@@ -295,208 +299,50 @@ func (T *KW_TO_KWTask) Main() (err error) {
 		return err
 	}
 
-	// Resolve source profile name to ID.
-	var src_profile_id int
-	if !IsBlank(T.input.src_profile_name) {
-		src_profile, err := T.SRC.Session(T.src_admin).Admin().FindProfile(T.input.src_profile_name)
-		if err != nil {
-			return fmt.Errorf("Source profile resolution failed: %v", err)
-		}
-		src_profile_id = src_profile.ID
+	T.opts = CopyOptions{
+		NoFiles:           T.input.no_files,
+		NoMail:            T.input.no_mail,
+		NoSshKeys:         T.input.no_ssh_keys,
+		Cleanup:           T.input.cleanup,
+		DeactivateSrcUser: T.input.deactivate_src_user,
+		DeleteUserFirst:   T.input.delete_user_first,
+		SrcDomain:         T.input.src_domain,
+		NewDomain:         T.input.new_domain,
+		DstProfileName:    T.input.dst_profile_name,
+		SrcProfileName:    T.input.src_profile_name,
+		UserEmails:        T.input.user_emails,
 	}
 
-	params := SetParams(Query{"active": true, "deleted": false, "suspended": false, "verified": true})
-	if !IsBlank(T.input.src_domain) {
-		params = SetParams(params, Query{"email:contains": T.input.src_domain})
-	}
-
-	user_getter, err := T.SRC.Session(T.src_admin).Admin().Users(T.input.user_emails, src_profile_id, params)
-	if err != nil {
-		return err
-	}
-
-	// Collect all source users.
-	var all_users []KiteUser
-	for {
-		users, err := user_getter.Next()
-		if err != nil {
-			return err
-		}
-		if len(users) == 0 {
-			break
-		}
-		all_users = append(all_users, users...)
-	}
-
-	if T.report {
-		return T.RunReport(all_users)
-	}
-
-	if !IsBlank(T.input.new_domain) && IsBlank(T.input.src_domain) {
-		return fmt.Errorf("If you must specify an new_domain, you must specify a src_domain.")
-	}
-
-	if T.input.new_domain != NONE {
-		Debug("Old Domain: %s, New Domain: %s", T.input.src_domain, T.input.new_domain)
-	}
-	
 	T.users_count = T.Report.Tally("Synced Users")
 	T.FailedUsers = T.Report.Tally("Failed Users")
 	T.folders_count = T.Report.Tally("Synced Folders")
 	T.files_count = T.Report.Tally("Synced Files")
 	T.files_copied = T.Report.Tally("Files Transferred")
 	T.mail_count = T.Report.Tally("Mail Archived")
+	T.ssh_keys_count = T.Report.Tally("SSH Keys Copied")
 	T.transfer_counter = T.Report.Tally("Data Transferred", HumanSize)
 
 	T.limiter = NewLimitGroup(50)
+	T.users = make(map[string]struct{})
+	T.failed_users = make(map[string]any)
 
-	message := func() string {
-		return fmt.Sprintf("Working .. [ Folders: %d | Files: %d | Files Transferred: %d (%s) ]", T.folders_count.Value(), T.files_count.Value(), T.files_copied.Value(), HumanSize(T.transfer_counter.Value()))
+	if T.report {
+		all_users, err := T.getSourceUsers()
+		if err != nil {
+			return err
+		}
+		return T.RunReport(all_users)
 	}
 
+	message := func() string {
+		return fmt.Sprintf("Working .. [ Folders: %d | Files: %d | Files Transferred: %d (%s) ]",
+			T.folders_count.Value(), T.files_count.Value(), T.files_copied.Value(), HumanSize(T.transfer_counter.Value()))
+	}
 	PleaseWait.Set(message, []string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
 
 	Log("Starting Kiteworks Migration...")
-
-	// Resolve destination profile.
-	if strings.EqualFold(T.input.dst_profile_name, "auto") {
-		if err := T.MapProfiles(); err != nil {
-			return err
-		}
-	} else {
-		dst_profile, err := T.KW.Admin().FindProfile(T.input.dst_profile_name)
-		if err != nil {
-			return fmt.Errorf("Destination profile resolution failed: %v", err)
-		}
-		if dst_profile.Features.FolderCreate == 0 {
-			return fmt.Errorf("Destination profile does not have permission to create folders")
-		}
-		T.dst_profile_id = dst_profile.ID
-	}
-
-	T.users = make(map[string]struct{})
-	for _, u := range all_users {
-		T.users[u.Email] = struct{}{}
-	}
-	T.failed_users = make(map[string]any)
-
-	wg := NewLimitGroup(25)
-
-	// Phase 1: Create/verify all users on destination (skip in cleanup mode).
-	if !T.input.cleanup {
-		Log("\n=== Creating/Verifying users on Kiteworks. ===\n\n")
-		Log("- Found %d valid source users.\n\n", len(all_users))
-		for _, u := range all_users {
-			wg.Add(1)
-			go func(user KiteUser) {
-				defer wg.Done()
-				username := T.SwapEmails(user.Email)
-
-				if T.input.delete_user_first {
-					Debug("Deleting %s", username)
-					dst_user, err := T.KW.Admin().FindUser(username)
-					if err != nil {
-						Err("[%s]: Error finding user for deletion: %v (skipping)", username, err)
-						T.setIgnoreUser(user.Email)
-						return
-					}
-					if username != dst_user.Email {
-						T.setIgnoreUser(user.Email)
-						return
-					}
-					params := SetParams(Query{"retainData": false, "deleteUnsharedData": true})
-					if err := T.KW.Admin().DeleteUser(*dst_user, params); err != nil {
-						Err("[%s]: Error deleting user: %v (skipping)", username, err)
-						T.setIgnoreUser(user.Email)
-						return
-					}
-				}
-
-				dest_profile_id := T.FindDestProfileID(user.UserTypeID)
-				if dest_profile_id == 0 {
-					Err("Could not find profile mapping for %s on destination system, skipping user.", user.Email)
-					T.setIgnoreUser(user.Email)
-					return
-				}
-
-				kw_user, err := T.KW.Admin().FindUser(username, true)
-				if err != nil && err != ERR_NO_USER_FOUND {
-					Err("Error finding user %s: %v", username, err)
-					T.setIgnoreUser(user.Email)
-					return
-				}
-				if kw_user == nil {
-					Log("[%s]: Creating user on Kiteworks..", username)
-					if kw_user, err = T.KW.Admin().NewUser(username, dest_profile_id, true, false); err != nil {
-						if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
-							Err("[%s]: Failed to create user: %v (skipping)", username, err)
-							T.setIgnoreUser(user.Email)
-							return
-						}
-					}
-				} else {
-					Log("[%s]: User already exists on Kiteworks.", username)
-				}
-				if kw_user != nil && (kw_user.Suspended || !kw_user.Verified) {
-					if kw_user.Suspended {
-						Log("[%s]: User suspended on Kiteworks, skipping..", username)
-					}
-					if !kw_user.Verified {
-						Log("[%s]: User unverified on Kiteworks source, skipping..", username)
-					}
-					if err := T.KW.Admin().UpdateUser(kw_user.ID, SetParams(PostJSON{"suspended": false, "verified": true})); err != nil {
-						Err("Error updating user %s: %v (skipping)", username, err)
-						T.setIgnoreUser(user.Email)
-						return
-					}
-					if err := T.KW.Admin().UpdateUserProfile(dest_profile_id, []string{kw_user.ID}); err != nil {
-						Err("Error updating user profile %s: %v (skipping)", username, err)
-						T.setIgnoreUser(user.Email)
-						return
-					}
-				}
-			}(u)
-		}
-		wg.Wait()
-	}
-
-	// Phase 2: Archive user mail.
-	if !T.input.no_mail && !T.input.cleanup {
-		Log("\n=== Archiving user mail. ===\n\n")
-		for _, u := range all_users {
-			if T.ignoreUser(u.Email) {
-				continue
-			}
-			wg.Add(1)
-			go func(user KiteUser) {
-				defer wg.Done()
-				if err := T.ArchiveUserMail(user); err != nil {
-					Err("[%s]: Mail archive error: %v", user.Email, err)
-				}
-			}(u)
-		}
-		wg.Wait()
-	}
-
-	// Phase 3: Copy all users.
-	Log("\n=== Users created/verified. Starting folder sync. ===\n\n")
-	for _, u := range all_users {
-		if T.ignoreUser(u.Email) {
-			continue
-		}
-		wg.Add(1)
-		go func(user KiteUser) {
-			defer wg.Done()
-			if err := T.CopyUser(user); err != nil {
-				Err("%s: %v", user.Email, err)
-			}
-		}(u)
-	}
-	wg.Wait()
-	Log("\n=== Migration Complete ===")
-
-	return
+	return T.RunCopy()
 }
 
 // MigrateUser represents a user to be migrated.
@@ -509,10 +355,10 @@ type MigrateUser struct {
 
 // SwapEmails swaps the domain of an email address.
 func (T *KW_TO_KWTask) SwapEmails(input string) string {
-	if IsBlank(T.input.new_domain) {
+	if IsBlank(T.opts.NewDomain) {
 		return input
 	}
-	return strings.Replace(input, T.input.src_domain, T.input.new_domain, -1)
+	return strings.Replace(input, T.opts.SrcDomain, T.opts.NewDomain, -1)
 }
 
 // CopyUser copies a user from the source to the destination Kiteworks system.
@@ -545,7 +391,7 @@ func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 		return err
 	}
 
-	if !IsBlank(T.input.src_domain) && (T.input.src_domain != T.input.new_domain) {
+	if !IsBlank(T.opts.SrcDomain) && (T.opts.SrcDomain != T.opts.NewDomain) {
 		Log("Source User: %s, Destination User: %s", src_user.Email, dst_user.Email)
 	} else {
 		Log("[%s]: %s -> %s", src_user.Email, T.SRC.Server, T.KW.Server)
@@ -558,37 +404,48 @@ func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 		T.KW.Session(dst_user.Email),
 	}
 
+	if !T.opts.NoSshKeys && !T.opts.Cleanup {
+		if err := T.CopyUserSshKeys(&migration_user); err != nil {
+			Err("[%s]: SSH key copy: %v", src_user.Email, err)
+		}
+	}
+
 	T.ProcessFolder(&migration_user, &src_folder)
 	T.limiter.Wait()
 
-	if T.input.deactivate_src_user {
+	if T.opts.DeactivateSrcUser {
 		err = T.SRC.Session(T.src_admin).Admin().DeactivateUser(src_user.ID)
 	}
 	return
 
 }
 
-// SetPerms sets the permissions for a folder.
-func (T *KW_TO_KWTask) SetPerms(migration_users *MigrateUser, folder *KiteObject, members []KiteMember) (err error) {
+// SetPerms sets the permissions for a folder. src_folder_id is the source
+// folder's ID — used for the OnPermissionGranted observer hook. The hook
+// fires for every source-side perm (whether newly added or already present
+// on destination) so observers can keep their state map fresh.
+func (T *KW_TO_KWTask) SetPerms(migration_users *MigrateUser, src_folder_id string, folder *KiteObject, members []KiteMember) (err error) {
 	perm_map := make(map[int][]string)
 	var counter int
 	for _, m := range members {
 		if m.User.Email == migration_users.dst.Email {
 			continue
 		}
-		perm_map[m.RoleID] = append(perm_map[m.RoleID], T.SwapEmails(m.User.Email))
+		email := T.SwapEmails(m.User.Email)
+		perm_map[m.RoleID] = append(perm_map[m.RoleID], email)
 		counter++
+		T.notifyPermissionGranted(src_folder_id, email, m.RoleID, migration_users.src.Email)
 	}
 	existingPerms, _ := migration_users.dst_sess.Folder(folder.ID).Members()
 	counter -= SkipExistingPerms(perm_map, existingPerms)
 	if counter > 0 {
 		Log("[%s]: %s - Adding %d permissions to folder.", migration_users.dst.Email, folder.Path, counter)
 	}
-	for k, v := range perm_map {
-		err = migration_users.dst_sess.Folder(folder.ID).AddUsersToFolder(v, k, false, true)
+	for role_id, emails := range perm_map {
+		err = migration_users.dst_sess.Folder(folder.ID).AddUsersToFolder(emails, role_id, false, true)
 		if err != nil {
 			if IsAPIError(err, "ERR_ENTITY_ROLE_IS_ASSIGNED") {
-				Debug("[%s]: %s - Role %d already assigned to %v, skipping.", migration_users.dst.Email, folder.Path, k, v)
+				Debug("[%s]: %s - Role %d already assigned to %v, skipping.", migration_users.dst.Email, folder.Path, role_id, emails)
 			} else {
 				Err(err)
 			}
@@ -606,7 +463,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 
 	var dest_folder KiteObject
 
-	if !T.input.cleanup {
+	if !T.opts.Cleanup {
 		dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).ResolvePath(folder.Path)
 		if err != nil {
 			return err
@@ -617,9 +474,11 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 			return err
 		}
 	}
-	Debug("[%s]: Resolved destination path for '%s' (cleanup=%v) -> dest_id=%s.", migration_users.dst.Email, folder.Path, T.input.cleanup, dest_folder.ID)
+	Debug("[%s]: Resolved destination path for '%s' (cleanup=%v) -> dest_id=%s.", migration_users.dst.Email, folder.Path, T.opts.Cleanup, dest_folder.ID)
 
 	Log("[%s]: Source: %s -> Destination: /%s", migration_users.dst.Email, folder.Path, dest_folder.Path)
+
+	T.notifyFolderCloned(*folder, dest_folder, migration_users.src.Email)
 
 	children, err := migration_users.src_sess.Folder(folder.ID).Files()
 	if err != nil {
@@ -639,8 +498,8 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 		}
 	}
 
-	if !T.input.cleanup {
-		err = T.SetPerms(migration_users, &dest_folder, new_member_list)
+	if !T.opts.Cleanup {
+		err = T.SetPerms(migration_users, folder.ID, &dest_folder, new_member_list)
 		if err != nil {
 			return err
 		}
@@ -674,7 +533,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 
 			if f.ClientModified == v.ClientModified {
 				if v.Size != f.Size {
-					if T.input.cleanup {
+					if T.opts.Cleanup {
 						continue
 					}
 					Debug("%s: Deleting.", v.Name)
@@ -682,7 +541,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 						Err("%s: %v", v.Name, err)
 					}
 				} else {
-					if T.input.cleanup {
+					if T.opts.Cleanup {
 						if v.ClientModified == f.ClientModified && v.Fingerprint == f.Fingerprint {
 							Debug("%s/%s: Deleting source as file is same on server.", v.Path, v.Name)
 							if err := migration_users.src_sess.File(f.ID).Delete(); err != nil {
@@ -692,11 +551,12 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 						}
 					} else {
 						Debug("%s: Skipping file, already uploaded.", f.Name)
+						T.notifyFileUploaded(f, v, folder.ID, migration_users.src.Email)
 					}
 					continue
 				}
 			} else {
-				if T.input.cleanup {
+				if T.opts.Cleanup {
 					Debug("%s: Deleting.", v.Name)
 					if err := migration_users.dst_sess.File(v.ID).Delete(); err != nil {
 						Err("%s: %v", v.Name, err)
@@ -705,19 +565,16 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 			}
 		}
 
-		// We don't copy any files on a cleanup run.
-		if T.input.cleanup || T.input.no_files {
+		if T.opts.Cleanup || T.opts.NoFiles {
 			continue
 		}
 
-		// Main download/upload loop.
 		source_info := fmt.Sprintf("%s - download - %s/%s", migration_users.src_sess.Username, dest_folder.Name, f.Name)
 		dest_info := fmt.Sprintf("%s - upload - %s/%s", migration_users.dst_sess.Username, dest_folder.Name, f.Name)
 
 		retry_download := T.KW.InitRetry(migration_users.src_sess.Username, source_info)
 		retry_upload := T.KW.InitRetry(migration_users.dst_sess.Username, dest_info)
 		for {
-			// Initiate Download
 			down, err := migration_users.src_sess.QDownload(&f)
 			if err != nil {
 				if retry_download.CheckForRetry(err) {
@@ -733,8 +590,7 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 				Err("%s: %s", f.Name, err.Error())
 			}
 
-			// Initiate Upload
-			f, err := migration_users.dst_sess.Upload(f.Name, f.Size, modtime, false, false, true, dest_folder, down)
+			uploaded, err := migration_users.dst_sess.Upload(f.Name, f.Size, modtime, false, false, true, dest_folder, down)
 			if err != nil {
 				if retry_upload.CheckForRetry(err) {
 					continue
@@ -743,15 +599,67 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 					break
 				}
 			}
-			if f != nil {
+			if uploaded != nil {
 				T.files_copied.Add(1)
-				T.transfer_counter.Add64(f.Size)
+				T.transfer_counter.Add64(uploaded.Size)
+				T.notifyFileUploaded(f, *uploaded, folder.ID, migration_users.src.Email)
 			}
 			break
 		}
 	}
 
 	return
+}
+
+// CopyUserSshKeys mirrors the source user's SSH public keys onto the destination
+// account. Dedup is by key name (Kiteworks enforces uniqueness per user). Private
+// keys cannot be migrated — only public keys are stored server-side, so any
+// keypairs originally generated via /generate must be re-issued by the user.
+func (T *KW_TO_KWTask) CopyUserSshKeys(mu *MigrateUser) error {
+	src_keys, err := mu.src_sess.MySshPublicKeys()
+	if err != nil {
+		if IsAPIError(err, "ERR_PROFILE_SFTP_DISABLED", "ERR_SYSTEM_ROLE_SFTP_DISABLED", "ERR_ACCESS_USER") {
+			Debug("[%s]: SFTP not enabled on source — skipping SSH keys.", mu.src.Email)
+			return nil
+		}
+		return err
+	}
+	if len(src_keys) == 0 {
+		return nil
+	}
+
+	dst_keys, err := mu.dst_sess.MySshPublicKeys()
+	if err != nil {
+		if IsAPIError(err, "ERR_PROFILE_SFTP_DISABLED", "ERR_SYSTEM_ROLE_SFTP_DISABLED", "ERR_ACCESS_USER") {
+			Err("[%s]: SFTP not enabled on destination — cannot copy SSH keys.", mu.dst.Email)
+			return nil
+		}
+		return err
+	}
+	by_name := make(map[string]KiteSshPublicKey)
+	for _, k := range dst_keys {
+		by_name[k.Name] = k
+	}
+
+	for _, sk := range src_keys {
+		if dk, ok := by_name[sk.Name]; ok {
+			Debug("[%s]: SSH key '%s' already on destination, recording mapping.", mu.dst.Email, sk.Name)
+			T.notifySshKeyCopied(mu.src.Email, sk, dk)
+			continue
+		}
+		created, err := mu.dst_sess.CreateMySshPublicKey(sk.Name, sk.PublicKey)
+		if err != nil {
+			if IsAPIError(err, "ERR_SSH_PUBLIC_KEY_EXISTS") {
+				continue
+			}
+			Err("[%s]: Failed to register SSH key '%s': %v", mu.dst.Email, sk.Name, err)
+			continue
+		}
+		Log("[%s]: Copied SSH key '%s'.", mu.dst.Email, sk.Name)
+		T.ssh_keys_count.Add(1)
+		T.notifySshKeyCopied(mu.src.Email, sk, created)
+	}
+	return nil
 }
 
 // ArchiveUserMail archives all mail for a source user into their source folders.

@@ -1053,6 +1053,73 @@ func (K KWSession) UpdateMobile(phone string) (err error) {
 	})
 }
 
+// KiteSshPublicKey represents a single SSH public key record belonging to the
+// current login user. Returned by MySshPublicKeys and CreateMySshPublicKey.
+type KiteSshPublicKey struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	PublicKey   string `json:"publicKey"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Created     string `json:"created,omitempty"`
+}
+
+// KiteSshKeyPair represents a freshly generated SSH key pair returned by
+// GenerateMySshPublicKey. PrivateKey is only ever returned at generation time.
+type KiteSshKeyPair struct {
+	ID         int    `json:"id"`
+	Name       string `json:"name"`
+	PublicKey  string `json:"publicKey"`
+	PrivateKey string `json:"privateKey"`
+	Passphrase string `json:"passphrase,omitempty"`
+}
+
+// MySshPublicKeys lists the current user's SSH public keys.
+func (K KWSession) MySshPublicKeys() (result []KiteSshPublicKey, err error) {
+	return result, K.DataCall(APIRequest{
+		Method: "GET",
+		Path:   "/rest/userSshPublicKeys",
+		Output: &result,
+	}, -1, 1000)
+}
+
+// CreateMySshPublicKey registers an existing SSH public key for the current user.
+// name is capped to 50 characters by the server.
+func (K KWSession) CreateMySshPublicKey(name, public_key string) (key KiteSshPublicKey, err error) {
+	err = K.Call(APIRequest{
+		Method: "POST",
+		Path:   "/rest/userSshPublicKeys/create",
+		Params: SetParams(Query{"name": name, "publicKey": public_key}),
+		Output: &key,
+	})
+	return
+}
+
+// GenerateMySshPublicKey asks the server to generate a new SSH key pair for
+// the current user. The returned PrivateKey is only available here — store it
+// before discarding the response. passphrase may be empty.
+func (K KWSession) GenerateMySshPublicKey(name, passphrase string) (pair KiteSshKeyPair, err error) {
+	params := []interface{}{Query{"name": name}}
+	if !IsBlank(passphrase) {
+		params = append(params, Query{"passphrase": passphrase})
+	}
+	err = K.Call(APIRequest{
+		Method: "POST",
+		Path:   "/rest/userSshPublicKeys/generate",
+		Params: SetParams(params...),
+		Output: &pair,
+	})
+	return
+}
+
+// DeleteMySshPublicKey deletes the SSH public key with the given id from the
+// current user's account.
+func (K KWSession) DeleteMySshPublicKey(id int) (err error) {
+	return K.Call(APIRequest{
+		Method: "DELETE",
+		Path:   SetPath("/rest/userSshPublicKeys/%d", id),
+	})
+}
+
 // UserCount returns the number of users matching the provided email addresses or parameters.
 func (s kw_rest_admin) UserCount(emails []string, params ...interface{}) (users int, err error) {
 	var user []struct{}
