@@ -44,6 +44,9 @@ func kwapiError(body []byte) (e APIError) {
 			Code    string `json:"code"`
 			Message string `json:"message"`
 		} `json:"errors"`
+		// PubSub consumer API errors use a flat {code, message} envelope.
+		Code    int    `json:"code"`
+		Message string `json:"message"`
 	}
 
 	var kite_err *KiteErr
@@ -58,6 +61,11 @@ func kwapiError(body []byte) (e APIError) {
 		}
 		if kite_err.ErrorDesc != NONE {
 			e.Register(kite_err.Error, kite_err.ErrorDesc)
+		}
+		// Surface PubSub-style errors. Gated on a 4xx/5xx code so success
+		// bodies (which carry no top-level code) never register an error.
+		if kite_err.Code >= 400 && !IsBlank(kite_err.Message) {
+			e.Register(fmt.Sprintf("HTTP_STATUS_%d", kite_err.Code), kite_err.Message)
 		}
 	}
 
@@ -114,6 +122,12 @@ func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 // It is a wrapper around PageCall for endpoints that return {"events": [...]}.
 func (K KWSession) EventsCall(req APIRequest, offset, limit int) (err error) {
 	return K.PageCall(req, "events", offset, limit)
+}
+
+// ItemsCall retrieves data from the Kitebroker API using the "items" envelope key.
+// It is a wrapper around PageCall for endpoints that return {"items": [...]}.
+func (K KWSession) ItemsCall(req APIRequest, offset, limit int) (err error) {
+	return K.PageCall(req, "items", offset, limit)
 }
 
 // PageCall retrieves data from the Kitebroker API, handling pagination and data aggregation.
@@ -246,7 +260,7 @@ func (K *KWAPI) sendAuth(username string, postform *url.Values) (auth *Auth, err
 	Trace("[kiteworks]: %s", username)
 	Trace("--> ACTION: \"POST\" PATH: \"%s\"", path)
 	for k, v := range *postform {
-		if k == "grant_type" || k == "redirect_uri" || k == "scope" {
+		if k == "grant_type" || k == "redirect_uri" || k == "scope" || k == "assertion" {
 			Trace("\\-> POST PARAM: %s VALUE: %s", k, v)
 		} else {
 			Trace("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)

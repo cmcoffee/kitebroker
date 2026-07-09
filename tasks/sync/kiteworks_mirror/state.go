@@ -2,6 +2,7 @@ package mirror
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	. "github.com/cmcoffee/kitebroker/core"
@@ -92,6 +93,36 @@ func (s *SyncState) DeleteUser(src_id string) {
 	s.users.Unset(src_id)
 }
 
+// UserByEmail returns the mapping for a user by email. The users table is keyed
+// by source id, so this scans; user counts are modest and reconcile only calls
+// it for candidates surfaced by the activity log.
+func (s *SyncState) UserByEmail(email string) (m user_mapping, ok bool) {
+	for _, key := range s.users.Keys() {
+		var candidate user_mapping
+		if s.users.Get(key, &candidate) && candidate.Email == email {
+			return candidate, true
+		}
+	}
+	return
+}
+
+// SshKeysForOwner returns every persisted SSH-key mapping for an owner email.
+// Keys are keyed "owner_email|src_id" (see ssh_key_key), so this filters by the
+// "owner_email|" prefix.
+func (s *SyncState) SshKeysForOwner(owner_email string) (out []ssh_key_mapping) {
+	prefix := owner_email + "|"
+	for _, key := range s.ssh_keys.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		var m ssh_key_mapping
+		if s.ssh_keys.Get(key, &m) {
+			out = append(out, m)
+		}
+	}
+	return
+}
+
 func (s *SyncState) SetFolder(m folder_mapping) {
 	m.Last_seen_ts = time.Now().Unix()
 	s.folders.Set(m.Src_id, &m)
@@ -136,6 +167,24 @@ func (s *SyncState) GetPerm(src_folder_id, member_email string) (m perm_mapping,
 
 func (s *SyncState) DeletePerm(src_folder_id, member_email string) {
 	s.perms.Unset(perm_key(src_folder_id, member_email))
+}
+
+// PermsForFolder returns every persisted perm mapping for a source folder.
+// Perms are keyed "src_folder_id|member_email" (see perm_key), so this filters
+// the perms table by the "src_folder_id|" prefix. Used by the reconcile pass to
+// diff a folder's known members against its current source membership.
+func (s *SyncState) PermsForFolder(src_folder_id string) (out []perm_mapping) {
+	prefix := src_folder_id + "|"
+	for _, key := range s.perms.Keys() {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		var m perm_mapping
+		if s.perms.Get(key, &m) {
+			out = append(out, m)
+		}
+	}
+	return
 }
 
 func ssh_key_key(owner_email string, src_id int) string {

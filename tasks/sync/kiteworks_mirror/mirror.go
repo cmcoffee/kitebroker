@@ -11,23 +11,35 @@ import (
 func init() { RegisterTask(new(KW_MirrorTask)) }
 
 // KW_MirrorTask copies a production Kiteworks server's users, folders,
-// files, permissions, and SSH keys onto a hot-standby server. Each run
-// performs a full additive copy: anything new on source is created on
-// destination, anything already in sync is skipped. The persisted state
-// map records src→dst mappings as objects are copied — that's the
-// foundation a future webhook + reconcile layer will build on.
+// files, permissions, and SSH keys onto a hot-standby server. The persisted
+// SyncState map records src→dst mappings as objects are copied.
 //
-// WIP: this task currently provides only periodic --run copy (with
-// optional --prune). Webhook-driven live sync is not yet implemented,
-// so the "mirror" is only as fresh as the most recent --run.
+// Each --run auto-selects between two paths:
+//
+//   - Full sync: a complete additive copy (optionally followed by a full-scan
+//     --prune). Used on the first run, when scoped by --users/--src_profile,
+//     when a periodic --full_sync_interval is due, or when the source activity
+//     log no longer covers the window since the last run. Always authoritative.
+//   - Differential sync: reads the source admin activity log since a persisted
+//     cursor, refreshes only the affected users (adds/changes/member grants),
+//     then reconciles deletions and membership removals. Cheap and incremental.
+//
+// The activity log only NOMINATES candidates; every deletion/removal is
+// re-verified against the live source, so a wrong/missing event name degrades
+// to a no-op and the full-sync path remains the correctness backstop. Combine
+// with the global --repeat to run continuously: a full sync seeds state, then
+// each interval does a fast differential pass.
 type KW_MirrorTask struct {
 	input struct {
-		src_profile_name string
-		user_emails      []string
-		no_ssh_keys      bool
-		prune            bool
-		run              bool
-		setup            bool
+		src_profile_name    string
+		user_emails         []string
+		no_ssh_keys         bool
+		prune               bool
+		run                 bool
+		setup               bool
+		full_sync_interval  time.Duration
+		reconcile_page_size int
+		dont_clone_profiles bool
 	}
 	state         *SyncState
 	src_kw_db     Database
@@ -43,21 +55,28 @@ func (T KW_MirrorTask) Name() string {
 }
 
 func (T KW_MirrorTask) Desc() string {
-	return "Sync: [WIP] One-way mirror from a Kiteworks production server to a hot standby. Periodic --run copy works; live sync not yet implemented."
+	return "Sync: One-way mirror from a Kiteworks production server to a hot standby. --run auto-selects a full or differential (activity-log) sync; combine with --repeat for continuous mirroring."
 }
 
 func (T *KW_MirrorTask) Init() (err error) {
 	T.src_kw_db = T.DB.Sub("kiteworks_mirror")
-	T.src_kw_config = T.src_kw_db.Table("src_kw_config")
+	// Source credentials live in a single shared store (see core.SourceConfig),
+	// so a source configured via either the migration or mirror task is reused
+	// and can't drift. Only the *config* is shared — the source token store and
+	// SyncState stay in the mirror's own bucket (T.src_kw_db).
+	T.src_kw_config = SourceConfig()
 	T.src_admin = T.src_kw_config.GetString("src_admin")
 
 	T.Flags.StringVar(&T.input.src_profile_name, "src_profile", "<Source Profile>", "Limit to users matching this source profile.")
 	T.Flags.MultiVar(&T.input.user_emails, "users", "<user@domain.com>", "Limit to specific user(s).")
 	T.Flags.BoolVar(&T.input.no_ssh_keys, "no_ssh_keys", "Do not copy SSH public keys.")
-	T.Flags.BoolVar(&T.input.prune, "prune", "After copy, delete files/folders/perms/SSH keys on destination that no longer exist on source. Not valid with --users or --src_profile.")
-	T.Flags.BoolVar(&T.input.run, "run", "Perform the source→destination copy.")
+	T.Flags.BoolVar(&T.input.prune, "prune", "Force a full-scan mark-and-sweep of destination orphans this run. Not valid with --users or --src_profile.")
+	T.Flags.BoolVar(&T.input.run, "run", "Perform the source→destination sync (auto-selects full or differential).")
 	T.Flags.BoolVar(&T.input.setup, "setup", "Configure source Kiteworks connection.")
-	T.Flags.Order("run", "prune")
+	T.Flags.DurationVar(&T.input.full_sync_interval, "full_sync_interval", 0, "Force a periodic full sync (copy + full-scan reconcile) at least this often. 0 = only when required.")
+	T.Flags.IntVar(&T.input.reconcile_page_size, "reconcile_page_size", 1000, "Activity-log page size for the differential reconcile poll (1-1000).")
+	T.Flags.BoolVar(&T.input.dont_clone_profiles, "dont_clone_profiles", "Do not clone custom user profiles onto the standby (cloning is on by default during a full sync).")
+	T.Flags.Order("run", "prune", "full_sync_interval")
 	if err := T.Flags.Parse(); err != nil {
 		return err
 	}
@@ -75,6 +94,10 @@ func (T *KW_MirrorTask) Init() (err error) {
 		return fmt.Errorf("must specify --run (or --setup)")
 	}
 
+	if T.input.reconcile_page_size < 1 || T.input.reconcile_page_size > 1000 {
+		return fmt.Errorf("--reconcile_page_size must be between 1 and 1000")
+	}
+
 	if T.input.prune {
 		if len(T.input.user_emails) > 0 && !IsBlank(T.input.user_emails[0]) {
 			return fmt.Errorf("--prune cannot be combined with --users (must be a full source scan)")
@@ -85,6 +108,16 @@ func (T *KW_MirrorTask) Init() (err error) {
 	}
 
 	return
+}
+
+// scoped reports whether the run is limited to a subset of users (via --users
+// or --src_profile). A scoped run is not a full authoritative source scan, so
+// it is never eligible for cursor-based differential mode.
+func (T *KW_MirrorTask) scoped() bool {
+	if len(T.input.user_emails) > 0 && !IsBlank(T.input.user_emails[0]) {
+		return true
+	}
+	return !IsBlank(T.input.src_profile_name)
 }
 
 func (T *KW_MirrorTask) Main() (err error) {
@@ -98,23 +131,153 @@ func (T *KW_MirrorTask) Main() (err error) {
 		[]string{"[>  ]", "[>> ]", "[>>>]", "[ >>]", "[  >]", "[  <]", "[ <<]", "[<<<]", "[<< ]", "[<  ]"})
 	PleaseWait.Show()
 
-	copier := kiteworks.NewCopier(&T.KiteBrokerTask, T.SRC, T.src_admin, kiteworks.CopyOptions{
-		NoMail:         true,
-		NoSshKeys:      T.input.no_ssh_keys,
-		DstProfileName: "Auto",
-		SrcProfileName: T.input.src_profile_name,
-		UserEmails:     T.input.user_emails,
-		Observer:       T.state,
-	})
+	if T.differential() {
+		return T.runDifferential()
+	}
+	return T.runFull()
+}
 
-	run_start_ts := time.Now().Unix()
-	if err = copier.RunCopy(); err != nil {
+// differential decides whether this run can use the cheap activity-log
+// (differential) path or must fall back to a full sync. Full is required on
+// first run, whenever a scoped subset (--users/--src_profile) or --prune is
+// explicitly requested, when a periodic full sync is due, and when the source
+// activity log no longer covers the window since our cursor.
+func (T *KW_MirrorTask) differential() bool {
+	if T.input.prune || T.scoped() {
+		return false
+	}
+	cursor, ok := T.getCursor()
+	if !ok {
+		Log("mirror: no saved reconcile cursor; performing a full sync.")
+		return false
+	}
+	if T.input.full_sync_interval > 0 {
+		if last, ok := T.getTimeKey(lastFullSyncKey); !ok || time.Since(last) >= T.input.full_sync_interval {
+			Log("mirror: periodic full sync due (interval %s); performing a full sync.", T.input.full_sync_interval)
+			return false
+		}
+	}
+	return T.differentialPossible(cursor)
+}
+
+// newCopier builds a copier over the source, optionally scoped to a specific
+// set of user emails (used to limit the differential path to affected users).
+// Profile cloning is honored only when clone is true — it's a full-sync
+// concern, not something to repeat on every differential cycle.
+func (T *KW_MirrorTask) newCopier(user_emails []string, clone bool) *kiteworks.KW_TO_KWTask {
+	return kiteworks.NewCopier(&T.KiteBrokerTask, T.SRC, T.src_admin, kiteworks.CopyOptions{
+		NoMail:            true,
+		NoSshKeys:         T.input.no_ssh_keys,
+		DstProfileName:    "Auto",
+		SrcProfileName:    T.input.src_profile_name,
+		UserEmails:        user_emails,
+		CloneProfiles:     clone && !T.input.dont_clone_profiles,
+		Observer:          T.state,
+		DstFolderResolver: T.resolveDstFolder,
+	})
+}
+
+// resolveDstFolder maps a source folder id to its known destination folder id
+// using persisted sync state, so folder cloning targets the exact destination
+// folder by id rather than by (ambiguous) name.
+func (T *KW_MirrorTask) resolveDstFolder(src_folder_id string) (string, bool) {
+	if T.state == nil {
+		return "", false
+	}
+	m, ok := T.state.GetFolder(src_folder_id)
+	if !ok || IsBlank(m.Dst_id) {
+		return "", false
+	}
+	return m.Dst_id, true
+}
+
+// runFull performs the authoritative full sync: an unscoped (or explicitly
+// scoped) additive copy followed, when requested, by the full-scan prune. It
+// re-seeds the reconcile cursor from the run start so subsequent runs can go
+// differential.
+func (T *KW_MirrorTask) runFull() (err error) {
+	Log("\n=== Full sync ===\n")
+	run_start := time.Now()
+
+	if err = T.newCopier(T.input.user_emails, true).RunCopy(); err != nil {
 		return err
 	}
 
 	if T.input.prune {
-		T.prune(run_start_ts)
+		T.prune(run_start.Unix())
 	}
+
+	// A full scan is authoritative up to run_start; seed the cursor there so the
+	// next run's differential window begins where this scan's knowledge ends.
+	// A scoped run (--users/--src_profile) is NOT authoritative for the whole
+	// server, so it must not advance the shared cursor or reset the full-sync
+	// clock — otherwise it would suppress a needed full sync of everything else.
+	if !T.scoped() {
+		T.setCursor(run_start)
+		T.setTimeKey(lastFullSyncKey, run_start)
+	}
+	T.setTimeKey(lastSuccessfulRunKey, run_start)
+	return nil
+}
+
+// runDifferential applies only what changed since the cursor: a copy scoped to
+// the users whose objects appear in the activity-log window (handles adds,
+// re-uploads, and member grants), then the reconcile pass (handles deletions
+// and membership removals). The cursor only advances on success.
+func (T *KW_MirrorTask) runDifferential() (err error) {
+	// A differential run is only reached when differential() confirmed a saved
+	// cursor exists, so we always resume from exactly that cursor. If somehow it
+	// is missing, fall back to a full sync rather than guessing a window.
+	cursor, ok := T.getCursor()
+	if !ok {
+		Log("mirror: no saved cursor at differential start; performing a full sync.")
+		return T.runFull()
+	}
+
+	Log("\n=== Differential sync (since %s) ===\n", cursor.Format(time.RFC3339))
+
+	cs, err := T.pollActivities(cursor)
+	if err != nil {
+		return err
+	}
+
+	// Users needing a full copy: new/reactivated accounts and SSH-key changes
+	// (their whole tree/keys are genuinely (re)provisioned by CopyUser).
+	provision := cs.provisionEmails()
+	provisioned := make(map[string]struct{}, len(provision))
+	for _, e := range provision {
+		provisioned[e] = struct{}{}
+	}
+	if len(provision) > 0 {
+		Log("- Provisioning %d user(s) on destination.", len(provision))
+		if err = T.newCopier(provision, false).RunCopy(); err != nil {
+			return err
+		}
+	}
+
+	// Content changes: process only the specific folders that changed, so
+	// unchanged folders are never re-walked. Owners already fully provisioned
+	// above are skipped (their tree was just walked).
+	changed := cs.changedFoldersByOwner(provisioned)
+	if len(changed) > 0 {
+		n := 0
+		for _, ids := range changed {
+			n += len(ids)
+		}
+		Log("- Syncing %d changed folder(s) across %d user(s).", n, len(changed))
+		if err = T.newCopier(nil, false).RunFolderCopy(changed); err != nil {
+			return err
+		}
+	}
+
+	T.reconcile(cs)
+
+	// Advance one second past the newest processed activity so we don't
+	// re-fetch it next cycle. If nothing newer was seen, keep the cursor.
+	if cs.newest.After(cursor) {
+		T.setCursor(cs.newest.Add(time.Second))
+	}
+	T.setTimeKey(lastSuccessfulRunKey, time.Now())
 	return nil
 }
 
@@ -144,12 +307,7 @@ func (T KW_MirrorTask) testAPI() bool {
 }
 
 func (T *KW_MirrorTask) testConfig() bool {
-	for _, v := range []string{"jwt_key", "jwt_uid", "jwt_iss", "app_id", "client_secret", "redirect_uri", "server", "admin"} {
-		if x := T.src_kw_config.GetString(v); x == NONE {
-			return false
-		}
-	}
-	return true
+	return SourceConfigComplete(T.src_kw_config)
 }
 
 func (T *KW_MirrorTask) configAPI() (err error) {
@@ -164,7 +322,10 @@ func (T *KW_MirrorTask) configAPI() (err error) {
 	T.SRC.APIClient.RedirectURI = T.src_kw_config.GetString("redirect_uri")
 	T.SRC.APIClient.ErrorScanner = T.KW.ErrorScanner
 	T.SRC.Flags.Set(JWT_AUTH)
-	T.SRC.APIClient.NewToken = T.KW.KWNewToken
+	// Bind token minting to the SOURCE's own KWAPI receiver so authentication
+	// uses the source server, JWT config, and app credentials — not the
+	// destination's. (T.KW.KWNewToken would mint against the destination.)
+	T.SRC.APIClient.NewToken = T.SRC.KWNewToken
 	T.SRC.ReaquireToken = true
 	T.SRC.SetDatabase(T.src_kw_db)
 	T.SRC.MaxChunkSize = T.KW.MaxChunkSize

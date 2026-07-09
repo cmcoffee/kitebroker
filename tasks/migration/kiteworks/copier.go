@@ -22,7 +22,15 @@ type CopyOptions struct {
 	DstProfileName    string
 	SrcProfileName    string
 	UserEmails        []string
+	CloneProfiles     bool
 	Observer          Observer
+	// DstFolderResolver, when set, maps a source folder id to its known
+	// destination folder id (from persisted sync state). It lets folder cloning
+	// target the exact destination folder by id instead of resolving by path —
+	// which is ambiguous when a user has distinct folders with the same name
+	// (e.g. an owned folder and a shared-in folder). Returns ("", false) when no
+	// mapping exists, in which case the copier falls back to path resolution.
+	DstFolderResolver func(src_folder_id string) (dst_folder_id string, ok bool)
 }
 
 // Observer receives notifications as objects are mirrored from source to
@@ -114,6 +122,15 @@ func (T *KW_TO_KWTask) RunCopy() (err error) {
 		return err
 	}
 
+	// Clone custom profiles onto the destination before mapping/creating users,
+	// so freshly-synced profiles are available for name-based mapping and no
+	// user falls through to a missing profile.
+	if T.opts.CloneProfiles && !T.opts.Cleanup {
+		if err := T.CloneProfiles(); err != nil {
+			Err("Profile clone step failed: %v", err)
+		}
+	}
+
 	if IsBlank(T.opts.DstProfileName) || strings.EqualFold(T.opts.DstProfileName, "auto") {
 		if err := T.MapProfiles(); err != nil {
 			return err
@@ -183,6 +200,20 @@ func (T *KW_TO_KWTask) RunCopy() (err error) {
 	return
 }
 
+// isManualProfileOverride reports whether the source user's profile was set
+// manually by an admin (as opposed to being auto-assigned by the source's
+// login/LDAP/domain mapping rules). Only manual overrides are re-applied on the
+// destination; auto-mapped users are left for the destination appliance to map.
+//
+// TODO: implement via the source's GET /rest/admin/profiles/mappings?user=<email>
+// (ProfileMappingsTest) — compare the rule-assigned profile to user.UserTypeID;
+// they differ only when an admin manually overrode the profile. Until that API
+// is wired in, we treat every user as auto-mapped (return false), which is the
+// safe default: we never wrongly pin a profile and defeat destination mapping.
+func (T *KW_TO_KWTask) isManualProfileOverride(user KiteUser) bool {
+	return false
+}
+
 // createDestUser ensures a destination user exists, is verified and
 // unsuspended, and is on the right profile. Fires OnUserMapped when a
 // destination user has been confirmed for a source user.
@@ -209,11 +240,20 @@ func (T *KW_TO_KWTask) createDestUser(user KiteUser) {
 		}
 	}
 
-	dest_profile_id := T.FindDestProfileID(user.UserTypeID)
-	if dest_profile_id == 0 {
-		Err("Could not find profile mapping for %s on destination system, skipping user.", user.Email)
-		T.setIgnoreUser(user.Email)
-		return
+	// The destination profile that corresponds to the source user's profile.
+	// This is only *applied* when the source assignment is a manual override;
+	// otherwise the user is created without a profile so the destination
+	// appliance auto-maps them via its own login/LDAP/domain rules. Passing a
+	// userTypeId to NewUser/UpdateUserProfile pins it as a manual override, which
+	// is exactly what we must NOT do for auto-mapped users.
+	mapped_profile_id := T.FindDestProfileID(user.UserTypeID)
+
+	// pin_profile_id is non-zero only when the source user's profile was manually
+	// overridden (differs from what source mapping rules would assign) — those,
+	// and only those, are pinned on the destination.
+	pin_profile_id := 0
+	if mapped_profile_id > 0 && T.isManualProfileOverride(user) {
+		pin_profile_id = mapped_profile_id
 	}
 
 	kw_user, err := T.KW.Admin().FindUser(username, true)
@@ -224,7 +264,8 @@ func (T *KW_TO_KWTask) createDestUser(user KiteUser) {
 	}
 	if kw_user == nil {
 		Log("[%s]: Creating user on Kiteworks..", username)
-		if kw_user, err = T.KW.Admin().NewUser(username, dest_profile_id, true, false); err != nil {
+		// pin_profile_id == 0 => omit userTypeId => appliance auto-maps.
+		if kw_user, err = T.KW.Admin().NewUser(username, pin_profile_id, true, false); err != nil {
 			if !IsAPIError(err, "ERR_ENTITY_EXISTS") {
 				Err("[%s]: Failed to create user: %v (skipping)", username, err)
 				T.setIgnoreUser(user.Email)
@@ -246,15 +287,24 @@ func (T *KW_TO_KWTask) createDestUser(user KiteUser) {
 			T.setIgnoreUser(user.Email)
 			return
 		}
-		if err := T.KW.Admin().UpdateUserProfile(dest_profile_id, []string{kw_user.ID}); err != nil {
-			Err("Error updating user profile %s: %v (skipping)", username, err)
-			T.setIgnoreUser(user.Email)
-			return
+	}
+
+	// Apply a manual profile override, if any — for both newly created and
+	// existing users (existing active users were previously never corrected).
+	if pin_profile_id > 0 && kw_user != nil {
+		if err := T.KW.Admin().UpdateUserProfile(pin_profile_id, []string{kw_user.ID}); err != nil {
+			Err("Error setting profile override for %s: %v", username, err)
 		}
 	}
 
 	if kw_user != nil {
-		T.notifyUserMapped(user, *kw_user, dest_profile_id)
+		// Record the profile the user actually ended up on: the pinned override
+		// when set, otherwise whatever the appliance auto-mapped (kw_user's type).
+		observed_profile := kw_user.UserTypeID
+		if pin_profile_id > 0 {
+			observed_profile = pin_profile_id
+		}
+		T.notifyUserMapped(user, *kw_user, observed_profile)
 	}
 }
 

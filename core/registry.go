@@ -1,6 +1,9 @@
 package core
 
-import "sync"
+import (
+	"reflect"
+	"sync"
+)
 
 var (
 	registryMu               sync.Mutex
@@ -38,3 +41,22 @@ func RegisteredAdminTasks() []Task { return registeredAdminTasks }
 
 // RegisteredMigrationTasks returns all registered migration tasks.
 func RegisteredMigrationTasks() []Task { return registeredMigrationTasks }
+
+// LookupTask returns a fresh instance of the registered task whose Name()
+// matches name, searching universal, admin, and migration registries in that
+// order. It clones the registered prototype (the same approach the menu uses
+// when running a task more than once) so callers get a clean instance with
+// independent state. It returns nil when no task matches.
+func LookupTask(name string) Task {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+
+	for _, group := range [][]Task{registeredTasks, registeredAdminTasks, registeredMigrationTasks} {
+		for _, t := range group {
+			if t.Name() == name {
+				return reflect.New(reflect.TypeOf(t).Elem()).Interface().(Task)
+			}
+		}
+	}
+	return nil
+}

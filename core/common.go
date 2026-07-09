@@ -223,6 +223,7 @@ var (
 	GetPath         = filepath.ToSlash    // Conver to OS specific path with correct slash delimiters.
 	Info            = nfo.Aux             // Log as standrd INFO
 	HumanSize       = nfo.HumanSize       // Convert bytes int64 to B/KB/MB/GB/TB.
+	ConfirmDefault  = nfo.ConfirmDefault  // Yes/No prompt with a default answer.
 )
 
 var (

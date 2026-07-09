@@ -403,6 +403,8 @@ func (m *menu) Select(input [][]string) (err error) {
 		return
 	}
 
+	configure_webhook_listener()
+
 	Info("### %s v%s ###", APPNAME, VERSION)
 	Info(NONE)
 
@@ -427,21 +429,35 @@ func (m *menu) Select(input [][]string) (err error) {
 					}
 					Info("\n")
 
+					// A webhook task's Main returns immediately after handing
+					// off to the shared listener, which keeps running in the
+					// background. Its results are tallied on the listener's own
+					// report (printed on shutdown), so it gets no per-run summary
+					// Whether a task ends up as a background listener is only
+					// known after Main runs (a task may host the webhook
+					// listener or run to completion depending on config), so the
+					// decision is made on WebhookListenerStarted() afterwards.
 					set_task_session(x.task, global.user)
 					set_task_report(x.task, NewTaskReport(name, source, x.flags))
-					report := Defer(func() error {
-						task_report_summary(x.task, ErrCount()-pre_errors)
-						return nil
-					})
+					listening_before := WebhookListenerStarted()
 					if err := x.task.Main(); err != nil {
 						Err(err)
 					}
 					DefaultPleaseWait()
-					report()
-					if source == "cli" {
-						Info("<-- task '%s' stopped -->", name)
+
+					// A task that started the webhook listener keeps running in
+					// the background; its results are tallied on the listener's
+					// own report (printed on shutdown), so skip the per-run
+					// summary and "stopped" message that would imply it ended.
+					if !listening_before && WebhookListenerStarted() {
+						Info("<-- task '%s' hosted (listening) -->", name)
 					} else {
-						Info("<-- task '%s' (%s) stopped -->", name, source)
+						task_report_summary(x.task, ErrCount()-pre_errors)
+						if source == "cli" {
+							Info("<-- task '%s' stopped -->", name)
+						} else {
+							Info("<-- task '%s' (%s) stopped -->", name, source)
+						}
 					}
 					if i < task_count {
 						Info(NONE)

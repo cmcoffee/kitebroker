@@ -93,8 +93,10 @@ The `kitebroker --setup` command can be used to initially populate or update set
     *   `folder_file_expiry`: Modifies the folder and file expiry.
     *   `folder_metadata`: Retrieves folder metadata from user's folders.
     *   `folder_report`: Generate CSV report of folder permissions.
+    *   `stale_file_report`: Report files with no activity within a specified number of days.
 
 *   **Admin Tasks (Users):**
+    *   `activity_report`: Generate admin activity report as CSV.
     *   `csv_onboard`: Add users to folders from CSV.
     *   `move_my_folder`: Move folders from My Folder to top level.
     *   `update_user`: Update user information.
@@ -102,5 +104,13 @@ The `kitebroker --setup` command can be used to initially populate or update set
     *   `user_renamer`: Rename email accounts with CSV.
     *   `user_report`: Generate report of users on system.
     *   `user_reprofiler`: Change user profiles.
+
+*   **Admin Tasks (PubSub):**
+    *   `pubsub_webhooks`: Manage PubSub consumer webhooks (list/export/import/create/update/delete).
+    *   `on_file_event`: Log Kiteworks file events as they are delivered (example webhook task).
+    *   `zero_byte_upload_notify`: Notify an administrator when a 0-byte file is uploaded (webhook or activity-log polling).
+
+*   **Sync Tasks:**
+    *   `kiteworks_mirror`: One-way mirror from a Kiteworks production server to a hot standby. `--run` auto-selects a full or differential (activity-log) sync; combine with `--repeat` for continuous mirroring. _(Work in progress.)_
 
 For detailed help on any command, type `kitebroker <command> --help`.

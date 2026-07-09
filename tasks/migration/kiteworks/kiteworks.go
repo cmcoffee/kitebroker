@@ -22,6 +22,7 @@ type KW_TO_KWTask struct {
 		no_files            bool
 		no_mail             bool
 		no_ssh_keys         bool
+		dont_clone_profiles bool
 		setup               bool
 		src_domain          string
 		new_domain          string
@@ -118,7 +119,10 @@ func (T KW_TO_KWTask) testAPI() bool {
 func (T *KW_TO_KWTask) Init() (err error) {
 
 	T.src_kw_db = T.DB.Sub("kiteworks_migration")
-	T.src_kw_config = T.src_kw_db.Table("src_kw_config")
+	// Source credentials live in a single shared store (see core.SourceConfig)
+	// so the migration and mirror tasks share one source configuration. Only the
+	// config is shared — this task's token store stays in T.src_kw_db.
+	T.src_kw_config = SourceConfig()
 	T.src_admin = T.src_kw_config.GetString("src_admin")
 
 	T.Flags.StringVar(&T.input.dst_profile_name, "dest_profile", "Auto", "Destination KW Profile Name (Auto = map by name)")
@@ -132,6 +136,7 @@ func (T *KW_TO_KWTask) Init() (err error) {
 	T.Flags.BoolVar(&T.input.no_files, "no_files", "Do not copy files.")
 	T.Flags.BoolVar(&T.input.no_mail, "no_mail", "Do not archive mail.")
 	T.Flags.BoolVar(&T.input.no_ssh_keys, "no_ssh_keys", "Do not copy SSH public keys.")
+	T.Flags.BoolVar(&T.input.dont_clone_profiles, "dont_clone_profiles", "Do not clone custom user profiles onto the destination (cloning is on by default).")
 	migrate := T.Flags.Bool("migrate", "Perform the actual migration.")
 	T.Flags.BoolVar(&T.report, "report", "Generate a report of source Kiteworks users, folders and files.")
 	T.Flags.BoolVar(&T.input.setup, "setup", "Configuration Remote Source Kiteworks Connection.")
@@ -169,12 +174,7 @@ func (T *KW_TO_KWTask) Init() (err error) {
 // testConfig verifies required configuration values are set.
 // It returns true if all values are present, false otherwise.
 func (T *KW_TO_KWTask) testConfig() bool {
-	for _, v := range []string{"jwt_key", "jwt_uid", "jwt_iss", "app_id", "client_secret", "redirect_uri", "server", "admin"} {
-		if x := T.src_kw_config.GetString(v); x == NONE {
-			return false
-		}
-	}
-	return true
+	return SourceConfigComplete(T.src_kw_config)
 }
 
 // configAPI configures the API client with settings from the config.
@@ -193,7 +193,10 @@ func (T *KW_TO_KWTask) configAPI() (err error) {
 	T.SRC.APIClient.RedirectURI = T.src_kw_config.GetString("redirect_uri")
 	T.SRC.APIClient.ErrorScanner = T.KW.ErrorScanner
 	T.SRC.Flags.Set(JWT_AUTH)
-	T.SRC.APIClient.NewToken = T.KW.KWNewToken
+	// Bind token minting to the SOURCE's own KWAPI receiver so authentication
+	// uses the source server, JWT config, and app credentials — not the
+	// destination's. (T.KW.KWNewToken would mint against the destination.)
+	T.SRC.APIClient.NewToken = T.SRC.KWNewToken
 	T.SRC.ReaquireToken = true
 	T.SRC.SetDatabase(T.src_kw_db)
 	T.SRC.MaxChunkSize = T.KW.MaxChunkSize
@@ -259,12 +262,12 @@ func (T *KW_TO_KWTask) MapProfiles() (err error) {
 	if err != nil {
 		Fatal("Error talking to destination server: %s", err.Error())
 	}
+	// Map every destination profile by name. Profiles without folder-create
+	// permission (e.g. recipient, restricted) are still mapped so their users
+	// are created on the destination — such users simply own no folders, so the
+	// lack of folder-create is expected and not a reason to skip them.
 	dst_profile_map := make(map[string]int)
 	for _, v := range dst_profiles {
-		if v.Features.FolderCreate == 0 {
-			Log("Destination profile '%s' does not have permission to create folders, skipping.", v.Name)
-			continue
-		}
 		dst_profile_map[strings.ToLower(v.Name)] = v.ID
 	}
 	Log("")
@@ -311,6 +314,7 @@ func (T *KW_TO_KWTask) Main() (err error) {
 		DstProfileName:    T.input.dst_profile_name,
 		SrcProfileName:    T.input.src_profile_name,
 		UserEmails:        T.input.user_emails,
+		CloneProfiles:     !T.input.dont_clone_profiles,
 	}
 
 	T.users_count = T.Report.Tally("Synced Users")
@@ -420,6 +424,88 @@ func (T *KW_TO_KWTask) CopyUser(src_user KiteUser) (err error) {
 
 }
 
+// CopyFolders processes only the given source folders for a user, without
+// walking the rest of the tree. It is the folder-scoped counterpart to
+// CopyUser: used by the differential sync so that a change in one folder does
+// not trigger a re-walk of every folder the user owns. Each folder is resolved
+// on the source and cloned via CloneFolder (files + permissions, no recursion).
+// CloneFolder targets the destination folder by its persisted id mapping when
+// available (avoiding same-name ambiguity) and otherwise resolves by path,
+// creating any missing ancestor folders so a new nested folder still lands.
+func (T *KW_TO_KWTask) CopyFolders(src_user KiteUser, src_folder_ids []string) (err error) {
+	if len(src_folder_ids) == 0 {
+		return nil
+	}
+
+	dst_user, err := T.KW.Admin().FindUser(T.SwapEmails(src_user.Email))
+	if err != nil {
+		return err
+	}
+	if dst_user == nil {
+		return fmt.Errorf("destination user not found for %s", src_user.Email)
+	}
+	if !src_user.IsActive() {
+		if err := T.SRC.Session(T.src_admin).Admin().ActivateUser(src_user.ID); err != nil {
+			return err
+		}
+	}
+	if !dst_user.IsActive() {
+		if err := T.KW.Admin().ActivateUser(dst_user.ID); err != nil {
+			return err
+		}
+	}
+
+	migration_user := MigrateUser{
+		&src_user,
+		dst_user,
+		T.SRC.Session(src_user.Email),
+		T.KW.Session(dst_user.Email),
+	}
+
+	for _, fid := range src_folder_ids {
+		folder, ferr := migration_user.src_sess.Folder(fid).Info()
+		if ferr != nil {
+			if IsAPIError(ferr, "ERR_ENTITY_DELETED", "ERR_ENTITY_NOT_FOUND", "ERR_ENTITY_PARENT_FOLDER_DELETED") {
+				// Folder is gone on source; deletion reconcile handles removal.
+				continue
+			}
+			Err("[%s]: folder %s lookup failed: %v", src_user.Email, fid, ferr)
+			continue
+		}
+		if folder.Type != "d" {
+			continue
+		}
+		if cerr := T.CloneFolder(&migration_user, &folder); cerr != nil {
+			Err("[%s]: %s: %v", src_user.Email, folder.Path, cerr)
+		}
+	}
+	return nil
+}
+
+// RunFolderCopy processes only specific changed folders per owner, resolving
+// each owner to a source user and cloning just those folders (no whole-tree
+// walk). changed maps an owner email to the set of source folder ids that had
+// content changes. This is the folder-scoped entry point used by the mirror's
+// differential sync.
+func (T *KW_TO_KWTask) RunFolderCopy(changed map[string][]string) (err error) {
+	// Folder cloning touches only folders/files/permissions — no user creation
+	// or profile mapping is needed here.
+	for owner, folder_ids := range changed {
+		if len(folder_ids) == 0 {
+			continue
+		}
+		src_user, uerr := T.SRC.Session(T.src_admin).Admin().FindUser(owner)
+		if uerr != nil || src_user == nil {
+			Err("Folder copy: source user %s lookup failed: %v", owner, uerr)
+			continue
+		}
+		if ferr := T.CopyFolders(*src_user, folder_ids); ferr != nil {
+			Err("Folder copy: %s: %v", owner, ferr)
+		}
+	}
+	return nil
+}
+
 // SetPerms sets the permissions for a folder. src_folder_id is the source
 // folder's ID — used for the OnPermissionGranted observer hook. The hook
 // fires for every source-side perm (whether newly added or already present
@@ -463,18 +549,42 @@ func (T *KW_TO_KWTask) CloneFolder(migration_users *MigrateUser, folder *KiteObj
 
 	var dest_folder KiteObject
 
-	if !T.opts.Cleanup {
-		dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).ResolvePath(folder.Path)
-		if err != nil {
-			return err
-		}
-	} else {
-		dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).Find(folder.Path)
-		if err != nil {
-			return err
+	// Prefer the persisted src->dst folder mapping when available: it targets the
+	// exact destination folder by id, avoiding the ambiguity of matching by name
+	// (a user can have distinct folders with identical names, e.g. an owned
+	// folder and a shared-in folder). Fall back to path resolution only when the
+	// folder has no mapping yet (first time we've seen it).
+	var mapped bool
+	if T.opts.DstFolderResolver != nil {
+		if dst_id, ok := T.opts.DstFolderResolver(folder.ID); ok && !IsBlank(dst_id) {
+			dest_folder, err = migration_users.dst_sess.Folder(dst_id).Info()
+			if err != nil {
+				if IsAPIError(err, "ERR_ENTITY_DELETED", "ERR_ENTITY_NOT_FOUND", "ERR_ENTITY_PARENT_FOLDER_DELETED") {
+					// Mapping is stale (dest folder gone) — fall back to path.
+					Debug("[%s]: mapped dst folder %s for '%s' is gone; falling back to path resolution.", migration_users.dst.Email, dst_id, folder.Path)
+				} else {
+					return err
+				}
+			} else {
+				mapped = true
+			}
 		}
 	}
-	Debug("[%s]: Resolved destination path for '%s' (cleanup=%v) -> dest_id=%s.", migration_users.dst.Email, folder.Path, T.opts.Cleanup, dest_folder.ID)
+
+	if !mapped {
+		if !T.opts.Cleanup {
+			dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).ResolvePath(folder.Path)
+			if err != nil {
+				return err
+			}
+		} else {
+			dest_folder, err = migration_users.dst_sess.Folder(migration_users.dst.BaseDirID).Find(folder.Path)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	Debug("[%s]: Resolved destination for '%s' (cleanup=%v, mapped=%v) -> dest_id=%s.", migration_users.dst.Email, folder.Path, T.opts.Cleanup, mapped, dest_folder.ID)
 
 	Log("[%s]: Source: %s -> Destination: /%s", migration_users.dst.Email, folder.Path, dest_folder.Path)
 
@@ -643,8 +753,14 @@ func (T *KW_TO_KWTask) CopyUserSshKeys(mu *MigrateUser) error {
 
 	for _, sk := range src_keys {
 		if dk, ok := by_name[sk.Name]; ok {
-			Debug("[%s]: SSH key '%s' already on destination, recording mapping.", mu.dst.Email, sk.Name)
-			T.notifySshKeyCopied(mu.src.Email, sk, dk)
+			// Only record a mapping when the destination key has a real id;
+			// otherwise a later prune would try to delete id 0 (ERR_ACCESS_USER).
+			if dk.ID > 0 {
+				Debug("[%s]: SSH key '%s' already on destination, recording mapping.", mu.dst.Email, sk.Name)
+				T.notifySshKeyCopied(mu.src.Email, sk, dk)
+			} else {
+				Debug("[%s]: SSH key '%s' present on destination but has no id; skipping mapping.", mu.dst.Email, sk.Name)
+			}
 			continue
 		}
 		created, err := mu.dst_sess.CreateMySshPublicKey(sk.Name, sk.PublicKey)
@@ -657,7 +773,11 @@ func (T *KW_TO_KWTask) CopyUserSshKeys(mu *MigrateUser) error {
 		}
 		Log("[%s]: Copied SSH key '%s'.", mu.dst.Email, sk.Name)
 		T.ssh_keys_count.Add(1)
-		T.notifySshKeyCopied(mu.src.Email, sk, created)
+		if created.ID > 0 {
+			T.notifySshKeyCopied(mu.src.Email, sk, created)
+		} else {
+			Debug("[%s]: SSH key '%s' created but response carried no id; skipping mapping.", mu.dst.Email, sk.Name)
+		}
 	}
 	return nil
 }

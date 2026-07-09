@@ -537,7 +537,7 @@ func (s *APIClient) refreshToken(username string, auth *Auth) error {
 		if k == "grant_type" || k == "RedirectURI" || k == "scope" {
 			Trace("\\-> POST PARAM: %s VALUE: %s", k, v)
 		} else {
-			Trace("\\-> POST PARAM: %s VALUE: [HIDDEN]", k)
+			Trace("\\-> POST PARAM: %s VALUE: [HIDDDEN]", k)
 		}
 	}
 

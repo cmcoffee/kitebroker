@@ -115,6 +115,72 @@ func (d dbCFG) chunk_size_mb() (max int) {
 	return
 }
 
+// webhook_listener_config loads the shared PubSub listener configuration from
+// the config file and the encrypted database, returning the values needed by
+// core.ConfigureWebhookListener.
+func (d dbCFG) webhook_listener_config() (enabled bool, scheme, bind, path, sig_header, token_header, public_url, tls_cert, tls_key, secret, token string, workers int, self_register bool) {
+	enabled = global.cfg.GetBool("pubsub_listener", "enabled")
+	scheme = global.cfg.Get("pubsub_listener", "scheme")
+	bind = global.cfg.Get("pubsub_listener", "bind")
+	path = global.cfg.Get("pubsub_listener", "path")
+	sig_header = global.cfg.Get("pubsub_listener", "sig_header")
+	token_header = global.cfg.Get("pubsub_listener", "token_header")
+	public_url = global.cfg.Get("pubsub_listener", "public_url")
+	tls_cert = global.cfg.Get("pubsub_listener", "tls_cert")
+	tls_key = global.cfg.Get("pubsub_listener", "tls_key")
+	self_register = global.cfg.GetBool("pubsub_listener", "self_register")
+	if w := global.cfg.GetInt("pubsub_listener", "workers"); w > 0 {
+		workers = int(w)
+	} else {
+		workers = 16
+	}
+	global.db.Get("kitebroker", "webhook_secret", &secret)
+	global.db.Get("kitebroker", "webhook_token", &token)
+	return
+}
+
+// configure_webhook_listener installs the shared PubSub listener configuration
+// from the config file and encrypted database. It is a no-op (aside from
+// validation) until a webhook task actually hosts itself, at which point the
+// listener uses these settings.
+func configure_webhook_listener() {
+	enabled, scheme, bind, path, sig_header, token_header, public_url, tls_cert, tls_key, secret, token, workers, self_register := dbConfig.webhook_listener_config()
+
+	// When self-registering, generate and persist a secret and token if none
+	// are configured, so deliveries are authenticated by default. They are
+	// stored encrypted and reused on subsequent runs.
+	if enabled && self_register {
+		if IsBlank(secret) {
+			secret = string(RandBytes(40))
+			global.db.CryptSet("kitebroker", "webhook_secret", &secret)
+			Notice("Generated a webhook signing secret for self-registration.")
+		}
+		if IsBlank(token) {
+			token = string(RandBytes(40))
+			global.db.CryptSet("kitebroker", "webhook_token", &token)
+			Notice("Generated a webhook delivery token for self-registration.")
+		}
+	}
+
+	if err := ConfigureWebhookListener(WebhookListenerConfig{
+		Enabled:      enabled,
+		Scheme:       scheme,
+		Bind:         bind,
+		Path:         path,
+		Secret:       secret,
+		Token:        token,
+		SigHeader:    sig_header,
+		TokenHeader:  token_header,
+		Workers:      workers,
+		TLSCert:      tls_cert,
+		TLSKey:       tls_key,
+		SelfRegister: self_register,
+		PublicURL:    public_url,
+	}); err != nil {
+		Critical(err)
+	}
+}
+
 // init_kw_api initializes the Kiteworks API.
 // It authenticates with the server using configured credentials.
 func init_kw_api() {
@@ -205,6 +271,22 @@ api_cfg_0 =
 api_cfg_1 = 
 `
 
+// firstSet returns value if it is non-blank, otherwise fallback.
+func firstSet(value, fallback string) string {
+	if IsBlank(value) {
+		return fallback
+	}
+	return value
+}
+
+// firstSetInt returns value if it is greater than zero, otherwise fallback.
+func firstSetInt(value int64, fallback int64) int64 {
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
 // load_config_defaults loads the default configuration values.
 // It uses the global configuration store to load from a default file.
 // Returns an error if loading fails.
@@ -224,6 +306,7 @@ func init_database() {
 	global.db, err = SecureDatabase(db_filename)
 	Critical(err)
 	SetErrTable(global.db.Table("kitebroker_errors"))
+	SetGlobalDB(global.db)
 	global.cache = global.db.Sub("cache")
 	//Defer(global.db.Close)
 }
@@ -466,6 +549,48 @@ func config_api(configure_api bool) {
 	lock_db := advanced.Bool("Machine Locked", _db_lock_status())
 	setup.Options("Advanced Configuration Options", advanced, false)
 
+	// PubSub listener (webhook receiver) configuration. These are shared
+	// infrastructure settings used by webhook-driven tasks; individual webhook
+	// tasks only declare the subjects they consume.
+	var webhook_secret, webhook_token string
+	global.db.Get("kitebroker", "webhook_secret", &webhook_secret)
+	global.db.Get("kitebroker", "webhook_token", &webhook_token)
+
+	pubsub := nfo.NewOptions("  [PubSub Listener (Webhook Receiver)]  ", "(selection or 'q' to return to previous)", 'q')
+	// Master switch. When disabled, webhook-capable tasks fall back to polling,
+	// and the listener detail fields below are hidden.
+	pubsub_enabled := pubsub.Bool("Enable Webhook Delivery", global.cfg.GetBool("pubsub_listener", "enabled"))
+	enabled_when := func() bool { return *pubsub_enabled }
+
+	pubsub_scheme := pubsub.StringSelect("Scheme", firstSet(global.cfg.Get("pubsub_listener", "scheme"), "https"), "https", "http")
+	pubsub.ShowWhen(enabled_when)
+	pubsub_bind := pubsub.String("Listen Address", firstSet(global.cfg.Get("pubsub_listener", "bind"), "0.0.0.0:8080"), "Address and port to receive webhook deliveries on. (ie.. 0.0.0.0:8080)", false)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_path := pubsub.String("URL Path", firstSet(global.cfg.Get("pubsub_listener", "path"), "/webhook"), "URL path that receives deliveries. (ie.. /webhook)", false)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_self_register := pubsub.Bool("Self-register with Appliance", global.cfg.GetBool("pubsub_listener", "self_register"))
+	pubsub.ShowWhen(enabled_when)
+	pubsub_public_url := pubsub.String("Public URL", global.cfg.Get("pubsub_listener", "public_url"), "Publicly reachable URL the appliance should deliver to. (required when self-registering)", false)
+	pubsub.ShowWhen(func() bool { return *pubsub_enabled && *pubsub_self_register })
+	// The signing secret and delivery token are managed automatically when
+	// self-registering (generated and pushed to the appliance), so they are
+	// only shown for manual configuration when self-register is off.
+	pubsub.SecretVar(&webhook_secret, "Signing Secret", webhook_secret, "Shared secret used to verify the HMAC-SHA256 signature of deliveries.")
+	pubsub.ShowWhen(func() bool { return *pubsub_enabled && !*pubsub_self_register })
+	pubsub.SecretVar(&webhook_token, "Delivery Token", webhook_token, "Shared token expected on each delivery.")
+	pubsub.ShowWhen(func() bool { return *pubsub_enabled && !*pubsub_self_register })
+	pubsub_sig_header := pubsub.String("Signature Header", firstSet(global.cfg.Get("pubsub_listener", "sig_header"), "X-KW-Signature"), "Header carrying the HMAC-SHA256 signature.", false)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_token_header := pubsub.String("Token Header", firstSet(global.cfg.Get("pubsub_listener", "token_header"), "Authorization"), "Header carrying the shared token.", false)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_workers := pubsub.Int("Worker Concurrency", int(firstSetInt(global.cfg.GetInt("pubsub_listener", "workers"), 16)), "Maximum deliveries handled concurrently.", 1, 256)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_tls_cert := pubsub.String("TLS Certificate File", global.cfg.Get("pubsub_listener", "tls_cert"), "Path to a TLS certificate to enable HTTPS. (optional)", false)
+	pubsub.ShowWhen(enabled_when)
+	pubsub_tls_key := pubsub.String("TLS Key File", global.cfg.Get("pubsub_listener", "tls_key"), "Path to the TLS private key. (optional)", false)
+	pubsub.ShowWhen(enabled_when)
+	setup.Options("PubSub Listener (Webhook Receiver)", pubsub, false)
+
 	setup.Func("Clear current authorization token(s).", func() bool {
 		kw := new(APIClient)
 		kw.SetDatabase(global.db.Sub("KWAPI"))
@@ -504,6 +629,32 @@ func config_api(configure_api bool) {
 		if _db_lock_status() != *lock_db {
 			_set_db_locker()
 		}
+
+		// Persist PubSub listener settings (infra in config, secrets in DB).
+		Critical(global.cfg.Set("pubsub_listener", "enabled", *pubsub_enabled))
+		Critical(global.cfg.Set("pubsub_listener", "scheme", *pubsub_scheme))
+		Critical(global.cfg.Set("pubsub_listener", "bind", *pubsub_bind))
+		Critical(global.cfg.Set("pubsub_listener", "path", *pubsub_path))
+		Critical(global.cfg.Set("pubsub_listener", "sig_header", *pubsub_sig_header))
+		Critical(global.cfg.Set("pubsub_listener", "token_header", *pubsub_token_header))
+		Critical(global.cfg.Set("pubsub_listener", "workers", *pubsub_workers))
+		Critical(global.cfg.Set("pubsub_listener", "self_register", *pubsub_self_register))
+		Critical(global.cfg.Set("pubsub_listener", "public_url", *pubsub_public_url))
+		Critical(global.cfg.Set("pubsub_listener", "tls_cert", *pubsub_tls_cert))
+		Critical(global.cfg.Set("pubsub_listener", "tls_key", *pubsub_tls_key))
+		// Persist or clear the webhook secret/token: a blank field removes any
+		// stored value rather than leaving the previous one in place.
+		if !IsBlank(webhook_secret) {
+			global.db.CryptSet("kitebroker", "webhook_secret", &webhook_secret)
+		} else {
+			global.db.Unset("kitebroker", "webhook_secret")
+		}
+		if !IsBlank(webhook_token) {
+			global.db.CryptSet("kitebroker", "webhook_token", &webhook_token)
+		} else {
+			global.db.Unset("kitebroker", "webhook_token")
+		}
+
 		Critical(global.cfg.TrimSave())
 	}
 

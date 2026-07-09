@@ -1,6 +1,7 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -215,6 +216,110 @@ func (s PubSub) UnSub() (err error) {
 	})
 
 	return
+}
+
+// PubSub webhook status values, as reported by KiteWebhookStatus.Status.
+const (
+	WEBHOOK_STATUS_UNKNOWN = "UNKNOWN"
+	WEBHOOK_STATUS_SUCCESS = "SUCCESS"
+	WEBHOOK_STATUS_ERROR   = "ERROR"
+)
+
+// KiteWebhookStatus represents the operational status of a PubSub webhook.
+type KiteWebhookStatus struct {
+	Status      string `json:"status"`
+	Description string `json:"description"`
+}
+
+// KiteWebhook represents a PubSub consumer webhook registration.
+type KiteWebhook struct {
+	ID            string            `json:"id"`
+	URL           string            `json:"url"`
+	Enabled       bool              `json:"enabled"`
+	Created       string            `json:"createdAt"`
+	Modified      string            `json:"updatedAt"`
+	Subscriptions []string          `json:"subscriptions"`
+	Status        KiteWebhookStatus `json:"status"`
+}
+
+// Webhooks retrieves all PubSub webhooks, paginating through the result set.
+// It accepts optional query parameters to filter the results.
+func (K KWSession) Webhooks(params ...interface{}) (webhooks []KiteWebhook, err error) {
+	err = K.ItemsCall(APIRequest{
+		Method: "GET",
+		Path:   "/pubsub-ext/webhooks",
+		Output: &webhooks,
+		Params: SetParams(params),
+	}, -1, 1000)
+	return
+}
+
+// CreateWebhook creates a new PubSub webhook and returns the created webhook.
+// webhook_url and subscriptions are required; optional fields such as secret,
+// token, and enabled may be supplied via PostJSON.
+func (K KWSession) CreateWebhook(webhook_url string, subscriptions []string, params ...interface{}) (webhook KiteWebhook, err error) {
+	err = K.Call(APIRequest{
+		Method: "POST",
+		Path:   "/pubsub-ext/webhooks",
+		Params: SetParams(PostJSON{"url": webhook_url, "subscriptions": subscriptions}, params),
+		Output: &webhook,
+	})
+	return
+}
+
+// kw_webhook represents a single PubSub webhook accessor in the consumer API.
+type kw_webhook struct {
+	webhook_id string
+	*KWSession
+}
+
+// Webhook returns a kw_webhook accessor for the given webhook ID.
+func (K KWSession) Webhook(webhook_id string) kw_webhook {
+	return kw_webhook{webhook_id, &K}
+}
+
+// Info retrieves the webhook by its ID.
+func (s kw_webhook) Info() (webhook KiteWebhook, err error) {
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/pubsub-ext/webhooks/%s", s.webhook_id),
+		Output: &webhook,
+	})
+	return
+}
+
+// Update replaces the webhook with the provided values and returns the updated webhook.
+// webhook_url and subscriptions are required; optional fields such as secret,
+// token, and enabled may be supplied via PostJSON.
+func (s kw_webhook) Update(webhook_url string, subscriptions []string, params ...interface{}) (webhook KiteWebhook, err error) {
+	err = s.Call(APIRequest{
+		Method: "PUT",
+		Path:   SetPath("/pubsub-ext/webhooks/%s", s.webhook_id),
+		Params: SetParams(PostJSON{"url": webhook_url, "subscriptions": subscriptions}, params),
+		Output: &webhook,
+	})
+	return
+}
+
+// Patch partially updates the webhook, sending only the supplied fields
+// (the WebhookPatchRequest form). Any subset of url, token, secret, enabled,
+// and subscriptions may be provided via PostJSON, e.g. PostJSON{"enabled": false}.
+func (s kw_webhook) Patch(params ...interface{}) (webhook KiteWebhook, err error) {
+	err = s.Call(APIRequest{
+		Method: "PATCH",
+		Path:   SetPath("/pubsub-ext/webhooks/%s", s.webhook_id),
+		Params: SetParams(params),
+		Output: &webhook,
+	})
+	return
+}
+
+// Delete removes the webhook by its ID.
+func (s kw_webhook) Delete() (err error) {
+	return s.Call(APIRequest{
+		Method: "DELETE",
+		Path:   SetPath("/pubsub-ext/webhooks/%s", s.webhook_id),
+	})
 }
 
 type kw_rest_folder struct {
@@ -473,9 +578,39 @@ func (K KWSession) NewMail() KWCompose {
 	return KWCompose{KWSession: &K}
 }
 
-func (s KWCompose) SendFile(files []KiteObject, params ...interface{}) (err error) {
+// Send sends a Kiteworks email composed from the KWCompose fields. It posts to
+// /rest/mail/actions/sendFile (the /rest/mail collection itself is read-only)
+// and, when returnEntity is requested, decodes the created mail. Recipients
+// (To) and a Subject are required; Files may be empty for a body-only message.
+func (s KWCompose) Send(params ...interface{}) (mail KiteMail, err error) {
+	if len(s.To) == 0 {
+		return mail, fmt.Errorf("Send: at least one recipient (To) is required.")
+	}
+
+	// files must be present in the payload; the appliance expects the key even
+	// for a body-only message (an empty list).
+	files := s.Files
+	if files == nil {
+		files = []string{}
+	}
+	body := PostJSON{
+		"to":      s.To,
+		"subject": s.Subject,
+		"body":    s.Body,
+		"files":   files,
+	}
+	if len(s.CC) > 0 {
+		body["cc"] = s.CC
+	}
+	if len(s.BCC) > 0 {
+		body["bcc"] = s.BCC
+	}
+
 	err = s.Call(APIRequest{
 		Method: "POST",
+		Path:   "/rest/mail/actions/sendFile",
+		Params: SetParams(body, Query{"returnEntity": true}, params),
+		Output: &mail,
 	})
 	return
 }
@@ -581,11 +716,20 @@ func (s kw_rest_admin) UpdateUserProfile(profile_id int, user_ids []string, para
 
 // NewUser creates a new user with the specified parameters.
 // It returns the created KiteUser and any error encountered.
+//
+// If type_id is <= 0, userTypeId is omitted from the request so the appliance
+// assigns the profile via its own login/LDAP/domain mapping rules. Passing an
+// explicit type_id pins the profile as a manual override, so callers should only
+// do so when they intend to override auto-mapping.
 func (s kw_rest_admin) NewUser(user_email string, type_id int, verified, notify bool) (user *KiteUser, err error) {
+	body := PostJSON{"email": user_email, "verified": verified, "sendNotification": notify}
+	if type_id > 0 {
+		body["userTypeId"] = type_id
+	}
 	err = s.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/users",
-		Params: SetParams(PostJSON{"email": user_email, "userTypeId": type_id, "verified": verified, "sendNotification": notify}, Query{"returnEntity": true}),
+		Params: SetParams(body, Query{"returnEntity": true}),
 		Output: &user,
 	})
 
@@ -612,6 +756,18 @@ func (s kw_rest_admin) FindUser(user_email string, params ...interface{}) (user 
 		return &users[0], nil
 	}
 	return nil, ERR_NO_USER_FOUND
+}
+
+// UserByID retrieves a single user by their numeric user ID via the admin API.
+// It returns the KiteUser and any error encountered.
+func (s kw_rest_admin) UserByID(user_id string, params ...interface{}) (user KiteUser, err error) {
+	err = s.Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/admin/users/%s", user_id),
+		Params: SetParams(params),
+		Output: &user,
+	})
+	return
 }
 
 // GetAllUsers retrieves a list of all user emails.
@@ -1083,29 +1239,57 @@ func (K KWSession) MySshPublicKeys() (result []KiteSshPublicKey, err error) {
 }
 
 // CreateMySshPublicKey registers an existing SSH public key for the current user.
-// name is capped to 50 characters by the server.
+// name is capped to 50 characters by the server. name and publicKey are sent in
+// the JSON body (the endpoint reads them from the body, not the query string).
+//
+// The create response may not carry the new key's id, so when it comes back
+// without one we re-list the user's keys and resolve the id by name — otherwise
+// callers would record a key with id 0 and later be unable to delete it.
 func (K KWSession) CreateMySshPublicKey(name, public_key string) (key KiteSshPublicKey, err error) {
 	err = K.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/userSshPublicKeys/create",
-		Params: SetParams(Query{"name": name, "publicKey": public_key}),
+		Params: SetParams(PostJSON{"name": name, "publicKey": public_key}, Query{"returnEntity": true}),
 		Output: &key,
 	})
+	if err != nil {
+		return
+	}
+	if key.ID <= 0 {
+		if resolved, ok := K.findMySshKeyByName(name); ok {
+			key = resolved
+		}
+	}
 	return
+}
+
+// findMySshKeyByName re-lists the current user's SSH keys and returns the one
+// matching name (case-sensitive, as stored), if any.
+func (K KWSession) findMySshKeyByName(name string) (KiteSshPublicKey, bool) {
+	keys, err := K.MySshPublicKeys()
+	if err != nil {
+		return KiteSshPublicKey{}, false
+	}
+	for _, k := range keys {
+		if k.Name == name {
+			return k, true
+		}
+	}
+	return KiteSshPublicKey{}, false
 }
 
 // GenerateMySshPublicKey asks the server to generate a new SSH key pair for
 // the current user. The returned PrivateKey is only available here — store it
 // before discarding the response. passphrase may be empty.
 func (K KWSession) GenerateMySshPublicKey(name, passphrase string) (pair KiteSshKeyPair, err error) {
-	params := []interface{}{Query{"name": name}}
+	body := PostJSON{"name": name}
 	if !IsBlank(passphrase) {
-		params = append(params, Query{"passphrase": passphrase})
+		body["passphrase"] = passphrase
 	}
 	err = K.Call(APIRequest{
 		Method: "POST",
 		Path:   "/rest/userSshPublicKeys/generate",
-		Params: SetParams(params...),
+		Params: SetParams(body),
 		Output: &pair,
 	})
 	return
@@ -1752,6 +1936,228 @@ type KWProfile struct {
 		FileTime     int   `json:"fileLifetime"`
 		FolderTime   int   `json:"folderExpirationLimit"`
 	} `json:"features"`
+}
+
+// KWProfileFeatures models the full features object of a Kiteworks profile as
+// returned by GET /rest/profiles/{id} and accepted by PUT /rest/profiles/{id}.
+// All fields are pointers so an update can send only the values that were read
+// back (a nil field is omitted, avoiding ERR_INPUT_* on read-only/absent keys).
+type KWProfileFeatures struct {
+	AllowSFTP                        *bool     `json:"allowSftp,omitempty"`
+	MaxStorage                       *int64    `json:"maxStorage,omitempty"`
+	LinkExpiration                   *int      `json:"linkExpiration,omitempty"`
+	MaxLinkExpiration                *int      `json:"maxLinkExpiration,omitempty"`
+	SetExpirationLower               *bool     `json:"setExpirationLower,omitempty"`
+	SendExternal                     *bool     `json:"sendExternal,omitempty"`
+	AcNoAuth                         *bool     `json:"acNoAuth,omitempty"`
+	FolderCreate                     *int      `json:"folderCreate,omitempty"`
+	AllowedFolderRoles               *[]string `json:"allowedFolderRoles,omitempty"`
+	SysFolderCreate                  *int      `json:"sysFolderCreate,omitempty"`
+	SysFolderMaxQuota                *int64    `json:"sysFolderMaxQuota,omitempty"`
+	SysFolderMaxCount                *int64    `json:"sysFolderMaxCount,omitempty"`
+	SysFolderDefaultQuota            *int64    `json:"sysFolderDefaultQuota,omitempty"`
+	StorageQuota                     *int64    `json:"storageQuota,omitempty"`
+	LdapMapping                      *string   `json:"ldapMapping,omitempty"`
+	AcVerifyRecipient                *bool     `json:"acVerifyRecipient,omitempty"`
+	Acl                              *[]string `json:"acl,omitempty"`
+	DefaultAcl                       *string   `json:"defaultAcl,omitempty"`
+	MobileSyncItemsLimit             *int      `json:"mobileSyncItemsLimit,omitempty"`
+	PersonalFolder                   *bool     `json:"personalFolder,omitempty"`
+	RequireScanZipContentDefault     *bool     `json:"requireScanZipContentDefault,omitempty"`
+	BlockNewFileTypesDefault         *bool     `json:"blockNewFileTypesDefault,omitempty"`
+	ExcludedFileExtensions           *[]string `json:"excludedFileExtensions,omitempty"`
+	FileFilterExclusionGroups        *[]string `json:"fileFilterExclusionGroups,omitempty"`
+	FileFilterCustomFileTypes        *[]string `json:"fileFilterCustomFileTypes,omitempty"`
+	SecureMessageBody                *string   `json:"secureMessageBody,omitempty"`
+	SecureMessageBodyDefault         *bool     `json:"secureMessageBodyDefault,omitempty"`
+	SecureContainerRequired          *bool     `json:"secureContainerRequired,omitempty"`
+	ReturnReceipt                    *string   `json:"returnReceipt,omitempty"`
+	ReturnReceiptDefault             *bool     `json:"returnReceiptDefault,omitempty"`
+	SelfCopy                         *string   `json:"selfCopy,omitempty"`
+	SelfCopyDefault                  *bool     `json:"selfCopyDefault,omitempty"`
+	IncludeFingerprint               *string   `json:"includeFingerprint,omitempty"`
+	IncludeFingerprintDefault        *bool     `json:"includeFingerprintDefault,omitempty"`
+	RequestFile                      *bool     `json:"requestFile,omitempty"`
+	RequestFileAllowViewableFile     *bool     `json:"requestFileAllowViewableFile,omitempty"`
+	RequestFileUploadAuth            *string   `json:"requestFileUploadAuth,omitempty"`
+	RequestFileAuthDefault           *string   `json:"requestFileAuthDefault,omitempty"`
+	RequestFileExpiration            *int      `json:"requestFileExpiration,omitempty"`
+	RequestFileExpirationUserDecide  *bool     `json:"requestFileExpirationUserDecide,omitempty"`
+	RequestFileExpirationMax         *int      `json:"requestFileExpirationMax,omitempty"`
+	RequestFileUploadLimit           *int      `json:"requestFileUploadLimit,omitempty"`
+	RequestFileUploadLimitUserDecide *bool     `json:"requestFileUploadLimitUserDecide,omitempty"`
+	RequestFileUploadsMax            *int      `json:"requestFileUploadsMax,omitempty"`
+	TwoFactorAuth                    *string   `json:"twoFactorAuth,omitempty"`
+	InactiveExpiration               *int      `json:"inactiveExpiration,omitempty"`
+	UserCanReactivate                *string   `json:"userCanReactivate,omitempty"`
+	CleanupInactiveAccount           *bool     `json:"cleanupInactiveAccount,omitempty"`
+	WithdrawInactiveAccountFileLinks *bool     `json:"withdrawInactiveAccountFileLinks,omitempty"`
+	AllowCollaboration               *bool     `json:"allowCollaboration,omitempty"`
+	AllowLeavingSharedFolder         *bool     `json:"allowLeavingSharedFolder,omitempty"`
+	SendFileLimit                    *int      `json:"sendFileLimit,omitempty"`
+	RemoteWipe                       *bool     `json:"remoteWipe,omitempty"`
+	DeleteUnsharedData               *bool     `json:"deleteUnsharedData,omitempty"`
+	RetainData                       *bool     `json:"retainData,omitempty"`
+	RetainPermissionToSharedData     *bool     `json:"retainPermissionToSharedData,omitempty"`
+	FolderExpirationLimit            *int      `json:"folderExpirationLimit,omitempty"`
+	FileLifetime                     *int      `json:"fileLifetime,omitempty"`
+}
+
+// KWFullProfile is the full profile object from GET /rest/profiles/{id}. Unlike
+// the compact KWProfile used by MapProfiles (which reads /rest/admin/profiles),
+// this targets /rest/profiles where every setting is present — the shape needed
+// to clone a profile faithfully. Prototype is a *int because a built-in profile
+// reports it as null.
+type KWFullProfile struct {
+	ID        int               `json:"id"`
+	Name      string            `json:"name"`
+	Prototype *int              `json:"prototype"`
+	BuiltIn   int               `json:"builtIn"`
+	Cloneable int               `json:"cloneable"`
+	Features  KWProfileFeatures `json:"features"`
+}
+
+// FullProfiles lists all profiles with their complete feature set via
+// GET /rest/profiles.
+func (K KWSession) FullProfiles() (profiles []KWFullProfile, err error) {
+	err = K.DataCall(APIRequest{
+		Method: "GET",
+		Path:   "/rest/profiles",
+		Output: &profiles,
+	}, -1, 1000)
+	return
+}
+
+// GetProfile returns a single profile with its full feature set via
+// GET /rest/profiles/{id}.
+func (K KWSession) GetProfile(id int) (profile KWFullProfile, err error) {
+	err = K.Call(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/profiles/%d", id),
+		Output: &profile,
+	})
+	return
+}
+
+// NewProfile creates a custom profile cloned from a built-in prototype and
+// returns the created entity. Per the API, this only establishes the profile
+// (name + prototype); its configuration is applied separately via UpdateProfile.
+func (K KWSession) NewProfile(name string, prototype int, params ...interface{}) (profile KWFullProfile, err error) {
+	err = K.Call(APIRequest{
+		Method: "POST",
+		Path:   "/rest/profiles",
+		Params: SetParams(PostJSON{"name": name, "prototype": prototype}, Query{"returnEntity": true}, params),
+		Output: &profile,
+	})
+	return
+}
+
+// FeaturesToMap flattens a KWProfileFeatures into a top-level map, preserving
+// pointer/omitempty semantics (nil fields drop out entirely). Exported for
+// callers that need to compare a saved profile against fields they submitted.
+func FeaturesToMap(features KWProfileFeatures) (map[string]interface{}, error) {
+	return featuresToMap(features)
+}
+
+// featuresToMap flattens a KWProfileFeatures into a top-level map, preserving
+// pointer/omitempty semantics (nil fields drop out entirely).
+func featuresToMap(features KWProfileFeatures) (map[string]interface{}, error) {
+	raw, err := json.Marshal(features)
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]interface{})
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// readOnlyProfileFeatures are feature fields present in the GET response but NOT
+// accepted by the PUT /rest/profiles/{id} body (per the API schema). They are
+// derived/output-only or managed elsewhere, so sending them has no effect and
+// they must not count as a difference during cloning. Kept in sync with the
+// documented PUT request body: any GET field absent from that body belongs here.
+//   - acl/defaultAcl: computed from acNoAuth/acVerifyRecipient + system settings
+//   - allowedFolderRoles, personalFolder, mobileSyncItemsLimit, *Default scan
+//     flags, folderExpirationLimit, fileLifetime, allowLeavingSharedFolder:
+//     not writable via this endpoint.
+var readOnlyProfileFeatures = map[string]struct{}{
+	"acl":                          {},
+	"defaultAcl":                   {},
+	"allowedFolderRoles":           {},
+	"allowLeavingSharedFolder":     {},
+	"mobileSyncItemsLimit":         {},
+	"personalFolder":               {},
+	"requireScanZipContentDefault": {},
+	"blockNewFileTypesDefault":     {},
+	"folderExpirationLimit":        {},
+	"fileLifetime":                 {},
+}
+
+// FeaturesDiff returns the subset of desired feature fields that differ from
+// current. Cloning sends only these changed fields (at the top level, matching
+// the FeaturesList schema) so we never resend fields that already match — which
+// is what avoids tripping built-in profiles' conditional per-field validation
+// (allowed_if / not_in_list) on fields that don't actually need to change.
+// Read-only/derived fields (see readOnlyProfileFeatures) are never included.
+func FeaturesDiff(current, desired KWProfileFeatures) (PostJSON, error) {
+	cur, err := featuresToMap(current)
+	if err != nil {
+		return nil, err
+	}
+	des, err := featuresToMap(desired)
+	if err != nil {
+		return nil, err
+	}
+	diff := make(PostJSON)
+	for k, dv := range des {
+		if _, ro := readOnlyProfileFeatures[k]; ro {
+			continue
+		}
+		if cv, ok := cur[k]; !ok || !reflect.DeepEqual(cv, dv) {
+			diff[k] = dv
+		}
+	}
+	return diff, nil
+}
+
+// UpdateProfile applies a features configuration to an existing profile via
+// PUT /rest/profiles/{id}. The body is the FeaturesList object: feature fields
+// are sent at the TOP LEVEL (not wrapped in a "features" key). nil fields on
+// KWProfileFeatures are omitted so only known values are sent.
+func (K KWSession) UpdateProfile(id int, features KWProfileFeatures, params ...interface{}) (err error) {
+	body, err := featuresToMap(features)
+	if err != nil {
+		return err
+	}
+	_, err = K.UpdateProfileFields(id, PostJSON(body), params...)
+	return err
+}
+
+// UpdateProfileFields applies an arbitrary set of top-level feature fields to a
+// profile via PUT /rest/profiles/{id}, returning the saved profile (the
+// endpoint echoes the full entity via returnEntity=true). Used with
+// FeaturesDiff to send only the fields that changed and to verify they stuck.
+func (K KWSession) UpdateProfileFields(id int, body PostJSON, params ...interface{}) (saved KWFullProfile, err error) {
+	err = K.Call(APIRequest{
+		Method: "PUT",
+		Path:   SetPath("/rest/profiles/%d", id),
+		Params: SetParams(body, Query{"returnEntity": true}, params),
+		Output: &saved,
+	})
+	return
+}
+
+// DeleteProfileReplace deletes a custom profile and reassigns its users to
+// new_profile_id via DELETE /rest/profiles/{id}/replace/{new_profile}. params
+// may carry UserDemoteOptions (retainData / deleteUnsharedData / retainToUser).
+func (K KWSession) DeleteProfileReplace(id, new_profile_id int, params ...interface{}) (err error) {
+	return K.Call(APIRequest{
+		Method: "DELETE",
+		Path:   SetPath("/rest/profiles/%d/replace/%d", id, new_profile_id),
+		Params: SetParams(params),
+	})
 }
 
 // Profiles retrieves a map of KWProfiles indexed by their ID.

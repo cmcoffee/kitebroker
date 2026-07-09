@@ -269,4 +269,8 @@ func main() {
 			Exit(1)
 		}
 	}
+
+	// If any webhook task started the PubSub listener, keep the foreground
+	// alive until it shuts down (Ctrl+C). This is a no-op otherwise.
+	WaitForWebhookListener()
 }

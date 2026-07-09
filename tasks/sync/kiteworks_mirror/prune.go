@@ -19,7 +19,8 @@ func (T *KW_MirrorTask) prune(run_start_ts int64) {
 	pruned_files := T.Report.Tally("Pruned Files")
 	pruned_perms := T.Report.Tally("Pruned Permissions")
 	pruned_ssh_keys := T.Report.Tally("Pruned SSH Keys")
-	stale_users := T.Report.Tally("Stale Users (review required)")
+	users_deactivated := T.Report.Tally("Pruned Users Deactivated")
+	users_deleted := T.Report.Tally("Pruned Users Deleted")
 
 	sessions := make(map[string]KWSession)
 	dst_session := func(email string) KWSession {
@@ -35,7 +36,7 @@ func (T *KW_MirrorTask) prune(run_start_ts int64) {
 	T.pruneFiles(run_start_ts, dst_session, pruned_files)
 	T.prunePerms(run_start_ts, dst_session, pruned_perms)
 	T.pruneSshKeys(run_start_ts, dst_session, pruned_ssh_keys)
-	T.reportStaleUsers(run_start_ts, stale_users)
+	T.pruneStaleUsers(run_start_ts, users_deactivated, users_deleted)
 
 	Log("\n=== Prune Complete ===")
 }
@@ -127,8 +128,22 @@ func (T *KW_MirrorTask) pruneSshKeys(run_start_ts int64, dst_session func(string
 		if m.Last_seen_ts >= run_start_ts {
 			continue
 		}
-		Log("Prune SSH key: [%s] '%s' (dst_id=%d)", m.Owner_email, m.Name, m.Dst_id)
-		if err := dst_session(m.Owner_email).DeleteMySshPublicKey(m.Dst_id); err != nil {
+		// The recorded destination id may be missing (0) if the create response
+		// carried no id — but the key can still be present on the destination.
+		// Resolve the real id from the live key list by fingerprint/name so the
+		// orphan is actually deleted rather than left behind.
+		dst_id := m.Dst_id
+		if dst_id <= 0 {
+			if resolved, ok := resolveDstSshKeyID(dst_session(m.Owner_email), m.Fingerprint, m.Name); ok {
+				dst_id = resolved
+			} else {
+				Debug("Prune SSH key: [%s] '%s' not found on destination; dropping stale mapping.", m.Owner_email, m.Name)
+				T.state.DeleteSshKey(m.Owner_email, m.Src_id)
+				continue
+			}
+		}
+		Log("Prune SSH key: [%s] '%s' (dst_id=%d)", m.Owner_email, m.Name, dst_id)
+		if err := dst_session(m.Owner_email).DeleteMySshPublicKey(dst_id); err != nil {
 			if !isAlreadyGone(err) {
 				Err("Failed to delete SSH key '%s': %v", m.Name, err)
 				continue
@@ -139,7 +154,13 @@ func (T *KW_MirrorTask) pruneSshKeys(run_start_ts int64, dst_session func(string
 	}
 }
 
-func (T *KW_MirrorTask) reportStaleUsers(run_start_ts int64, tally Tally) {
+// pruneStaleUsers applies source-state mirroring to users that were present on
+// a prior run but not refreshed by this (full) scan: if the source user is gone
+// the standby user is deleted; if suspended/deactivated on source it is
+// deactivated on the standby. This reuses reconcileUser so the full-scan prune
+// and the differential path handle user removal identically. Only reached from
+// the --prune path, which is always a full authoritative scan.
+func (T *KW_MirrorTask) pruneStaleUsers(run_start_ts int64, deactivated, deleted Tally) {
 	for _, key := range T.state.users.Keys() {
 		var m user_mapping
 		if !T.state.users.Get(key, &m) {
@@ -148,8 +169,7 @@ func (T *KW_MirrorTask) reportStaleUsers(run_start_ts int64, tally Tally) {
 		if m.Last_seen_ts >= run_start_ts {
 			continue
 		}
-		Warn("STALE USER: %s (src_id=%s, dst_id=%s) — present on destination but not in last source scan. Review and deactivate or delete manually.", m.Email, m.Src_id, m.Dst_id)
-		tally.Add(1)
+		T.reconcileUser(m.Email, deactivated, deleted)
 	}
 }
 
