@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -116,6 +117,82 @@ func (K KWSession) Call(api_req APIRequest) (err error) {
 // It is a wrapper around PageCall for endpoints that return {"data": [...]}.
 func (K KWSession) DataCall(req APIRequest, offset, limit int) (err error) {
 	return K.PageCall(req, "data", offset, limit)
+}
+
+// DataStream is the streaming counterpart to DataCall, for endpoints that
+// return {"data": [...]}. See PageStream.
+func (K KWSession) DataStream(req APIRequest, limit int, target interface{}, cb func() error) (err error) {
+	return K.PageStream(req, "data", limit, target, cb)
+}
+
+// PageStream walks a paginated Kiteworks endpoint one page at a time, invoking
+// cb once per non-empty page. Unlike PageCall it never accumulates results
+// across pages and never round-trips them through []map[string]interface{}:
+// each page is decoded straight into target and discarded once cb returns, so
+// peak memory is a single page regardless of how many records exist.
+//
+// target must be a pointer to a slice; cb reads the freshly decoded page from
+// that same slice. The slice is replaced before every page, so cb must copy
+// anything it needs to retain past its own return. Returning an error from cb
+// aborts the walk and surfaces that error to the caller.
+//
+// This backs the mail archive's mailbox walk, where a mailbox can be far larger
+// than is reasonable to hold at once. PageCall remains the default elsewhere.
+func (K KWSession) PageStream(req APIRequest, key string, limit int, target interface{}, cb func() error) (err error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+
+	ptr := reflect.ValueOf(target)
+	if ptr.Kind() != reflect.Ptr || ptr.IsNil() || ptr.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("PageStream: target must be a non-nil pointer to a slice, got %T.", target)
+	}
+	slice_type := ptr.Elem().Type()
+
+	params := req.Params
+	var offset int
+
+	Debug("PageStream %s: key=%s, limit=%d", req.Path, key, limit)
+
+	for {
+		// Decode the envelope with RawMessage so only the page's own array is
+		// held, then decode that array directly into the caller's typed slice.
+		var envelope map[string]json.RawMessage
+
+		req.Params = SetParams(params, Query{"limit": limit, "offset": offset})
+		req.Output = &envelope
+		if err = K.Call(req); err != nil {
+			return err
+		}
+
+		raw, ok := envelope[key]
+		if !ok || len(raw) == 0 {
+			return fmt.Errorf("Something unexpected happened, got an empty response.")
+		}
+
+		// Hand cb a fresh slice each page; reusing the backing array would leak
+		// fields from the previous page into records that omit them.
+		ptr.Elem().Set(reflect.MakeSlice(slice_type, 0, limit))
+		if err = json.Unmarshal(raw, target); err != nil {
+			return err
+		}
+		envelope = nil
+
+		count := ptr.Elem().Len()
+		Debug("PageStream %s: Received %d records at offset %d.", req.Path, count, offset)
+
+		if count > 0 && cb != nil {
+			if err = cb(); err != nil {
+				return err
+			}
+		}
+
+		if count < limit {
+			Debug("PageStream %s: Complete at offset %d.", req.Path, offset)
+			return nil
+		}
+		offset += limit
+	}
 }
 
 // EventsCall retrieves data from the Kitebroker API using the "events" envelope key.
@@ -391,7 +468,7 @@ func (K *KWAPI) signature_auth_flow(username string) *url.Values {
 }
 
 // jwt_auth_flow creates a URL-encoded form data for JWT-based authentication.
-// It constructs a JWT assertion using the configured private key and issuer, signs it with RS256,
+// It constructs a JWT assertion using the configured private key and issuer, signs it with RS512,
 // and returns the form data required for the Kiteworks OAuth token endpoint.
 // The function returns the form data or an error if the JWT cannot be created or signed.
 func (K *KWAPI) jwt_auth_flow(username string) (postform *url.Values, err error) {

@@ -79,8 +79,10 @@ The `kitebroker --setup` command can be used to initially populate or update set
     *   `box`: Migrate users, folders, files, permissions, comments, and tasks from Box.com to Kiteworks.
     *   `kiteworks`: Migrate users, folders, files, permissions from a remote Kiteworks server.
     *   `quatrix`: Migrate users, folders, files, permissions from Quatrix to Kiteworks.
+    *   `s3`: Bulk import files from an S3 (or S3-compatible) bucket into Kiteworks.
 
 *   **User Tasks:**
+    *   `archive_mail`: Archive Kiteworks Mail to a local folder.
     *   `download`: Download folders and/or files from Kiteworks.
     *   `ls`: List folders and/or files in Kiteworks.
     *   `push_files`: Push files within folders to mobile devices.
@@ -97,6 +99,7 @@ The `kitebroker --setup` command can be used to initially populate or update set
 
 *   **Admin Tasks (Users):**
     *   `activity_report`: Generate admin activity report as CSV.
+    *   `archive_user_mail`: Archive Kiteworks Mail for users to a local folder.
     *   `csv_onboard`: Add users to folders from CSV.
     *   `move_my_folder`: Move folders from My Folder to top level.
     *   `update_user`: Update user information.

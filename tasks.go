@@ -13,6 +13,7 @@ import (
 	_ "github.com/cmcoffee/kitebroker/tasks/migration/kiteworks"
 	_ "github.com/cmcoffee/kitebroker/tasks/migration/box"
 	_ "github.com/cmcoffee/kitebroker/tasks/migration/quatrix"
+	_ "github.com/cmcoffee/kitebroker/tasks/migration/s3"
 	_ "github.com/cmcoffee/kitebroker/tasks/sync/kiteworks_mirror"
 	_ "github.com/cmcoffee/kitebroker/tasks/user"
 )

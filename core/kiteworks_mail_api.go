@@ -2,10 +2,13 @@ package core
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
+	"mime/multipart"
 	"mime/quotedprintable"
+	"os"
 	"strings"
 	"time"
 )
@@ -22,6 +25,9 @@ func (s KWSession) Mail(mail_id string) kw_rest_mail {
 
 // MailList retrieves a list of emails from the API.
 // If there is a problem with the call, it will return an error.
+//
+// This materializes the entire mailbox at once; prefer MailListEach for
+// mailboxes of unknown size.
 func (s KWSession) MailList(params ...interface{}) (output []KiteMail, err error) {
 	err = s.DataCall(APIRequest{
 		Method: "GET",
@@ -30,6 +36,20 @@ func (s KWSession) MailList(params ...interface{}) (output []KiteMail, err error
 		Output: &output,
 	}, -1, 1000)
 	return
+}
+
+// MailListEach walks the mailbox a page at a time, calling cb once per page.
+// Only one page is ever held in memory, making it safe for mailboxes too large
+// to fit in RAM. The slice handed to cb is invalidated once cb returns.
+func (s KWSession) MailListEach(page_size int, cb func(mail []KiteMail) error, params ...interface{}) (err error) {
+	var page []KiteMail
+	return s.DataStream(APIRequest{
+		Method: "GET",
+		Path:   SetPath("/rest/mail"),
+		Params: SetParams(params),
+	}, page_size, &page, func() error {
+		return cb(page)
+	})
 }
 
 type KiteRecipient struct {
@@ -128,6 +148,7 @@ type KiteMail struct {
 	mailVarMap           map[string]interface{}
 	attachmentLinks      map[string]string
 	attachmentFolderLink string
+	cachedAttachments    []KiteAttachment
 }
 
 func (s kw_rest_mail) CopyAllAttachments(destination_folder KiteObject) (err error) {
@@ -203,6 +224,16 @@ func (s kw_rest_mail) Attachments() (attachments []KiteAttachment, err error) {
 	return
 }
 
+// attachmentsFor returns the attachments for mail, preferring the copy already
+// cached on the KiteMail so that callers which have fetched the list can avoid
+// a second round trip to the API.
+func (s kw_rest_mail) attachmentsFor(mail *KiteMail) (attachments []KiteAttachment, err error) {
+	if mail != nil && mail.cachedAttachments != nil {
+		return mail.cachedAttachments, nil
+	}
+	return s.Attachments()
+}
+
 // GetVariable returns the value of a variable from the KiteMail object. If the mailVarMap is nil,
 // it creates a new map and populates it with variables from the Variables slice.
 // Then, it returns the value corresponding to the provided name.
@@ -242,7 +273,7 @@ func formatFileSize(size int64) string {
 }
 
 func (s kw_rest_mail) Manifest(mail KiteMail, folder_link ...string) (manifest string, err error) {
-	attachments, err := s.Attachments()
+	attachments, err := s.attachmentsFor(&mail)
 	if err != nil {
 		return "", err
 	}
@@ -345,11 +376,12 @@ func (s kw_rest_mail) Manifest(mail KiteMail, folder_link ...string) (manifest s
 	return strings.Join(manifest_list, "\n"), nil
 }
 
-// Read method reads the email and returns it in a human-readable format.
-func (s kw_rest_mail) Read(mail KiteMail, trailing_footer ...string) (output string, err error) {
-	var mail_output []string
+// mailHeaders builds the RFC-822 header lines for mail, excluding the
+// Content-Type and Content-Transfer-Encoding headers which depend on whether
+// the message is written as a single part or as a multipart container.
+func (s kw_rest_mail) mailHeaders(mail KiteMail) (headers []string, err error) {
 	mail_append := func(input string) {
-		mail_output = append(mail_output, input)
+		headers = append(headers, input)
 	}
 	if mail.EmailFrom != "" {
 		mail_append(fmt.Sprintf("From: <%s>", mail.EmailFrom))
@@ -378,24 +410,25 @@ func (s kw_rest_mail) Read(mail KiteMail, trailing_footer ...string) (output str
 	mail_append(fmt.Sprintf("Subject: %s", mime.QEncoding.Encode("utf-8", mail.Subject)))
 	ts, err := ReadKWTime(mail.Date)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	mail_append(fmt.Sprintf("Date: %s", ts.UTC().Format(time.RFC1123Z)))
 	mail_append(fmt.Sprintf("Message-ID: <%s@%s>", mail.ID, s.Server))
 	mail_append("MIME-Version: 1.0")
-	mail_append("Content-Type: text/html; charset=UTF-8")
-	mail_append("Content-Transfer-Encoding: quoted-printable")
+	return headers, nil
+}
 
-	// Build the HTML body.
+// mailBodyHTML builds the HTML body for mail, including the attachment manifest
+// and any trailing footers.
+func (s kw_rest_mail) mailBodyHTML(mail KiteMail, trailing_footer ...string) (body string, err error) {
 	var body_parts []string
 	body_parts = append(body_parts, "<!DOCTYPE html>\r\n<html>\r\n<body>")
-	body := mail.GetVariable("BODY")
-	if b, ok := body.(string); ok && b != "" {
+	mail_body := mail.GetVariable("BODY")
+	if b, ok := mail_body.(string); ok && b != "" {
 		body_parts = append(body_parts, b)
 	} else {
 		body_parts = append(body_parts, "<p>")
-		mail_body := strings.Split(mail.RawBody, "\n")
-		for _, v := range mail_body {
+		for _, v := range strings.Split(mail.RawBody, "\n") {
 			body_parts = append(body_parts, fmt.Sprintf("%s<br>", v))
 		}
 		body_parts = append(body_parts, "</p>")
@@ -407,21 +440,161 @@ func (s kw_rest_mail) Read(mail KiteMail, trailing_footer ...string) (output str
 		}
 		body_parts = append(body_parts, attachment_list)
 	}
-	if len(trailing_footer) > 0 {
-		for _, footer := range trailing_footer {
-			body_parts = append(body_parts, footer)
-		}
+	for _, footer := range trailing_footer {
+		body_parts = append(body_parts, footer)
 	}
 	body_parts = append(body_parts, "</body>\r\n</html>")
+	return strings.Join(body_parts, "\r\n"), nil
+}
+
+// Read method reads the email and returns it in a human-readable format.
+func (s kw_rest_mail) Read(mail KiteMail, trailing_footer ...string) (output string, err error) {
+	mail_output, err := s.mailHeaders(mail)
+	if err != nil {
+		return "", err
+	}
+	mail_output = append(mail_output,
+		"Content-Type: text/html; charset=UTF-8",
+		"Content-Transfer-Encoding: quoted-printable")
+
+	body, err := s.mailBodyHTML(mail, trailing_footer...)
+	if err != nil {
+		return "", err
+	}
 
 	// Encode the HTML body with quoted-printable.
 	var qpBuf bytes.Buffer
 	qpw := quotedprintable.NewWriter(&qpBuf)
-	qpw.Write([]byte(strings.Join(body_parts, "\r\n")))
+	qpw.Write([]byte(body))
 	qpw.Close()
 
 	// Join headers with CRLF, add blank line separator, then encoded body.
 	return strings.Join(mail_output, "\r\n") + "\r\n\r\n" + qpBuf.String(), nil
+}
+
+// WriteEML streams mail to w as a complete RFC-822 message. When embed is
+// non-empty the message is written as a multipart/mixed container and each
+// listed attachment is downloaded and base64 encoded directly into w, so no
+// attachment is ever held in memory in full. When embed is empty the output is
+// a single-part message identical to Read.
+//
+// Attachments that fail to download are reported and skipped rather than
+// aborting the message, so a partially recoverable mail still produces a file.
+func (s kw_rest_mail) WriteEML(w io.Writer, mail KiteMail, embed []KiteAttachment, trailing_footer ...string) (err error) {
+	headers, err := s.mailHeaders(mail)
+	if err != nil {
+		return err
+	}
+
+	body, err := s.mailBodyHTML(mail, trailing_footer...)
+	if err != nil {
+		return err
+	}
+
+	// No attachments to embed: single-part message.
+	if len(embed) == 0 {
+		headers = append(headers,
+			"Content-Type: text/html; charset=UTF-8",
+			"Content-Transfer-Encoding: quoted-printable")
+		if _, err = io.WriteString(w, strings.Join(headers, "\r\n")+"\r\n\r\n"); err != nil {
+			return err
+		}
+		qpw := quotedprintable.NewWriter(w)
+		if _, err = qpw.Write([]byte(body)); err != nil {
+			return err
+		}
+		return qpw.Close()
+	}
+
+	mp := multipart.NewWriter(w)
+
+	headers = append(headers, fmt.Sprintf("Content-Type: multipart/mixed; boundary=%q", mp.Boundary()))
+	if _, err = io.WriteString(w, strings.Join(headers, "\r\n")+"\r\n\r\n"); err != nil {
+		return err
+	}
+
+	// First part is the HTML body.
+	body_part, err := mp.CreatePart(map[string][]string{
+		"Content-Type":              {"text/html; charset=UTF-8"},
+		"Content-Transfer-Encoding": {"quoted-printable"},
+	})
+	if err != nil {
+		return err
+	}
+	qpw := quotedprintable.NewWriter(body_part)
+	if _, err = qpw.Write([]byte(body)); err != nil {
+		return err
+	}
+	if err = qpw.Close(); err != nil {
+		return err
+	}
+
+	// Remaining parts are the attachments, streamed one at a time.
+	for _, attachment := range embed {
+		mime_type := attachment.MimeType
+		if IsBlank(mime_type) {
+			mime_type = "application/octet-stream"
+		}
+		part, err := mp.CreatePart(map[string][]string{
+			"Content-Type":              {fmt.Sprintf("%s; name=%q", mime_type, attachment.Name)},
+			"Content-Transfer-Encoding": {"base64"},
+			"Content-Disposition":       {fmt.Sprintf("attachment; filename=%q", attachment.Name)},
+		})
+		if err != nil {
+			return err
+		}
+
+		src, err := s.DownloadAttachment(attachment.AttachmentID)
+		if err != nil {
+			Err("Error while downloading attachment %s: %v", attachment.Name, err)
+			continue
+		}
+
+		// Wrap in a line-splitting writer; base64 in MIME must wrap at 76 chars.
+		b64 := base64.NewEncoder(base64.StdEncoding, &mimeLineWriter{w: part})
+		_, err = io.Copy(b64, src)
+		src.Close()
+		if err != nil {
+			b64.Close()
+			return err
+		}
+		if err = b64.Close(); err != nil {
+			return err
+		}
+	}
+
+	return mp.Close()
+}
+
+// mimeLineWriter wraps output at 76 characters per line with CRLF endings, as
+// required for base64 encoded MIME parts.
+type mimeLineWriter struct {
+	w     io.Writer
+	count int
+}
+
+func (m *mimeLineWriter) Write(p []byte) (n int, err error) {
+	for len(p) > 0 {
+		remaining := 76 - m.count
+		chunk := p
+		if len(chunk) > remaining {
+			chunk = chunk[:remaining]
+		}
+		written, err := m.w.Write(chunk)
+		n += written
+		m.count += written
+		if err != nil {
+			return n, err
+		}
+		p = p[written:]
+		if m.count >= 76 {
+			if _, err = m.w.Write([]byte("\r\n")); err != nil {
+				return n, err
+			}
+			m.count = 0
+		}
+	}
+	return n, nil
 }
 
 type stringSeeker struct {
@@ -432,13 +605,12 @@ func (n stringSeeker) Close() (err error) {
 	return nil
 }
 
-func (T kw_rest_mail) Archive(root_path string) (err error) {
-	mail, err := T.Get()
-	if err != nil {
-		return err
-	}
-
-	var sender string
+// archivePaths derives the archive layout for mail: the sender label used in
+// the message filename, and the relative folder path (bucket plus an optional
+// per-correspondent subfolder) the message belongs in. Shared between the
+// Kiteworks-folder and local filesystem archivers so both produce the same
+// hierarchy.
+func (T kw_rest_mail) archivePaths(mail KiteMail, root_path string) (sender, folder_path string) {
 	bucket := strings.Title(strings.ToLower(mail.Bucket))
 
 	if mail.EmailFrom == "" {
@@ -466,32 +638,45 @@ func (T kw_rest_mail) Archive(root_path string) (err error) {
 		}
 	}
 
-	var folder_path string
 	if end_path == "" {
 		folder_path = fmt.Sprintf("%s/%s", root_path, bucket)
 	} else {
 		folder_path = fmt.Sprintf("%s/%s/%s", root_path, bucket, end_path)
 	}
+	return sender, folder_path
+}
+
+// cleanArchiveName strips characters that are illegal in Kiteworks folder names
+// and on local filesystems, and replaces spaces with underscores.
+func cleanArchiveName(input string) (output string) {
+	var output_string []string
+	for _, v := range input {
+		if v == ' ' {
+			output_string = append(output_string, "_")
+			continue
+		}
+		if v == '\\' || v == '/' || v == '*' || v == '"' || v == '<' || v == '>' || v == '|' || v == '?' || v == ':' {
+			continue
+		}
+		output_string = append(output_string, string(v))
+	}
+	return strings.Join(output_string, "")
+}
+
+func (T kw_rest_mail) Archive(root_path string) (err error) {
+	mail, err := T.Get()
+	if err != nil {
+		return err
+	}
+
+	sender, folder_path := T.archivePaths(mail, root_path)
 
 	folder, err := T.Folder("0").ResolvePath(folder_path)
 	if err != nil {
 		return err
 	}
 
-	CleanString := func(input string) (output string) {
-		var output_string []string
-		for _, v := range input {
-			if v == ' ' {
-				output_string = append(output_string, "_")
-				continue
-			}
-			if v == '\\' || v == '/' || v == '*' || v == '"' || v == '<' || v == '>' || v == '|' || v == '?' || v == ':' {
-				continue
-			}
-			output_string = append(output_string, string(v))
-		}
-		return strings.Join(output_string, "")
-	}
+	CleanString := cleanArchiveName
 
 	archive_email := func(mail KiteMail, footer string, folder KiteObject) (err error) {
 		message, err := T.Read(mail, footer)
@@ -546,4 +731,165 @@ func (T kw_rest_mail) Archive(root_path string) (err error) {
 	}
 
 	return nil
+}
+
+// LocalArchiveOptions controls how ArchiveLocal writes mail to disk.
+type LocalArchiveOptions struct {
+	// RootPath is the local directory the archive is rooted at. Required.
+	RootPath string
+	// Embed writes attachments into the .eml as multipart/mixed parts, producing
+	// a single self-contained file per message. When false, attachments are
+	// written to an Attachments/<mail id>/ subfolder alongside the .eml and the
+	// message body links to them with relative paths.
+	Embed bool
+	// SkipAttachments skips attachment retrieval entirely; the .eml still carries
+	// the manifest table describing what was attached.
+	SkipAttachments bool
+	// Transferred, when set, is called with the byte count of each chunk written.
+	Transferred func(int)
+}
+
+// countingWriter reports bytes written to a callback, for transfer tallies.
+type countingWriter struct {
+	w  io.Writer
+	cb func(int)
+}
+
+func (c countingWriter) Write(p []byte) (n int, err error) {
+	n, err = c.w.Write(p)
+	if n > 0 && c.cb != nil {
+		c.cb(n)
+	}
+	return n, err
+}
+
+// ArchiveLocal writes a mail message to the local filesystem as an .eml file,
+// using the same bucket/correspondent hierarchy as Archive. It is the local
+// counterpart to Archive: nothing is uploaded and no destination Kiteworks
+// folders are created or resolved.
+//
+// Attachments and the message body are streamed to disk, so memory use is
+// bounded regardless of message or attachment size.
+func (T kw_rest_mail) ArchiveLocal(opts LocalArchiveOptions) (err error) {
+	mail, err := T.Get()
+	if err != nil {
+		return err
+	}
+
+	if IsBlank(opts.RootPath) {
+		return fmt.Errorf("ArchiveLocal: a local root path is required.")
+	}
+
+	sender, rel_path := T.archivePaths(mail, fmt.Sprintf("[%s]", T.Username))
+	local_path := CombinePath(opts.RootPath, LocalPath(rel_path))
+
+	if err = MkDir(local_path); err != nil {
+		return err
+	}
+
+	// Fetch the attachment list once and cache it on the mail so the manifest
+	// builder does not repeat the call.
+	var embed []KiteAttachment
+	if mail.AttachmentCount > 0 && !opts.SkipAttachments {
+		attachments, err := T.Attachments()
+		if err != nil {
+			return err
+		}
+		mail.cachedAttachments = attachments
+
+		// AccessType 0 and 3 are the retrievable ones; view-only and DRM
+		// protected attachments cannot be pulled down as files.
+		for _, a := range attachments {
+			if a.Deleted || IsBlank(a.Name) {
+				continue
+			}
+			if a.AccessType == 0 || a.AccessType == 3 {
+				embed = append(embed, a)
+			}
+		}
+
+		if len(embed) > 0 && !opts.Embed {
+			// Sidecar mode: write attachments to their own folder and point the
+			// manifest at them with paths relative to the .eml.
+			attach_rel := CombinePath("Attachments", mail.ID)
+			attach_path := CombinePath(local_path, attach_rel)
+			if err = MkDir(attach_path); err != nil {
+				return err
+			}
+
+			mail.attachmentLinks = make(map[string]string)
+			for _, a := range embed {
+				name := cleanArchiveName(a.Name)
+				if err := T.downloadAttachmentTo(a, CombinePath(attach_path, name), opts.Transferred); err != nil {
+					Err("[%s]: Error saving attachment %s: %v", T.Username, a.Name, err)
+					continue
+				}
+				mail.attachmentLinks[a.Name] = fmt.Sprintf("Attachments/%s/%s", mail.ID, name)
+			}
+			mail.attachmentFolderLink = fmt.Sprintf("Attachments/%s", mail.ID)
+
+			// Already on disk; do not embed them a second time.
+			embed = nil
+		}
+	}
+
+	file_name := cleanArchiveName(fmt.Sprintf("%s-%s-%s.eml", sender, mail.Subject, mail.Date))
+	dest := CombinePath(local_path, file_name)
+
+	// Write to a temporary file and rename on success so an interrupted run
+	// never leaves a truncated .eml that a later run would treat as complete.
+	tmp := fmt.Sprintf("%s.incomplete", dest)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer = f
+	if opts.Transferred != nil {
+		w = countingWriter{f, opts.Transferred}
+	}
+
+	if err = T.WriteEML(w, mail, embed); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+
+	return Rename(tmp, dest)
+}
+
+// downloadAttachmentTo streams a single attachment to a local file path.
+func (T kw_rest_mail) downloadAttachmentTo(attachment KiteAttachment, dest string, counter func(int)) (err error) {
+	src, err := T.DownloadAttachment(attachment.AttachmentID)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	tmp := fmt.Sprintf("%s.incomplete", dest)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	var w io.Writer = f
+	if counter != nil {
+		w = countingWriter{f, counter}
+	}
+
+	if _, err = io.Copy(w, src); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err = f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+
+	return Rename(tmp, dest)
 }
