@@ -9,10 +9,13 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	. "github.com/cmcoffee/kitebroker/core"
 
+	"github.com/cmcoffee/snugforge/kvlite"
+	"github.com/cmcoffee/snugforge/machineid"
 	"github.com/cmcoffee/snugforge/nfo"
 )
 
@@ -312,10 +315,14 @@ func init_database() {
 }
 
 // get_mac_addr retrieves the MAC address of the network interface.
-// It returns the MAC address as a byte slice, or nil if not found.
+// It returns the MAC address as a byte slice, or nil if not found. The
+// database was locked to it before machine IDs; it stays a fallback to open
+// and move such a database.
 func get_mac_addr() []byte {
 	ifaces, err := net.Interfaces()
-	Critical(err)
+	if err != nil {
+		return nil
+	}
 
 	for _, v := range ifaces {
 		if len(v.HardwareAddr) == 0 {
@@ -326,29 +333,88 @@ func get_mac_addr() []byte {
 	return nil
 }
 
-// SecureDatabase opens a database file, handling potential decryption
-// or reset if hardware changes are detected.
+// SecureDatabase opens a database file under its padlock (dbPadlocks),
+// moving one still under an older padlock to it in place, and resetting the
+// encrypted values when no padlock this machine has opens it.
 func SecureDatabase(file string) (Database, error) {
-	Debug("Opening database: %s (mac_lock=%v).", file, _db_lock_status())
-	// Provides us the mac address of the first interface.
-	db, err := OpenDB(file, _unlock_db()[0:]...)
+	target, fallbacks, names, mode := dbPadlocks()
+	Debug("Opening database: %s (%s).", file, mode)
+	st, note, err := kvlite.OpenRekeying(file, target, fallbacks, nil)
+	if note != "" {
+		for i, name := range names {
+			note = strings.Replace(note, fmt.Sprintf("from padlock %d", i+1), "from its "+name+" padlock", 1)
+		}
+		Notice("Database %s: %s (%s).", file, note, mode)
+	}
+	if err == ErrBadPadlock {
+		Debug("Database padlock mismatch, hardware change detected; resetting DB.")
+		Notice("Hardware changes detected, you will need to reauthenticate.")
+		if err := ResetDB(file); err != nil {
+			return nil, err
+		}
+		st, err = kvlite.Open(file, target...)
+	}
 	if err != nil {
-		if err == ErrBadPadlock {
-			Debug("Database padlock mismatch, hardware change detected; resetting DB.")
-			Notice("Hardware changes detected, you will need to reauthenticate.")
-			if err := ResetDB(file); err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
-		}
-		db, err = OpenDB(file, _unlock_db()[0:]...)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	Debug("Database opened successfully.")
-	return db, nil
+	return &DBase{Store: st}, nil
+}
+
+var (
+	padlockOnce      sync.Once
+	padlockTarget    []byte
+	padlockFallbacks [][]byte
+	padlockNames     []string
+	padlockMode      string
+)
+
+// dbPadlocks is this process's padlock plan, worked out once.
+func dbPadlocks() (target []byte, fallbacks [][]byte, names []string, mode string) {
+	padlockOnce.Do(func() {
+		var note string
+		padlockTarget, padlockFallbacks, padlockNames, padlockMode, note = planDBPadlock(storedPadlock(), machineid.ID, get_mac_addr())
+		if note != "" {
+			Notice("%s", note)
+		}
+	})
+	return padlockTarget, padlockFallbacks, padlockNames, padlockMode
+}
+
+// planDBPadlock decides the database padlock.
+//
+// Machine Locked (no db_locker saved, the default): this machine's OS
+// install identity, hashed for kitebroker (snugforge/machineid), never
+// stored. It replaces the first MAC address, which reorders between starts
+// (containers, VMs, USB adapters) and then locked the owner out; a database
+// still under the MAC is moved to the machine ID on its next start. With no
+// usable machine ID it stays on the MAC, said.
+//
+// Not locked (db_locker saved by the setup menu): the saved padlock, as
+// before; the machine ID and the MAC are only fallbacks to open and move.
+func planDBPadlock(stored []byte, id func(string) ([]byte, error), mac []byte) (target []byte, fallbacks [][]byte, names []string, mode, note string) {
+	mid, idErr := id(APPNAME)
+	if stored != nil {
+		if idErr == nil {
+			fallbacks, names = append(fallbacks, mid), append(names, "machine-ID")
+		}
+		return stored, append(fallbacks, mac), append(names, "network-address (MAC)"), "machine lock off", ""
+	}
+	if idErr == nil {
+		return mid, [][]byte{mac}, []string{"network-address (MAC)"}, "machine locked", ""
+	}
+	return mac, nil, nil, "machine locked to the network address",
+		"This machine has no usable machine ID, so the database stays locked to its network address."
+}
+
+// storedPadlock is the padlock the setup menu saved when Machine Locked was
+// turned off, or nil.
+func storedPadlock() []byte {
+	dbs := global.cfg.Get("do_not_modify", "db_locker")
+	if len(dbs) <= 40 {
+		return nil
+	}
+	return decrypt([]byte(dbs[40:]), []byte(dbs[0:40]))
 }
 
 // init_logging initializes the logging system with configured settings.
@@ -433,33 +499,20 @@ func _db_lock_status() bool {
 	return true
 }
 
-// _set_db_locker sets a database locker to prevent multiple instances.
-// It retrieves or generates a unique code and stores it in the config.
+// _set_db_locker turns Machine Locked off (saving the padlock the database
+// is under now, so it opens anywhere with this config file) or back on
+// (removing it, so the machine ID is used again). The setup menu saves the
+// file after. The saved padlock is the one the database was opened with this
+// start, so neither direction needs the database re-wrapped.
 func _set_db_locker() {
 	if v := global.cfg.Get("do_not_modify", "db_locker"); len(v) > 0 {
 		global.cfg.Unset("do_not_modify", "db_locker")
 		return
-	} else {
-		mac := get_mac_addr()
-		random := RandBytes(40)
-		db_lock_code := string(encrypt(mac, random))
-		Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
 	}
-	return
-}
-
-// _unlock_db decrypts or generates a database padlock.
-// It retrieves the padlock from configuration or generates
-// a new one based on the MAC address if not configured.
-func _unlock_db() (padlock []byte) {
-	if dbs := global.cfg.Get("do_not_modify", "db_locker"); len(dbs) > 0 {
-		code := []byte(dbs[0:40])
-		db_lock_code := []byte(dbs[40:])
-		padlock = decrypt(db_lock_code, code)
-	} else {
-		padlock = get_mac_addr()
-	}
-	return
+	target, _, _, _ := dbPadlocks()
+	random := RandBytes(40)
+	db_lock_code := string(encrypt(target, random))
+	Critical(global.cfg.Set("do_not_modify", "db_locker", fmt.Sprintf("%s%s", string(random), db_lock_code)))
 }
 
 // proxyValue holds a description and a value, typically for proxy settings.
